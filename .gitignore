@@ -33,3 +33,14 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/ 
+
+# Arquivos de dados da raiz
+*.xlsx
+*.xlsm
+*.pdf
+*.jpg
+*.png
+*.jpeg
+*.docx
+importador.xlsm
+Scan Manuseio.xlsm

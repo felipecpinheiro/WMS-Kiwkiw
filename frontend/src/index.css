@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Custom Properties (brand palette) ─────────────────── */
+:root {
+  --brand-purple:       #7B63E8;
+  --brand-purple-light: #9B87F0;
+  --brand-purple-dark:  #5B47C8;
+  --brand-teal:         #3DD9A4;
+  --brand-teal-light:   #60E6B8;
+  --brand-teal-dark:    #28B885;
+  --bg-app:             #0C0B18;
+  --bg-surface:         #14122A;
+  --border-subtle:      rgba(255,255,255,0.07);
+}
+
+/* ── Base ───────────────────────────────────────────────────── */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar minimalista para áreas escuras */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(123, 99, 232, 0.3); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(123, 99, 232, 0.55); }
+}
+
+/* ── Form controls: dark theme override ─────────────────────── */
+/*
+ * Browsers render <select> and date inputs with OS/light-theme defaults
+ * (white background). Since the entire app is dark, we normalise them here
+ * so every filter/selector automatically gets the right colours — no need
+ * to add inline styles to every element.
+ */
+select,
+input[type="date"],
+input[type="time"],
+input[type="month"],
+input[type="week"] {
+  background-color: #14122A;
+  color: rgba(255, 255, 255, 0.75);
+  color-scheme: dark;           /* makes the calendar picker dark too     */
+}
+
+select option {
+  background-color: #1C1A35;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+select option:checked,
+select option:hover {
+  background-color: #2D2A55;
+}
+
+/* Text inputs in filter bars that don't have an explicit bg */
+input[type="text"]:not([style*="background"]),
+input[type="search"] {
+  color-scheme: dark;
+}
+
+/* ── Utilities extras ───────────────────────────────────────── */
+@layer utilities {
+  .bg-brand-gradient {
+    background: linear-gradient(135deg, #7B63E8 0%, #3DD9A4 100%);
+  }
+  .bg-brand-subtle {
+    background: linear-gradient(135deg, #7B63E8 0%, #5B47C8 100%);
+  }
+  .text-brand-gradient {
+    background: linear-gradient(135deg, #7B63E8 0%, #3DD9A4 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  /* Glow effect para elementos ativos */
+  .glow-purple {
+    box-shadow: 0 0 20px rgba(123, 99, 232, 0.25);
+  }
+  .glow-teal {
+    box-shadow: 0 0 20px rgba(61, 217, 164, 0.25);
+  }
+}

@@ -1,0 +1,646 @@
+"""
+WMS Kiwkiw - Schemas Pydantic
+Define os contratos de entrada/saída da API (validação e serialização).
+"""
+
+from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional, List, Any
+from datetime import date, datetime
+from enum import Enum
+
+
+# ============================================================
+# AUTH
+# ============================================================
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    role: str
+    user_id: int
+    name: str
+    unit_id: Optional[int] = None
+    seller_id: Optional[int] = None
+
+class TokenData(BaseModel):
+    user_id: Optional[int] = None
+    role: Optional[str] = None
+
+
+# ============================================================
+# USUÁRIOS
+# ============================================================
+
+class UserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str = "operator"
+    unit_id: Optional[int] = None
+    seller_id: Optional[int] = None
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    unit_id: Optional[int] = None
+    active: Optional[bool] = None
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    unit_id: Optional[int] = None
+    seller_id: Optional[int] = None
+    active: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# UNIDADES
+# ============================================================
+
+class UnitCreate(BaseModel):
+    name: str
+    location: Optional[str] = None
+    responsible: Optional[str] = None
+
+class UnitResponse(BaseModel):
+    id: int
+    name: str
+    location: Optional[str] = None
+    responsible: Optional[str] = None
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# SELLERS
+# ============================================================
+
+class SellerCreate(BaseModel):
+    name: str
+    trade_name: Optional[str] = None   # se omitido, usa name
+    cnpj: Optional[str] = None
+    email: Optional[str] = None
+    contact_email: Optional[str] = None
+    code: Optional[str] = None
+    active: Optional[bool] = True
+    unit_id: Optional[int] = None
+    # Campos comerciais / cobrança
+    caixa_b2b: Optional[float] = None
+    manuseio_b2b: Optional[float] = None
+    qtd_franquia_b2b: Optional[int] = None
+    valor_adicional_b2b: Optional[float] = None
+    num_min_pedidos: Optional[int] = None
+    preco_unitario: Optional[float] = None
+    caixa_inclusa: Optional[bool] = False
+    seguro_incluso: Optional[bool] = False
+    armazenagem_incluso: Optional[bool] = False
+    valor_segurado: Optional[float] = None
+    franquia: Optional[float] = None
+    preco_adicional: Optional[float] = None
+    caixa1: Optional[str] = None
+    caixa2: Optional[str] = None
+    caixa3: Optional[str] = None
+    caixa4: Optional[str] = None
+    caixa5: Optional[str] = None
+    caixa6: Optional[str] = None
+    caixa7: Optional[str] = None
+    caixa8: Optional[str] = None
+    manuseio: Optional[float] = None
+    caixa_prop: Optional[bool] = False
+    mes_reajuste: Optional[int] = None
+    unit_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+
+class SellerUpdate(BaseModel):
+    name: Optional[str] = None
+    trade_name: Optional[str] = None
+    cnpj: Optional[str] = None
+    email: Optional[str] = None
+    contact_email: Optional[str] = None
+    code: Optional[str] = None
+    active: Optional[bool] = None      # campo canônico no modelo DB
+    # Campos comerciais / cobrança
+    caixa_b2b: Optional[float] = None
+    manuseio_b2b: Optional[float] = None
+    qtd_franquia_b2b: Optional[int] = None
+    valor_adicional_b2b: Optional[float] = None
+    num_min_pedidos: Optional[int] = None
+    preco_unitario: Optional[float] = None
+    caixa_inclusa: Optional[bool] = None
+    seguro_incluso: Optional[bool] = None
+    armazenagem_incluso: Optional[bool] = None
+    valor_segurado: Optional[float] = None
+    franquia: Optional[float] = None
+    preco_adicional: Optional[float] = None
+    caixa1: Optional[str] = None
+    caixa2: Optional[str] = None
+    caixa3: Optional[str] = None
+    caixa4: Optional[str] = None
+    caixa5: Optional[str] = None
+    caixa6: Optional[str] = None
+    caixa7: Optional[str] = None
+    caixa8: Optional[str] = None
+    manuseio: Optional[float] = None
+    caixa_prop: Optional[bool] = None
+    mes_reajuste: Optional[int] = None
+    unit_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+
+class SellerResponse(BaseModel):
+    id: int
+    name: str
+    trade_name: str
+    cnpj: Optional[str] = None
+    email: Optional[str] = None
+    unit_id: Optional[int] = None
+    active: bool
+    # Campos comerciais / cobrança
+    caixa_b2b: Optional[float] = None
+    manuseio_b2b: Optional[float] = None
+    qtd_franquia_b2b: Optional[int] = None
+    valor_adicional_b2b: Optional[float] = None
+    num_min_pedidos: Optional[int] = None
+    preco_unitario: Optional[float] = None
+    caixa_inclusa: Optional[bool] = False
+    seguro_incluso: Optional[bool] = False
+    armazenagem_incluso: Optional[bool] = False
+    valor_segurado: Optional[float] = None
+    franquia: Optional[float] = None
+    preco_adicional: Optional[float] = None
+    caixa1: Optional[str] = None
+    caixa2: Optional[str] = None
+    caixa3: Optional[str] = None
+    caixa4: Optional[str] = None
+    caixa5: Optional[str] = None
+    caixa6: Optional[str] = None
+    caixa7: Optional[str] = None
+    caixa8: Optional[str] = None
+    manuseio: Optional[float] = None
+    caixa_prop: Optional[bool] = False
+    mes_reajuste: Optional[int] = None
+    unit_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    code: Optional[str] = None
+    # `is_active` exposto ao frontend; mapeado manualmente a partir do campo `active` do modelo
+    is_active: Optional[bool] = True
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# PRODUTOS
+# ============================================================
+
+class ProductCreate(BaseModel):
+    seller_id: int
+    sku: str
+    name: str
+    barcode_seller: Optional[str] = None
+    unit_value: Optional[float] = 0.0
+    box_type: Optional[str] = None
+    is_input: Optional[bool] = False
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    barcode_seller: Optional[str] = None
+    unit_value: Optional[float] = None
+    box_type: Optional[str] = None
+    is_input: Optional[bool] = None
+    photo_url: Optional[str] = None
+    active: Optional[bool] = None
+
+class ProductResponse(BaseModel):
+    id: int
+    seller_id: int
+    seller_name: Optional[str] = None
+    sku: str
+    name: str
+    barcode_seller: Optional[str] = None
+    unit_value: float
+    box_type: Optional[str] = None
+    is_input: bool = False
+    photo_url: Optional[str] = None
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# KITS
+# ============================================================
+
+class KitItemCreate(BaseModel):
+    component_sku: str
+    component_name: Optional[str] = None
+    quantity: int = 1
+
+class KitCreate(BaseModel):
+    seller_id: int
+    kit_sku: str
+    kit_name: str
+    items: List[KitItemCreate]
+
+class KitItemResponse(BaseModel):
+    id: int
+    component_sku: str
+    component_name: Optional[str] = None
+    quantity: int
+
+    class Config:
+        from_attributes = True
+
+class KitResponse(BaseModel):
+    id: int
+    seller_id: int
+    kit_sku: str
+    kit_name: str
+    items: List[KitItemResponse] = []
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# ALGORITMO DE CAIXA
+# ============================================================
+
+class BoxRuleCreate(BaseModel):
+    seller_id: int
+    num_products: int
+    score: int
+    box_type: str
+
+class BoxRuleResponse(BaseModel):
+    id: int
+    seller_id: int
+    num_products: int
+    score: int
+    box_type: str
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# PEDIDOS
+# ============================================================
+
+class OrderItemCreate(BaseModel):
+    sku: str
+    product_name: str
+    quantity: int
+
+class OrderCreate(BaseModel):
+    erp_code: Optional[str] = None
+    nf_number: str
+    customer_name: str
+    order_date: date
+    seller_id: int
+    unit_id: Optional[int] = None
+    carrier: Optional[str] = None
+    expedition_date: Optional[date] = None
+    nature: Optional[str] = None
+    danfe_key: Optional[str] = None
+    file_type: str = "saida"
+    for_billing: bool = True
+    items: List[OrderItemCreate] = []
+
+class OrderItemResponse(BaseModel):
+    id: int
+    sku: str
+    product_name: str
+    quantity: int
+    is_kit_component: bool
+    original_kit_sku: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class OrderResponse(BaseModel):
+    id: int
+    erp_code: Optional[str] = None
+    nf_number: str
+    customer_name: str
+    order_date: date
+    seller_id: int
+    seller_name: Optional[str] = None
+    unit_id: Optional[int] = None
+    carrier: Optional[str] = None
+    status: str
+    expedition_date: Optional[date] = None
+    nature: Optional[str] = None
+    danfe_key: Optional[str] = None
+    for_billing: bool
+    imported_at: datetime
+    session_id: Optional[int] = None
+    items: List[OrderItemResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# SESSÕES DE SEPARAÇÃO
+# ============================================================
+
+class PickingSessionCreate(BaseModel):
+    session_date: date
+    unit_id: int
+    seller_id: Optional[int] = None
+    source_file: Optional[str] = None
+
+class PickingSessionResponse(BaseModel):
+    id: int
+    session_date: date
+    unit_id: int
+    seller_id: Optional[int] = None
+    status: str
+    total_orders: int
+    completed_orders: int
+    check_transport: bool
+    check_separation: bool
+    check_planning: bool
+    check_stock: bool
+    all_checks_ok: bool
+    separation_pdf: Optional[str] = None
+    expedition_pdf: Optional[str] = None
+    created_at: datetime
+    # Configurações de nível de arquivo (herdadas por todos os pedidos da sessão)
+    file_type: Optional[str] = "Saída"
+    for_billing: Optional[bool] = True
+    source_file: Optional[str] = None
+    sellers: List[str] = []
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_orm_with_checks(cls, session):
+        # Extrai enums via .value para evitar 'OrderStatus.PENDING' no JSON
+        ft = getattr(session, "file_type", None)
+        if ft is not None and hasattr(ft, "value"):
+            ft = ft.value
+        status = session.status
+        if status is not None and hasattr(status, "value"):
+            status = status.value
+        data = {
+            "id": session.id,
+            "session_date": session.session_date,
+            "unit_id": session.unit_id,
+            "seller_id": session.seller_id,
+            "status": str(status) if status is not None else "pending",
+            "total_orders": session.total_orders,
+            "completed_orders": session.completed_orders,
+            "check_transport": session.check_transport,
+            "check_separation": session.check_separation,
+            "check_planning": session.check_planning,
+            "check_stock": session.check_stock,
+            "all_checks_ok": session.all_checks_ok,
+            "separation_pdf": session.separation_pdf,
+            "expedition_pdf": session.expedition_pdf,
+            "created_at": session.created_at,
+            "file_type": ft or "Saída",
+            "for_billing": bool(getattr(session, "for_billing", True)),
+            "source_file": getattr(session, "source_file", None),
+            "sellers": list({
+                o.seller.trade_name
+                for o in getattr(session, "orders", [])
+                if o.seller and o.seller.trade_name
+            }),
+        }
+        return cls(**data)
+
+
+class PickingSessionConfigUpdate(BaseModel):
+    """Payload para reconfigurar tipo/faturamento de uma sessão já importada."""
+    file_type: Optional[str] = None  # 'Entrada' | 'Saída'
+    for_billing: Optional[bool] = None
+
+
+# ============================================================
+# BIPAGEM (SCANNING)
+# ============================================================
+
+class ScanRequest(BaseModel):
+    """Payload enviado quando operador escaneia um código de barras."""
+    session_id: int
+    order_id: int
+    barcode: str
+    operator_id: int
+
+class ScanResponse(BaseModel):
+    """Resposta ao scan: OK, ERRO, COMPLETO, etc."""
+    success: bool
+    message: str
+    status: str                          # "ok", "error", "order_complete", "session_complete"
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    photo_url: Optional[str] = None
+    items_remaining: int = 0
+    order_progress: Optional[dict] = None
+
+class InterruptRequest(BaseModel):
+    session_id: int
+    order_id: int
+    operator_id: int
+    reason: Optional[str] = None
+
+class ScanningLogResponse(BaseModel):
+    id: int
+    session_id: int
+    order_id: int
+    sku: str
+    barcode_scanned: str
+    quantity: int
+    operator_id: int
+    operator_name: Optional[str] = None
+    timestamp: datetime
+    is_interrupted: bool
+    is_error: bool
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# ESTOQUE
+# ============================================================
+
+class StockMovementCreate(BaseModel):
+    seller_id: int
+    sku: str
+    product_name: Optional[str] = None
+    movement_date: date
+    movement_type: str  # "Entrada" ou "Saída"
+    quantity: int
+    nf_number: Optional[str] = None
+    nature: Optional[str] = None
+    observation: Optional[str] = None
+
+class StockPositionResponse(BaseModel):
+    id: int
+    seller_id: int
+    sku: str
+    product_name: Optional[str] = None
+    initial_stock: int
+    total_in: int
+    total_out: int
+    current_stock: int
+    unit_value: float
+    level: Optional[str] = None
+    supply_type: Optional[str] = None
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================
+# DASHBOARD / COCKPIT
+# ============================================================
+
+class DashboardStats(BaseModel):
+    """Dados para o cockpit gerencial do dia."""
+    today: date
+    total_orders_today: int
+    orders_completed: int
+    orders_pending: int
+    orders_scanning: int
+    completion_rate: float
+    active_sessions: int
+    units_summary: List[dict]
+    sellers_with_orders: List[dict]
+    sellers_no_orders: List[dict] = []    # sellers ativos sem pedidos hoje
+    sessions_today: List[dict] = []       # histórico de uploads do dia
+    recent_scans: List[dict]
+    alerts: List[dict]
+    checks: dict = {
+        "transport": False,
+        "separation": False,
+        "planning": False,
+        "stock": False,
+        "products_registered": True,
+        "missing_products": [],
+        "all_ok": False,
+    }
+
+class SellerDashboard(BaseModel):
+    """Dados para o cockpit do seller."""
+    seller_id: int
+    seller_name: str
+    today: date
+    total_orders: int
+    orders_completed: int
+    orders_pending: int
+    completion_rate: float
+    recent_orders: List[dict]
+    stock_alerts: List[dict]
+
+
+# ============================================================
+# BULK IMPORT / SCANNING AUXILIARES
+# ============================================================
+
+class ProductBulkItem(BaseModel):
+    sku: str
+    seller_name: str  # será matched ao seller por name/trade_name
+    name: str
+    unit_value: Optional[float] = None
+    box_type: Optional[str] = None
+    barcode_seller: Optional[str] = None
+
+class KitComponentBulk(BaseModel):
+    sku: str
+    quantity: int = 1
+
+class KitBulkItem(BaseModel):
+    seller_name: str
+    kit_sku: str
+    components: List[KitComponentBulk]
+
+class KitBulkImport(BaseModel):
+    items: List[KitBulkItem]
+
+class OpenByNfeRequest(BaseModel):
+    nfe_key: str
+    operator_id: Optional[int] = None
+
+
+# ============================================================
+# IMPORTAÇÃO
+# ============================================================
+
+class DuplicateOrderInfo(BaseModel):
+    """Detalhe de um pedido já existente detectado na importação."""
+    nf_number: str
+    seller_name: str
+    existing_order_id: Optional[int] = None
+    existing_session_id: Optional[int] = None
+    existing_imported_at: Optional[datetime] = None
+
+
+class ImportResult(BaseModel):
+    """
+    Resultado da importação de arquivo Excel.
+
+    Quando `requires_confirmation` for True, a importação foi ABORTADA porque
+    há NFs já presentes no banco. O frontend deve exibir `duplicates` e, se o
+    usuário confirmar, refazer o POST com `force_duplicates=true`.
+    """
+    success: bool
+    message: str
+    session_id: Optional[int] = None
+    total_rows: int = 0
+    orders_imported: int = 0
+    orders_with_kits: int = 0
+    errors: List[str] = []
+    warnings: List[str] = []
+    # Confirmação de duplicatas
+    requires_confirmation: bool = False
+    duplicates: List[DuplicateOrderInfo] = []
+
+
+# ============================================================
+# FATURAMENTO
+# ============================================================
+
+class BillingConfigCreate(BaseModel):
+    seller_id: int
+    config_key: str
+    config_value: str
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
+
+class BillingConfigResponse(BaseModel):
+    id: int
+    seller_id: int
+    config_key: str
+    config_value: Optional[str] = None
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
+
+    class Config:
+        from_attributes = True

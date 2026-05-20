@@ -1,0 +1,35 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Banco de dados
+*.db
+*.sqlite3
+data/wms_kiwkiw.db
+
+# Variáveis de ambiente
+.env
+.env.production
+.env.local
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Arquivos gerados pelo sistema
+data/exports/
+data/media/
+data/uploads/
+data/audit/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/ 

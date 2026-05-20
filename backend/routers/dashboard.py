@@ -1,0 +1,474 @@
+"""
+WMS Kiwkiw - Router do Cockpit / Dashboard
+Dados gerenciais para o master e portal do seller.
+
+REGRA DE DATA (importante):
+-----------------------------
+O filtro de data do dashboard usa SEMPRE o timestamp do upload
+(`Order.imported_at` / `PickingSession.created_at`), NUNCA a data
+de emissão da NF (`Order.order_date`). A data da NF fica guardada
+só para auditoria. Default = hoje; o usuário pode escolher um dia
+passado via parâmetro `target_date`.
+"""
+
+import os
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import func, case
+
+from ..database import get_db
+from ..auth import get_current_user
+from .. import models, schemas
+
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+
+# ─── Helpers ─────────────────────────────────────────────────────
+
+def _imported_on(target: date):
+    """Expressão SQL: DATE(imported_at) == target. Compatível SQLite/PG."""
+    return func.date(models.Order.imported_at) == target
+
+
+def _session_created_on(target: date):
+    """Expressão SQL para sessões criadas na data alvo."""
+    return func.date(models.PickingSession.created_at) == target
+
+
+@router.get("/available-dates", response_model=list[date])
+def available_dates(
+    limit: int = 30,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna as últimas N datas que tiveram uploads (pra alimentar o
+    date-picker do dashboard). Ordenadas da mais recente pra mais antiga.
+    """
+    rows = (
+        db.query(func.date(models.Order.imported_at).label("d"))
+        .group_by("d")
+        .order_by(func.date(models.Order.imported_at).desc())
+        .limit(limit)
+        .all()
+    )
+    # func.date() retorna string em SQLite; normaliza para date
+    out = []
+    for (d,) in rows:
+        if isinstance(d, date):
+            out.append(d)
+        elif isinstance(d, str):
+            try:
+                out.append(datetime.strptime(d, "%Y-%m-%d").date())
+            except ValueError:
+                continue
+    return out
+
+
+@router.get("/debug")
+def debug_state(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Endpoint de diagnóstico — retorna o estado bruto do banco.
+    Abrir em http://localhost:8000/dashboard/debug com token válido
+    (o próprio frontend envia o token, então basta navegar por lá).
+    """
+    today = date.today()
+    orders_total = db.query(func.count(models.Order.id)).scalar() or 0
+    sessions_total = db.query(func.count(models.PickingSession.id)).scalar() or 0
+
+    # Agrupa orders por DATE(imported_at)
+    by_date = db.query(
+        func.date(models.Order.imported_at).label("d"),
+        func.count(models.Order.id).label("c"),
+    ).group_by("d").order_by("d").all()
+
+    sessions = db.query(models.PickingSession).order_by(models.PickingSession.id.desc()).limit(10).all()
+
+    return {
+        "server_today": today.isoformat(),
+        "orders_total": orders_total,
+        "sessions_total": sessions_total,
+        "orders_by_import_date": [{"date": str(d), "count": c} for d, c in by_date],
+        "recent_sessions": [
+            {
+                "id": s.id,
+                "session_date": s.session_date.isoformat() if s.session_date else None,
+                "created_at_date": s.created_at.date().isoformat() if s.created_at else None,
+                "unit_id": s.unit_id,
+                "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+                "total_orders": s.total_orders,
+                "has_separation_pdf": bool(s.separation_pdf),
+                "has_expedition_pdf": bool(s.expedition_pdf),
+            }
+            for s in sessions
+        ],
+        "current_user": {
+            "id": current_user.id,
+            "name": current_user.name,
+            "unit_id": current_user.unit_id,
+            "role": current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+        },
+    }
+
+
+# ─── Endpoint principal ──────────────────────────────────────────
+
+@router.get("/master", response_model=schemas.DashboardStats)
+def master_dashboard(
+    target_date: Optional[date] = None,
+    unit_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cockpit gerencial. Mostra o que foi importado no dia `target_date`
+    (default = hoje). Pode filtrar por unidade.
+    """
+    target = target_date or date.today()
+
+    # ── Base: orders importados no dia alvo ─────────────────────
+    base_filter = [_imported_on(target)]
+    if unit_id:
+        base_filter.append(models.Order.unit_id == unit_id)
+
+    total = db.query(func.count(models.Order.id)).filter(*base_filter).scalar() or 0
+
+    # Contadores por status (enum → valor nativo do SQLAlchemy)
+    status_counts: dict[str, int] = {}
+    for status_enum in models.OrderStatus:
+        c = db.query(func.count(models.Order.id)).filter(
+            *base_filter,
+            models.Order.status == status_enum,
+        ).scalar() or 0
+        status_counts[status_enum.value] = c
+
+    completed = status_counts.get(models.OrderStatus.COMPLETED.value, 0)
+    scanning = status_counts.get(models.OrderStatus.SCANNING.value, 0)
+    interrupted = status_counts.get(models.OrderStatus.INTERRUPTED.value, 0)
+    pending = total - completed
+    completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+
+    # ── Sessões criadas no dia alvo ─────────────────────────────
+    session_filter = [_session_created_on(target)]
+    if unit_id:
+        session_filter.append(models.PickingSession.unit_id == unit_id)
+
+    active_sessions = db.query(func.count(models.PickingSession.id)).filter(
+        *session_filter,
+        models.PickingSession.status != models.OrderStatus.COMPLETED,
+    ).scalar() or 0
+
+    # ── Resumo por unidade ──────────────────────────────────────
+    units = db.query(models.Unit).filter(models.Unit.active == True).all()
+    units_summary = []
+    for unit in units:
+        if unit_id and unit_id != unit.id:
+            units_summary.append({
+                "unit_id": unit.id, "unit_name": unit.name,
+                "total": 0, "completed": 0, "pct": 0,
+            })
+            continue
+        u_total = db.query(func.count(models.Order.id)).filter(
+            _imported_on(target),
+            models.Order.unit_id == unit.id,
+        ).scalar() or 0
+        u_done = db.query(func.count(models.Order.id)).filter(
+            _imported_on(target),
+            models.Order.unit_id == unit.id,
+            models.Order.status == models.OrderStatus.COMPLETED,
+        ).scalar() or 0
+        units_summary.append({
+            "unit_id": unit.id,
+            "unit_name": unit.name,
+            "total": u_total,
+            "completed": u_done,
+            "pct": round((u_done / u_total * 100) if u_total > 0 else 0, 1),
+        })
+
+    # ── Sellers com pedidos no dia alvo ─────────────────────────
+    # Usa case() para somar apenas pedidos com status COMPLETED — portável entre SQLite e PG
+    completed_expr = func.sum(
+        case((models.Order.status == models.OrderStatus.COMPLETED, 1), else_=0)
+    ).label("completed_count")
+
+    sellers_rows = db.query(
+        models.Seller.id,
+        models.Seller.trade_name,
+        func.count(models.Order.id).label("order_count"),
+        completed_expr,
+    ).join(
+        models.Order, models.Order.seller_id == models.Seller.id
+    ).filter(
+        *base_filter,
+    ).group_by(models.Seller.id, models.Seller.trade_name).all()
+
+    sellers_with_orders = [
+        {
+            "seller_id": r.id,
+            "seller_name": r.trade_name,
+            "total": r.order_count,
+            "completed": int(r.completed_count or 0),
+            "pct": round((int(r.completed_count or 0) / r.order_count * 100) if r.order_count > 0 else 0, 1),
+        }
+        for r in sellers_rows
+    ]
+
+    # ── Scans recentes (últimas 2 horas, independente do target_date) ──
+    two_hours_ago = datetime.now() - timedelta(hours=2)
+    recent_logs = db.query(models.ScanningLog).filter(
+        models.ScanningLog.timestamp >= two_hours_ago,
+        models.ScanningLog.is_error == False,
+    ).order_by(models.ScanningLog.timestamp.desc()).limit(10).all()
+
+    recent_scans = [
+        {
+            "timestamp": log.timestamp.strftime("%H:%M:%S"),
+            "operator": log.operator.name if log.operator else "N/A",
+            "sku": log.sku,
+            "order_nf": log.order.nf_number if log.order else "N/A",
+        }
+        for log in recent_logs
+    ]
+
+    # ── Alertas ─────────────────────────────────────────────────
+    alerts = []
+    no_carrier = db.query(func.count(models.Order.id)).filter(
+        *base_filter, models.Order.carrier == None,
+    ).scalar() or 0
+    if no_carrier > 0:
+        alerts.append({"type": "warning", "message": f"{no_carrier} pedidos sem transportadora definida"})
+    if interrupted > 0:
+        alerts.append({"type": "error", "message": f"{interrupted} pedidos interrompidos — verificar com operador"})
+
+    # ── Lê configurações de checagens ───────────────────────────────────────
+    def _setting(key: str, default: str = "true") -> str:
+        obj = db.query(models.AppSetting).filter(models.AppSetting.key == key).first()
+        return obj.value if obj else default
+
+    cfg_transportadora  = _setting("check_transportadora")       == "true"
+    cfg_nf_unicas       = _setting("check_nf_unicas")            == "true"
+    cfg_produtos        = _setting("check_produtos_cadastrados")  == "true"
+
+    # Expõe quais checks estão habilitados para o frontend renderizar corretamente
+    checks_enabled = {
+        "transportadora":       cfg_transportadora,
+        "nf_unicas":            cfg_nf_unicas,
+        "produtos_cadastrados": cfg_produtos,
+    }
+
+    # ── Checagens P6/P8/P10/P12 sobre a última sessão do dia ────────────────
+    checks = {
+        "transport":   None,   # None = desabilitado, True/False = resultado
+        "separation":  False,
+        "planning":    False,
+        "stock":       None,   # antigo nome para NF únicas
+        "all_ok":      False,
+    }
+
+    last_session = db.query(models.PickingSession).filter(
+        *session_filter,
+    ).order_by(models.PickingSession.id.desc()).first()
+
+    if last_session:
+        session_orders = db.query(models.Order).filter(
+            models.Order.session_id == last_session.id
+        ).all()
+        if session_orders:
+            checks["separation"] = bool(last_session.separation_pdf)
+            checks["planning"]   = bool(last_session.expedition_pdf)
+
+            if cfg_nf_unicas:
+                keys = [o.danfe_key for o in session_orders if o.danfe_key]
+                checks["stock"] = len(keys) == len(set(keys))
+
+    orders_today = db.query(models.Order).filter(*base_filter).all()
+
+    # ── Checagem: Transportadora ─────────────────────────────────────────────
+    orders_no_carrier = []
+    if cfg_transportadora:
+        orders_no_carrier = [
+            {
+                "order_id": o.id,
+                "nf_number": o.nf_number,
+                "seller_name": o.seller.trade_name if o.seller else "?",
+                "seller_id": o.seller_id,
+                "customer_name": o.customer_name,
+            }
+            for o in orders_today if not o.carrier
+        ]
+        checks["transport"] = len(orders_no_carrier) == 0
+    checks["missing_carriers"] = orders_no_carrier[:30]
+
+    # ── Checagem: Produtos cadastrados ────────────────────────────────────────
+    missing_products = []
+    if cfg_produtos:
+        for order in orders_today:
+            for item in order.items:
+                prod = db.query(models.Product).filter(
+                    models.Product.seller_id == order.seller_id,
+                    models.Product.sku == item.sku,
+                    models.Product.active == True,
+                ).first()
+                if not prod:
+                    entry = {
+                        "sku": item.sku,
+                        "product_name": item.product_name,
+                        "seller_id": order.seller_id,
+                        "seller_name": order.seller.trade_name if order.seller else "?",
+                    }
+                    if not any(e["sku"] == entry["sku"] and e["seller_id"] == entry["seller_id"]
+                               for e in missing_products):
+                        missing_products.append(entry)
+        checks["products_registered"] = len(missing_products) == 0
+    else:
+        checks["products_registered"] = None  # desabilitado
+    checks["missing_products"] = missing_products[:20]
+
+    # ── all_ok: considera apenas checks habilitados ───────────────────────────
+    enabled_results = [
+        v for k, v in checks.items()
+        if k in ("transport", "separation", "planning", "stock", "products_registered")
+        and v is not None   # None = check desabilitado, não entra no cálculo
+    ]
+    checks["all_ok"] = all(enabled_results) if enabled_results else True
+    checks["checks_enabled"] = checks_enabled
+
+    # ── Sellers ativos SEM pedidos hoje ─────────────────────
+    all_active_sellers = db.query(models.Seller).filter(models.Seller.active == True).all()
+    seller_ids_with_orders = {r["seller_id"] for r in sellers_with_orders}
+    sellers_no_orders = [
+        {"seller_id": s.id, "seller_name": s.trade_name}
+        for s in all_active_sellers
+        if s.id not in seller_ids_with_orders
+    ]
+
+    # ── Histórico de sessões/uploads do dia ──────────────────
+    sessions_today_raw = db.query(models.PickingSession).filter(
+        *session_filter
+    ).order_by(models.PickingSession.created_at.desc()).all()
+
+    sessions_today_list = []
+    for sess in sessions_today_raw:
+        # Sellers distintos nesta sessão
+        sess_sellers = db.query(models.Seller.trade_name).join(
+            models.Order, models.Order.seller_id == models.Seller.id
+        ).filter(models.Order.session_id == sess.id).distinct().all()
+        snames = [r[0] for r in sess_sellers]
+
+        # PDF: armazenado como caminho completo — pega só o nome do arquivo
+        sep_pdf = os.path.basename(sess.separation_pdf) if sess.separation_pdf else None
+        exp_pdf = os.path.basename(sess.expedition_pdf) if sess.expedition_pdf else None
+
+        ft = sess.file_type.value if hasattr(sess.file_type, 'value') else str(sess.file_type)
+
+        sessions_today_list.append({
+            "session_id": sess.id,
+            "source_file": sess.source_file,
+            "total_orders": sess.total_orders,
+            "created_at": sess.created_at.strftime("%H:%M") if sess.created_at else None,
+            "seller_names": snames,
+            "file_type": ft,
+            "separation_pdf": sep_pdf,
+            "expedition_pdf": exp_pdf,
+        })
+
+    return schemas.DashboardStats(
+        today=target,
+        total_orders_today=total,
+        orders_completed=completed,
+        orders_pending=pending,
+        orders_scanning=scanning,
+        completion_rate=completion_rate,
+        active_sessions=active_sessions,
+        units_summary=units_summary,
+        sellers_with_orders=sellers_with_orders,
+        sellers_no_orders=sellers_no_orders,
+        sessions_today=sessions_today_list,
+        recent_scans=recent_scans,
+        alerts=alerts,
+        checks=checks,
+    )
+
+
+# ─── Portal do seller ────────────────────────────────────────────
+
+@router.get("/seller", response_model=schemas.SellerDashboard)
+def seller_dashboard(
+    target_date: Optional[date] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cockpit do seller. Mesma regra de data: filtra pelo dia do upload.
+    """
+    user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+    if user_role not in ["seller", "admin"]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    seller_id = current_user.seller_id
+    if not seller_id and user_role != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Usuário sem seller associado")
+
+    target = target_date or date.today()
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+
+    base_filter = [_imported_on(target)]
+    if seller_id:
+        base_filter.append(models.Order.seller_id == seller_id)
+
+    total = db.query(func.count(models.Order.id)).filter(*base_filter).scalar() or 0
+    completed = db.query(func.count(models.Order.id)).filter(
+        *base_filter, models.Order.status == models.OrderStatus.COMPLETED,
+    ).scalar() or 0
+    pending = total - completed
+    completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+
+    recent_orders = db.query(models.Order).filter(
+        *base_filter
+    ).order_by(models.Order.imported_at.desc()).limit(20).all()
+
+    orders_list = [
+        {
+            "nf_number": o.nf_number,
+            "customer_name": o.customer_name,
+            "carrier": o.carrier,
+            "status": o.status.value if hasattr(o.status, 'value') else o.status,
+            "items_count": len(o.items),
+        }
+        for o in recent_orders
+    ]
+
+    low_stock = db.query(models.StockPosition).filter(
+        models.StockPosition.seller_id == seller_id,
+        models.StockPosition.current_stock <= 10,
+        models.StockPosition.current_stock > 0,
+    ).limit(10).all() if seller_id else []
+
+    stock_alerts = [
+        {
+            "sku": p.sku,
+            "product_name": p.product_name,
+            "current_stock": p.current_stock,
+        }
+        for p in low_stock
+    ]
+
+    return {
+        "date": str(target_date),
+        "summary": summary,
+        "sellers": sellers_with_orders,
+        "sessions": sessions_today_list,
+        "checks": checks,
+        "alerts": alerts,
+        "sellers_no_orders": sellers_no_orders,
+        "recent_orders": recent_orders_list,
+        "stock_alerts": stock_alerts,
+    }

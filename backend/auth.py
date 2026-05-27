@@ -20,6 +20,11 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from . import models, schemas
 
+# Fix: passlib 1.7.4 incompatível com bcrypt 4.x
+import bcrypt as _bcrypt
+if not hasattr(_bcrypt, '__about__'):
+    _bcrypt.__about__ = type('_about', (), {'__version__': _bcrypt.__version__})()
+    
 # ---------------------------------------------------------------------------
 # Configurações de segurança
 # ---------------------------------------------------------------------------

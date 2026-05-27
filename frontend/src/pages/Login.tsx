@@ -36,7 +36,9 @@ export default function LoginPage() {
 
       toast.success(`Bem-vindo, ${res.name}!`);
 
-      if (res.role === 'seller') navigate('/seller');
+      // Redireciona cada perfil ao seu destino correto
+      if (res.role === 'client') navigate('/portal');
+      else if (res.role === 'operator') navigate('/manuseios');
       else navigate('/dashboard');
     } catch (err: any) {
       const msg = err.response?.data?.detail || 'Credenciais inválidas';

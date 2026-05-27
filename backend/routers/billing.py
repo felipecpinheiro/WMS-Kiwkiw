@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..auth import get_current_user, require_master_or_above, require_admin
+from ..auth import get_current_user, require_manager_or_above, require_admin
 from .. import models, schemas
 
 router = APIRouter(prefix="/billing", tags=["Faturamento"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/billing", tags=["Faturamento"])
 @router.get("/config/{seller_id}", response_model=List[schemas.BillingConfigResponse])
 def get_billing_config(
     seller_id: int,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Retorna configurações de cobrança de um seller."""
@@ -60,7 +60,7 @@ def billing_report(
     seller_id: int,
     date_from: date = Query(...),
     date_to: date = Query(...),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """

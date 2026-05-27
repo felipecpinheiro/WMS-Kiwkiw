@@ -48,9 +48,10 @@ export interface User {
   id: number;
   name: string;
   email: string;
-  role: 'admin' | 'master' | 'operator' | 'seller';
+  role: 'admin' | 'manager' | 'operator' | 'client';
   unit_id: number | null;
   seller_id: number | null;
+  seller_ids?: number[] | null;
 }
 
 export interface LoginResponse {
@@ -267,7 +268,7 @@ export const authApi = {
 export const dashboardApi = {
   master: (params?: { target_date?: string; unit_id?: number }) =>
     api.get<DashboardStats>('/dashboard/master', { params }),
-  seller: (params?: { target_date?: string; seller_id?: number }) =>
+  seller: (params?: { date_from?: string; date_to?: string; seller_id?: number }) =>
     api.get('/dashboard/seller', { params }),
   availableDates: (limit = 30) =>
     api.get<string[]>('/dashboard/available-dates', { params: { limit } }),
@@ -488,7 +489,8 @@ export const cadastrosApi = {
   users: (params?: Record<string, any>) => api.get('/cadastros/users', { params }),
   createUser: (data: Record<string, any>) => api.post('/cadastros/users', data),
   updateUser: (id: number, data: Record<string, any>) => api.put(`/cadastros/users/${id}`, data),
-  deleteUser: (id: number) => api.delete(`/cadastros/users/${id}`),
+  deleteUser:     (id: number) => api.delete(`/cadastros/users/${id}`),
+  reactivateUser: (id: number) => api.post(`/cadastros/users/${id}/reactivate`),
 };
 
 // ============================================================

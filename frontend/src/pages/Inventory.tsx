@@ -14,7 +14,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
-import { inventoryApi, cadastrosApi } from '../api';
+import { inventoryApi, cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 
@@ -1341,6 +1341,7 @@ export default function InventoryPage() {
   const qc = useQueryClient();
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : null;
+  const isManager = user?.role === 'manager';
   const [sellerId, setSellerId] = useState<number | null>(null);
   const [tab, setTab] = useState<'stock' | 'movements'>('stock');
   const [search, setSearch] = useState('');
@@ -1358,12 +1359,29 @@ export default function InventoryPage() {
   const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
   const [dateTo, setDateTo] = useState(today);
 
-  // Sellers disponíveis
-  const { data: sellers = [] } = useQuery(
+  // Sellers do gerente (só busca se for manager)
+  const { data: meData } = useQuery(
+    ['me'],
+    () => authApi.me().then(r => r.data),
+    { enabled: isManager, staleTime: 5 * 60 * 1000 }
+  );
+  const mySellerIds: number[] = meData?.seller_ids ?? [];
+
+  // Sellers disponíveis — gerente vê só os seus
+  const { data: allSellers = [] } = useQuery(
     'sellers-list',
     () => cadastrosApi.sellers().then(r => r.data as { id: number; name: string }[]),
-    { onSuccess: (data: { id: number; name: string }[]) => { if (data.length > 0 && !sellerId) setSellerId(data[0].id); } }
   );
+  const sellers = isManager && mySellerIds.length > 0
+    ? (allSellers as any[]).filter(s => mySellerIds.includes(s.id))
+    : allSellers;
+
+  // Quando a lista de sellers estiver disponível, seleciona o primeiro
+  useEffect(() => {
+    if (sellers.length > 0 && !sellerId) {
+      setSellerId((sellers as any[])[0].id);
+    }
+  }, [sellers, sellerId]);
 
   // Posição de estoque
   const { data: stock = [], isLoading: loadingStock } = useQuery(

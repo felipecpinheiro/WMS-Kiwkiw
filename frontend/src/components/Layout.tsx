@@ -33,10 +33,20 @@ const navItems = [
   ]},
 ];
 
+// Nav reduzido para operadores: somente Manuseios
+const navOperator = [
+  { group: 'Operação', items: [
+    { to: '/manuseios', icon: Layers, label: 'Manuseios' },
+  ]},
+];
+
 export default function Layout() {
   const navigate = useNavigate();
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { name: 'Usuário', role: 'operator' };
+
+  const isOperator = user?.role === 'operator';
+  const activeNav  = isOperator ? navOperator : navItems;
 
   const handleLogout = () => {
     localStorage.removeItem('wms_token');
@@ -76,7 +86,7 @@ export default function Layout() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-2.5">
-          {navItems.map((group) => (
+          {activeNav.map((group) => (
             <div key={group.group} className="mb-5">
               {/* Group label */}
               <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]"

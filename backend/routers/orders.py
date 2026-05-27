@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_
 
 from ..database import get_db
-from ..auth import get_current_user, require_master_or_above
+from ..auth import get_current_user, require_admin, require_manager_or_above
 from .. import models, schemas
 from ..services.order_import import import_excel_orders
 from ..services.pdf_generator import generate_separation_report, generate_expedition_report
@@ -33,7 +33,7 @@ async def import_orders(
     file_type: str = Form("Saída", description="'Entrada' ou 'Saída' (aplica-se a TODOS os pedidos do arquivo)"),
     for_billing: bool = Form(True, description="Considerar este arquivo para faturamento (aplica-se a TODOS os pedidos)"),
     force_duplicates: bool = Form(False, description="Se True, reimporta mesmo havendo NFs já presentes no banco"),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_admin),  # SOMENTE ADMIN importa pedidos
     db: Session = Depends(get_db),
 ):
     """
@@ -133,7 +133,7 @@ def list_orders(
 
     # Restrição por role: seller só vê os próprios pedidos
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
-    if user_role == "seller" and current_user.seller_id:
+    if user_role == "client" and current_user.seller_id:
         query = query.filter(models.Order.seller_id == current_user.seller_id)
 
     if session_id:
@@ -245,7 +245,7 @@ def configure_order(
     order_id: int,
     file_type: Optional[str] = None,
     for_billing: Optional[bool] = None,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Configura tipo do arquivo (entrada/saída) e se é para faturamento."""
@@ -266,7 +266,7 @@ def configure_order(
 def update_order_carrier(
     order_id: int,
     data: dict,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Atualiza a transportadora de um pedido (usado no Dashboard quando falta transportadora)."""

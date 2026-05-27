@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import { useLocation } from 'react-router-dom';
 import { Search, Pencil, Trash2, Camera, X, Check, Upload, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react';
-import { cadastrosApi } from '../api';
+import { cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -39,6 +39,10 @@ const EMPTY_GRID = (): string[][] => Array(10).fill(null).map(() => Array(6).fil
 export default function ProductsPage() {
   const qc = useQueryClient();
   const location = useLocation();
+  const userStr = localStorage.getItem('wms_user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  const isManager = user?.role === 'manager';
+
   const [search, setSearch] = useState('');
   const [sellerFilter, setSellerFilter] = useState('');
 
@@ -89,7 +93,25 @@ export default function ProductsPage() {
   const totalProducts = productsResp?.total    ?? 0;
   const totalPages    = productsResp?.pages    ?? 1;
 
-  const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  // Sellers do gerente (restringe o dropdown de filtro)
+  const { data: meData } = useQuery(
+    ['me'],
+    () => authApi.me().then(r => r.data),
+    { enabled: isManager, staleTime: 5 * 60 * 1000 }
+  );
+  const mySellerIds: number[] = meData?.seller_ids ?? [];
+
+  const { data: allSellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  const sellers = isManager && mySellerIds.length > 0
+    ? (allSellers as any[]).filter((s: any) => mySellerIds.includes(s.id))
+    : allSellers;
+
+  // Para gerente: pré-selecionar o primeiro seller vinculado no filtro
+  useEffect(() => {
+    if (isManager && mySellerIds.length > 0 && !sellerFilter) {
+      setSellerFilter(String(mySellerIds[0]));
+    }
+  }, [mySellerIds, isManager]);
 
   // Se o Dashboard navegou para cá com uma lista de produtos faltantes, pré-preenche a grid
   useEffect(() => {

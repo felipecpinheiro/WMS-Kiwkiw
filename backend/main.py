@@ -71,11 +71,19 @@ def run_light_migrations():
         if "experience_file_path" not in existing_sel:
             migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
 
+        # user_sellers — tabela de associação many-to-many (user ↔ sellers)
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_sellers (
+                user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+                seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+                PRIMARY KEY (user_id, seller_id)
+            )
+        """))
+
         for sql in migrations:
             db.execute(text(sql))
             print(f"✅ Migração aplicada: {sql}")
-        if migrations:
-            db.commit()
+        db.commit()
     except Exception as e:
         print(f"⚠️  Aviso em migrações leves: {e}")
     finally:
@@ -132,10 +140,10 @@ app = FastAPI(
     * **Dashboard** — Cockpit gerencial e portal do seller
 
     ## Roles de Acesso
-    * **admin** — Acesso total ao sistema
-    * **master** — Gerencia operações diárias, gera relatórios
-    * **operator** — Interface de bipagem da unidade
-    * **seller** — Portal do seller (estoque + status de pedidos)
+    * **admin**    — Acesso total. Único que importa pedidos e cadastra usuários/sellers
+    * **manager**  — Gerente: vê e edita somente seu grupo de sellers
+    * **operator** — Operador: bipagem dos sellers que atende
+    * **client**   — Cliente (seller): portal somente leitura
     """,
     version="1.0.0",
     contact={"name": "Kiwkiw WMS", "email": "admin@kiwkiw.com.br"},

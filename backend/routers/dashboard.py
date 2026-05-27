@@ -129,13 +129,22 @@ def master_dashboard(
     """
     Cockpit gerencial. Mostra o que foi importado no dia `target_date`
     (default = hoje). Pode filtrar por unidade.
+    Manager: restrito automaticamente aos sellers vinculados.
     """
     target = target_date or date.today()
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+
+    # ── Sellers do gerente (filtra automaticamente se role=manager) ─
+    manager_seller_ids: list[int] = []
+    if user_role == "manager":
+        manager_seller_ids = [s.id for s in (current_user.sellers or [])]
 
     # ── Base: orders importados no dia alvo ─────────────────────
     base_filter = [_imported_on(target)]
     if unit_id:
         base_filter.append(models.Order.unit_id == unit_id)
+    if manager_seller_ids:
+        base_filter.append(models.Order.seller_id.in_(manager_seller_ids))
 
     total = db.query(func.count(models.Order.id)).filter(*base_filter).scalar() or 0
 
@@ -174,13 +183,12 @@ def master_dashboard(
                 "total": 0, "completed": 0, "pct": 0,
             })
             continue
-        u_total = db.query(func.count(models.Order.id)).filter(
-            _imported_on(target),
-            models.Order.unit_id == unit.id,
-        ).scalar() or 0
+        unit_filter = [_imported_on(target), models.Order.unit_id == unit.id]
+        if manager_seller_ids:
+            unit_filter.append(models.Order.seller_id.in_(manager_seller_ids))
+        u_total = db.query(func.count(models.Order.id)).filter(*unit_filter).scalar() or 0
         u_done = db.query(func.count(models.Order.id)).filter(
-            _imported_on(target),
-            models.Order.unit_id == unit.id,
+            *unit_filter,
             models.Order.status == models.OrderStatus.COMPLETED,
         ).scalar() or 0
         units_summary.append({
@@ -340,7 +348,11 @@ def master_dashboard(
     checks["checks_enabled"] = checks_enabled
 
     # ── Sellers ativos SEM pedidos hoje ─────────────────────
-    all_active_sellers = db.query(models.Seller).filter(models.Seller.active == True).all()
+    # Para gerente: só mostra os sellers que ele gerencia sem pedidos
+    sellers_query = db.query(models.Seller).filter(models.Seller.active == True)
+    if manager_seller_ids:
+        sellers_query = sellers_query.filter(models.Seller.id.in_(manager_seller_ids))
+    all_active_sellers = sellers_query.all()
     seller_ids_with_orders = {r["seller_id"] for r in sellers_with_orders}
     sellers_no_orders = [
         {"seller_id": s.id, "seller_name": s.trade_name}
@@ -400,27 +412,35 @@ def master_dashboard(
 
 @router.get("/seller", response_model=schemas.SellerDashboard)
 def seller_dashboard(
-    target_date: Optional[date] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Cockpit do seller. Mesma regra de data: filtra pelo dia do upload.
+    Cockpit do seller. Filtra pedidos pelo dia do upload (imported_at).
+    Aceita range de datas (date_from / date_to). Default = hoje.
     """
+    from fastapi import HTTPException
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
-    if user_role not in ["seller", "admin"]:
-        from fastapi import HTTPException
+    if user_role not in ["client", "admin"]:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     seller_id = current_user.seller_id
     if not seller_id and user_role != "admin":
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Usuário sem seller associado")
 
-    target = target_date or date.today()
+    today = date.today()
+    start = date_from or today
+    end   = date_to   or today
+
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
 
-    base_filter = [_imported_on(target)]
+    # Filtra pelo range de datas de upload (imported_at)
+    base_filter = [
+        func.date(models.Order.imported_at) >= start,
+        func.date(models.Order.imported_at) <= end,
+    ]
     if seller_id:
         base_filter.append(models.Order.seller_id == seller_id)
 
@@ -433,13 +453,16 @@ def seller_dashboard(
 
     recent_orders = db.query(models.Order).filter(
         *base_filter
-    ).order_by(models.Order.imported_at.desc()).limit(20).all()
+    ).order_by(models.Order.imported_at.desc()).limit(500).all()
 
     orders_list = [
         {
+            "id": o.id,
             "nf_number": o.nf_number,
             "customer_name": o.customer_name,
             "carrier": o.carrier,
+            "order_date": str(o.order_date) if o.order_date else None,
+            "imported_at": o.imported_at.isoformat() if o.imported_at else None,
             "status": o.status.value if hasattr(o.status, 'value') else o.status,
             "items_count": len(o.items),
         }
@@ -462,13 +485,14 @@ def seller_dashboard(
     ]
 
     return {
-        "date": str(target_date),
-        "summary": summary,
-        "sellers": sellers_with_orders,
-        "sessions": sessions_today_list,
-        "checks": checks,
-        "alerts": alerts,
-        "sellers_no_orders": sellers_no_orders,
-        "recent_orders": recent_orders_list,
+        "seller_id": seller_id or 0,
+        "seller_name": seller.trade_name if seller else "Seller",
+        "date_from": start,
+        "date_to": end,
+        "total_orders": total,
+        "orders_completed": completed,
+        "orders_pending": pending,
+        "completion_rate": completion_rate,
+        "recent_orders": orders_list,
         "stock_alerts": stock_alerts,
     }

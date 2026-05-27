@@ -371,6 +371,8 @@ export default function HandlingPage() {
   const [confirmAction, setConfirmAction] = useState<{ action: AdminAction; card: SessionCard } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
+  // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
   const { data: cards = [], isLoading, refetch } = useQuery(
     ['session-cards', dateFrom, dateTo],
     () => scanningApi.sessionCards({ date_from: dateFrom, date_to: dateTo }).then(r => r.data),
@@ -384,7 +386,7 @@ export default function HandlingPage() {
     return Array.from(s).sort();
   }, [cards]);
 
-  // Apply seller filter
+  // Admin: filtro visual por seller. Operador/gerente já chegam pré-filtrados do backend.
   const filtered = useMemo(() =>
     sellerFilter ? cards.filter(c => c.seller_name === sellerFilter) : cards,
     [cards, sellerFilter]

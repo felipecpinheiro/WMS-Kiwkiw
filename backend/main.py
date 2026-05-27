@@ -44,11 +44,6 @@ async def lifespan(app: FastAPI):
 
 
 def run_light_migrations():
-    """
-    Migração simples para SQLite: adiciona colunas que não existem
-    ainda (equivalente manual do Alembic). Idempotente — roda toda vez
-    e só aplica o que falta.
-    """
     from sqlalchemy import text
     db = SessionLocal()
     try:

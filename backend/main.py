@@ -52,33 +52,65 @@ def run_light_migrations():
     from sqlalchemy import text
     db = SessionLocal()
     try:
-        # Pega colunas existentes de picking_sessions
-        rows = db.execute(text("PRAGMA table_info(picking_sessions)")).fetchall()
-        existing = {r[1] for r in rows}
-        migrations = []
-        if "file_type" not in existing:
-            migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
-        if "for_billing" not in existing:
-            migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT 1 NOT NULL")
+        # Detecta se está usando PostgreSQL ou SQLite
+        db_url = os.environ.get("DATABASE_URL", "")
+        is_postgres = db_url.startswith("postgres")
 
-        # Sellers: colunas adicionadas na v3
-        rows_sel = db.execute(text("PRAGMA table_info(sellers)")).fetchall()
-        existing_sel = {r[1] for r in rows_sel}
-        if "contact_email" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
-        if "code" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
-        if "experience_file_path" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+        if is_postgres:
+            # PostgreSQL: usa information_schema em vez de PRAGMA
+            def col_exists(table, column):
+                r = db.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name=:t AND column_name=:c"
+                ), {"t": table, "c": column}).fetchone()
+                return r is not None
 
-        # user_sellers — tabela de associação many-to-many (user ↔ sellers)
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS user_sellers (
-                user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
-                seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
-                PRIMARY KEY (user_id, seller_id)
-            )
-        """))
+            migrations = []
+            if not col_exists("picking_sessions", "file_type"):
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
+            if not col_exists("picking_sessions", "for_billing"):
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT TRUE NOT NULL")
+            if not col_exists("sellers", "contact_email"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
+            if not col_exists("sellers", "code"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
+            if not col_exists("sellers", "experience_file_path"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sellers (
+                    user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+                    seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+                    PRIMARY KEY (user_id, seller_id)
+                )
+            """))
+
+        else:
+            # SQLite: comportamento original com PRAGMA
+            rows = db.execute(text("PRAGMA table_info(picking_sessions)")).fetchall()
+            existing = {r[1] for r in rows}
+            migrations = []
+            if "file_type" not in existing:
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
+            if "for_billing" not in existing:
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT 1 NOT NULL")
+
+            rows_sel = db.execute(text("PRAGMA table_info(sellers)")).fetchall()
+            existing_sel = {r[1] for r in rows_sel}
+            if "contact_email" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
+            if "code" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
+            if "experience_file_path" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sellers (
+                    user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+                    seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+                    PRIMARY KEY (user_id, seller_id)
+                )
+            """))
 
         for sql in migrations:
             db.execute(text(sql))

@@ -5,7 +5,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-
+# teste
 # Banco de dados
 *.db
 *.sqlite3

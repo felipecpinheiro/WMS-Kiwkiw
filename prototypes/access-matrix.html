@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WMS Kiwkiw — Matriz de Acessos</title>
+<style>
+  :root {
+    --green:      #16a34a;
+    --green-lt:   #dcfce7;
+    --blue:       #2563eb;
+    --blue-lt:    #dbeafe;
+    --purple:     #7c3aed;
+    --purple-lt:  #ede9fe;
+    --amber:      #d97706;
+    --amber-lt:   #fef3c7;
+    --red:        #dc2626;
+    --red-lt:     #fee2e2;
+    --gray-50:    #f9fafb;
+    --gray-100:   #f3f4f6;
+    --gray-200:   #e5e7eb;
+    --gray-400:   #9ca3af;
+    --gray-600:   #4b5563;
+    --gray-800:   #1f2937;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--gray-100);
+    color: var(--gray-800);
+    min-height: 100vh;
+  }
+
+  /* ---- HEADER ---- */
+  header {
+    background: var(--gray-800);
+    color: white;
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .logo-mark {
+    width: 40px; height: 40px;
+    background: var(--green);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 18px;
+  }
+  header h1 { font-size: 20px; font-weight: 700; }
+  header p  { font-size: 12px; opacity: 0.55; margin-top: 2px; }
+
+  /* ---- LAYOUT ---- */
+  main { max-width: 1280px; margin: 0 auto; padding: 32px 24px; }
+
+  /* ---- ROLE SELECTOR ---- */
+  .role-tabs {
+    display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap;
+  }
+  .role-tab {
+    padding: 10px 22px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.18s;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .role-tab.admin    { background: var(--purple-lt); color: var(--purple); }
+  .role-tab.manager  { background: var(--blue-lt);   color: var(--blue); }
+  .role-tab.operator { background: var(--green-lt);  color: var(--green); }
+  .role-tab.client   { background: var(--amber-lt);  color: var(--amber); }
+  .role-tab.active   { border-color: currentColor; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  .role-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+
+  /* ---- ROLE SUMMARY CARD ---- */
+  .role-summary {
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+    border-left: 5px solid;
+    display: flex; gap: 20px; align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .role-summary.admin    { background: var(--purple-lt); border-color: var(--purple); }
+  .role-summary.manager  { background: var(--blue-lt);   border-color: var(--blue); }
+  .role-summary.operator { background: var(--green-lt);  border-color: var(--green); }
+  .role-summary.client   { background: var(--amber-lt);  border-color: var(--amber); }
+  .role-summary h2 { font-size: 18px; font-weight: 700; }
+  .role-summary p  { font-size: 13px; opacity: 0.85; margin-top: 4px; max-width: 640px; line-height: 1.6; }
+  .scope-tag {
+    display: inline-block;
+    background: white;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 10px;
+    margin-right: 6px;
+    letter-spacing: 0.3px;
+    opacity: 0.85;
+  }
+
+  /* ---- MATRIX GRID ---- */
+  .sections-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 18px;
+  }
+  .section-card {
+    background: white;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .section-header {
+    padding: 14px 18px;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .section-icon { font-size: 16px; }
+
+  .perm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 11px 18px;
+    border-bottom: 1px solid var(--gray-100);
+    gap: 10px;
+    transition: background 0.1s;
+  }
+  .perm-row:last-child { border-bottom: none; }
+  .perm-row:hover { background: var(--gray-50); }
+
+  .perm-label {
+    font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+    flex: 1;
+  }
+  .perm-note {
+    font-size: 11px;
+    color: var(--gray-400);
+    margin-top: 2px;
+  }
+
+  /* Status badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .badge.allowed   { background: var(--green-lt);  color: var(--green); }
+  .badge.partial   { background: var(--amber-lt);  color: var(--amber); }
+  .badge.denied    { background: var(--red-lt);    color: var(--red); }
+  .badge.readonly  { background: var(--blue-lt);   color: var(--blue); }
+
+  /* ---- UPLOAD / EXPORT SPOTLIGHT ---- */
+  .spotlight {
+    background: white;
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .spotlight h3 {
+    font-size: 14px; font-weight: 700;
+    margin-bottom: 14px;
+    color: var(--gray-600);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .btn-demo-row {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .btn-demo {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px;
+    border-radius: 9px;
+    font-size: 13px; font-weight: 600;
+    border: none; cursor: default;
+    transition: opacity 0.15s;
+  }
+  .btn-upload { background: var(--purple); color: white; }
+  .btn-export { background: var(--green);  color: white; }
+  .btn-demo.hidden-btn { opacity: 0.2; text-decoration: line-through; cursor: not-allowed; }
+  .btn-demo.visible-btn { opacity: 1; }
+
+  /* ---- FOOTER NOTE ---- */
+  .footer-note {
+    margin-top: 32px;
+    padding: 16px 20px;
+    background: white;
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--gray-600);
+    border-left: 4px solid var(--gray-200);
+    line-height: 1.8;
+  }
+  .footer-note strong { color: var(--gray-800); }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--gray-600); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">K</div>
+  <div>
+    <h1>WMS Kiwkiw — Matriz de Acessos</h1>
+    <p>Selecione um perfil para visualizar o que ele pode ver, editar e executar</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Role Tabs -->
+  <div class="role-tabs">
+    <div class="role-tab admin active" onclick="setRole('admin')">
+      <div class="role-dot"></div> Administrador
+    </div>
+    <div class="role-tab manager" onclick="setRole('manager')">
+      <div class="role-dot"></div> Gerente
+    </div>
+    <div class="role-tab operator" onclick="setRole('operator')">
+      <div class="role-dot"></div> Operador
+    </div>
+    <div class="role-tab client" onclick="setRole('client')">
+      <div class="role-dot"></div> Cliente
+    </div>
+  </div>
+
+  <!-- Role Summary -->
+  <div id="role-summary" class="role-summary admin">
+    <div>
+      <h2 id="role-title">Administrador</h2>
+      <p id="role-desc"></p>
+      <div id="role-tags"></div>
+    </div>
+  </div>
+
+  <!-- Upload / Export Spotlight -->
+  <div class="spotlight">
+    <h3>🔑 Botões de Ação Principal</h3>
+    <div class="btn-demo-row" id="action-buttons"></div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><span class="badge allowed">✓ Permitido</span> Acesso total</div>
+    <div class="legend-item"><span class="badge readonly">👁 Leitura</span> Somente visualização</div>
+    <div class="legend-item"><span class="badge partial">~ Parcial</span> Filtrado pelo seu grupo</div>
+    <div class="legend-item"><span class="badge denied">✗ Negado</span> Sem acesso</div>
+  </div>
+
+  <!-- Permissions Grid -->
+  <div class="sections-grid" id="perm-grid"></div>
+
+  <!-- Footer note -->
+  <div class="footer-note">
+    <strong>Importante:</strong> As permissões de frontend (ocultar botões e seções) são apenas UX.
+    A segurança real é aplicada no backend via <code>require_admin</code>, <code>require_manager_or_above</code>
+    e <code>check_permission()</code> em cada endpoint. Nenhuma chamada API passa sem validação do JWT.
+    <br><br>
+    <strong>Escopo de dados:</strong> Gerente e Operador recebem no token JWT uma lista de <code>seller_ids</code>
+    autorizados. O backend filtra automaticamente todas as queries por esse escopo — o usuário
+    nunca vê dados de sellers aos quais não está vinculado, mesmo que tente manipular a URL.
+  </div>
+
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Dados de permissão por role
+// ---------------------------------------------------------------------------
+const ROLES = {
+  admin: {
+    label: 'Administrador',
+    color: 'admin',
+    desc: 'Acesso total ao sistema. Único perfil que pode importar pedidos, cadastrar usuários, sellers, unidades e alterar configurações globais. Vê dados de todas as unidades e sellers sem restrição.',
+    tags: ['Acesso Global', 'Importação de Pedidos', 'Cadastro de Usuários', 'Configurações Gerais'],
+  },
+  manager: {
+    label: 'Gerente',
+    color: 'manager',
+    desc: 'Visualiza e edita somente o grupo de sellers que gerencia. Pode cadastrar/editar produtos e ajustar estoque do seu grupo. Não cadastra usuários, sellers ou altera configurações do sistema.',
+    tags: ['Escopo por Grupo de Sellers', 'Edita Produtos/Estoque do Grupo', 'Dashboard do Grupo'],
+  },
+  operator: {
+    label: 'Operador',
+    color: 'operator',
+    desc: 'Foco em bipagem. Vê apenas os sellers que atende. Não cadastra produtos. Pode interromper pedido mediante justificativa obrigatória. Exportação de dados habilitada.',
+    tags: ['Escopo por Sellers Atribuídos', 'Bipagem de Pedidos', 'Interrupção c/ Justificativa'],
+  },
+  client: {
+    label: 'Cliente (Seller)',
+    color: 'client',
+    desc: 'Portal somente leitura. Vê estoque e status dos seus próprios pedidos. Não edita nenhum dado. Não acessa a interface de bipagem interna. Exportação de estoque disponível.',
+    tags: ['Somente Leitura', 'Apenas Seu Seller', 'Portal Web'],
+  },
+};
+
+// Seções da matriz
+const SECTIONS = [
+  {
+    title: 'Importação de Pedidos',
+    icon: '📥',
+    perms: [
+      { label: 'Importar / Upload de arquivo', note: 'Botão de upload visível e ativo',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Visualizar lista de pedidos', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'partial' },
+      { label: 'Ver detalhes de pedido', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'partial' },
+      { label: 'Interromper pedido', note: 'Com justificativa obrigatória',
+        admin: 'allowed', manager: 'allowed', operator: 'allowed', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Bipagem / Scan',
+    icon: '🔍',
+    perms: [
+      { label: 'Acessar interface de bipagem', note: '',
+        admin: 'allowed', manager: 'allowed', operator: 'allowed', client: 'denied' },
+      { label: 'Consultar histórico de scan', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'denied' },
+      { label: 'Ver produtividade de operadores', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Produtos',
+    icon: '📦',
+    perms: [
+      { label: 'Visualizar catálogo de produtos', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'denied' },
+      { label: 'Cadastrar produto', note: '',
+        admin: 'allowed', manager: 'allowed', operator: 'denied', client: 'denied' },
+      { label: 'Editar produto', note: 'Manager: somente do seu grupo',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+      { label: 'Remover produto', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Associar foto ao SKU', note: '',
+        admin: 'allowed', manager: 'allowed', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Estoque',
+    icon: '🏭',
+    perms: [
+      { label: 'Ver estoque', note: 'Client: somente o seu seller',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'readonly' },
+      { label: 'Ajustar estoque manualmente', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+      { label: 'Exportar relatório de estoque', note: 'CSV / PDF',
+        admin: 'allowed', manager: 'allowed', operator: 'allowed', client: 'allowed' },
+    ],
+  },
+  {
+    title: 'Kits e Algoritmo de Caixas',
+    icon: '🎁',
+    perms: [
+      { label: 'Visualizar cadastro de kits', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'readonly', client: 'denied' },
+      { label: 'Criar / editar kits', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+      { label: 'Visualizar algoritmo de caixas', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'readonly', client: 'denied' },
+      { label: 'Editar algoritmo de caixas', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Sellers / Clientes',
+    icon: '🏪',
+    perms: [
+      { label: 'Listar sellers', note: 'Manager: somente do seu grupo',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'denied' },
+      { label: 'Cadastrar novo seller', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Editar dados do seller', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Remover seller', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Usuários',
+    icon: '👤',
+    perms: [
+      { label: 'Listar usuários', note: 'Manager: somente do seu grupo',
+        admin: 'allowed', manager: 'readonly', operator: 'denied', client: 'denied' },
+      { label: 'Cadastrar usuário', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Editar usuário', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Inativar usuário', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Redefinir senha', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Dashboard e Relatórios',
+    icon: '📊',
+    perms: [
+      { label: 'Cockpit / Dashboard', note: 'Escopo varia por perfil',
+        admin: 'allowed', manager: 'partial', operator: 'partial', client: 'partial' },
+      { label: 'Relatórios gerenciais', note: '',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+      { label: 'Exportar relatórios', note: 'Todos os formatos',
+        admin: 'allowed', manager: 'allowed', operator: 'allowed', client: 'allowed' },
+      { label: 'Portal do seller (web)', note: 'Status de pedidos em tempo real',
+        admin: 'allowed', manager: 'allowed', operator: 'denied', client: 'allowed' },
+    ],
+  },
+  {
+    title: 'Auditoria',
+    icon: '🔒',
+    perms: [
+      { label: 'Trilha de auditoria completa', note: 'Horário exato, usuário, ação',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+      { label: 'Histórico de arquivos CSV', note: 'Por unidade / seller / data',
+        admin: 'allowed', manager: 'partial', operator: 'denied', client: 'denied' },
+    ],
+  },
+  {
+    title: 'Configurações Gerais',
+    icon: '⚙️',
+    perms: [
+      { label: 'Visualizar configurações', note: '',
+        admin: 'allowed', manager: 'readonly', operator: 'denied', client: 'denied' },
+      { label: 'Editar configurações', note: 'Tipo de arquivo: entrada/saída, faturamento',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Gerenciar unidades', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+      { label: 'Configurar cobrança', note: '',
+        admin: 'allowed', manager: 'denied', operator: 'denied', client: 'denied' },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Render functions
+// ---------------------------------------------------------------------------
+
+let currentRole = 'admin';
+
+function setRole(role) {
+  currentRole = role;
+  document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.role-tab.' + role).classList.add('active');
+  renderAll();
+}
+
+function badgeHtml(status) {
+  const map = {
+    allowed:  '<span class="badge allowed">✓ Permitido</span>',
+    partial:  '<span class="badge partial">~ Parcial</span>',
+    denied:   '<span class="badge denied">✗ Negado</span>',
+    readonly: '<span class="badge readonly">👁 Leitura</span>',
+  };
+  return map[status] || '';
+}
+
+function renderAll() {
+  const r = ROLES[currentRole];
+
+  // Summary
+  const summary = document.getElementById('role-summary');
+  summary.className = 'role-summary ' + r.color;
+  document.getElementById('role-title').textContent = r.label;
+  document.getElementById('role-desc').textContent  = r.desc;
+  document.getElementById('role-tags').innerHTML    = r.tags.map(t =>
+    `<span class="scope-tag">${t}</span>`
+  ).join('');
+
+  // Action buttons spotlight
+  const canUpload = currentRole === 'admin';
+  const canExport = true;
+  document.getElementById('action-buttons').innerHTML = `
+    <div>
+      <div class="btn-demo btn-upload ${canUpload ? 'visible-btn' : 'hidden-btn'}">
+        📥 Importar Pedidos
+      </div>
+      <div style="font-size:11px; margin-top:5px; color:var(--gray-400)">
+        ${canUpload ? '✓ Visível para este perfil' : '✗ Oculto para este perfil'}
+      </div>
+    </div>
+    <div>
+      <div class="btn-demo btn-export ${canExport ? 'visible-btn' : 'hidden-btn'}">
+        📤 Exportar
+      </div>
+      <div style="font-size:11px; margin-top:5px; color:var(--gray-400)">
+        ✓ Visível para todos os perfis
+      </div>
+    </div>
+    <div style="font-size:12px; color:var(--gray-600); padding: 8px 0; max-width:300px; line-height:1.6">
+      ${canUpload
+        ? '🔑 Admin: ambos os botões visíveis. Upload restrito somente a este perfil.'
+        : '🚫 Botão de upload <strong>oculto</strong> na interface. Exportação disponível normalmente.'}
+    </div>
+  `;
+
+  // Permissions grid
+  const grid = document.getElementById('perm-grid');
+  grid.innerHTML = SECTIONS.map(section => {
+    const rows = section.perms.map(p => {
+      const status = p[currentRole];
+      return `
+        <div class="perm-row">
+          <div class="perm-label">
+            <div>
+              <div>${p.label}</div>
+              ${p.note ? `<div class="perm-note">${p.note}</div>` : ''}
+            </div>
+          </div>
+          ${badgeHtml(status)}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="section-card">
+        <div class="section-header">
+          <span class="section-icon">${section.icon}</span>
+          ${section.title}
+        </div>
+        ${rows}
+      </div>
+    `;
+  }).join('');
+}
+
+// Init
+renderAll();
+</script>
+</body>
+</html>

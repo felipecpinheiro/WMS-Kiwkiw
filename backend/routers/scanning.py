@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
 from ..database import get_db
-from ..auth import get_current_user, require_operator_or_above, require_master_or_above, require_admin
+from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin
 from .. import models, schemas
 
 router = APIRouter(prefix="/scanning", tags=["Bipagem"])
@@ -99,7 +99,7 @@ def _build_item_dict(item: models.OrderItem, seller_id: int, item_scan_counts: d
 def get_session_orders(
     session_id: int,
     seller_id: Optional[int] = None,
-    current_user: models.User = Depends(require_operator_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """
@@ -189,7 +189,7 @@ def get_session_orders(
 def open_order_by_nfe(
     session_id: int,
     request: schemas.OpenByNfeRequest,
-    current_user: models.User = Depends(require_operator_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """Abre um pedido pelo scan da chave de acesso da NFe (código extenso da etiqueta)."""
@@ -257,7 +257,7 @@ def open_order_by_nfe(
 def get_session_scan_logs(
     session_id: int,
     order_id: Optional[int] = None,
-    current_user: models.User = Depends(require_operator_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """Retorna o log de bipagens de uma sessão (para exibição em tempo real)."""
@@ -343,7 +343,7 @@ def debug_sessions_raw(
 def update_session_config(
     session_id: int,
     payload: schemas.PickingSessionConfigUpdate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -402,7 +402,7 @@ def update_session_config(
 @router.post("/scan", response_model=schemas.ScanResponse)
 def process_scan(
     request: schemas.ScanRequest,
-    current_user: models.User = Depends(require_operator_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """
@@ -588,7 +588,7 @@ def process_scan(
 @router.post("/interrupt", response_model=dict)
 def interrupt_order(
     request: schemas.InterruptRequest,
-    current_user: models.User = Depends(require_operator_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """
@@ -926,7 +926,7 @@ def get_audit_log(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     limit: int = Query(default=200, le=5000),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Retorna trilha de auditoria completa da bipagem."""
@@ -974,7 +974,7 @@ def get_system_audit_log(
     action: Optional[str] = None,
     user_id_filter: Optional[int] = Query(default=None, alias="user_id"),
     limit: int = Query(default=500, le=5000),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -1022,7 +1022,7 @@ def operator_productivity(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     unit_id: Optional[int] = None,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -1190,15 +1190,32 @@ def session_cards(
 
     user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
 
+    # Sellers vinculados ao usuário logado (operador ou gerente).
+    # Usado para filtrar cards no nível do servidor — mais seguro que filtrar no frontend.
+    my_seller_ids: list[int] = []
+    if user_role in ("operator", "manager"):
+        my_seller_ids = [s.id for s in (current_user.sellers or [])]
+
     # Busca sessões com filtros de data/unidade
     q = db.query(models.PickingSession).options(
         _jl(models.PickingSession.orders).joinedload(models.Order.seller)
     )
 
+    # Operador → restrito à própria unidade
     if user_role == "operator" and current_user.unit_id:
         q = q.filter(models.PickingSession.unit_id == current_user.unit_id)
     elif unit_id:
         q = q.filter(models.PickingSession.unit_id == unit_id)
+
+    # Gerente → restringe as sessões que tenham pelo menos 1 pedido do seller vinculado
+    if user_role == "manager" and my_seller_ids:
+        from sqlalchemy import exists as _exists
+        q = q.filter(
+            _exists().where(
+                (models.Order.session_id == models.PickingSession.id) &
+                (models.Order.seller_id.in_(my_seller_ids))
+            )
+        )
 
     if date_from:
         q = q.filter(models.PickingSession.session_date >= date_from)
@@ -1213,6 +1230,15 @@ def session_cards(
         seller_orders: dict = {}
         for order in session.orders:
             sid = order.seller_id
+
+            # ── Filtra por sellers vinculados (operador e gerente) ──────────────
+            # Se my_seller_ids está vazio e o usuário é operador/gerente, não exibe nada
+            # (usuário sem sellers vinculados → kanban vazio, não tudo)
+            if user_role in ("operator", "manager"):
+                if not my_seller_ids or sid not in my_seller_ids:
+                    continue
+            # ───────────────────────────────────────────────────────────────────
+
             if sid not in seller_orders:
                 seller_orders[sid] = {
                     "seller_id": sid,
@@ -1221,22 +1247,8 @@ def session_cards(
                 }
             seller_orders[sid]["orders"].append(order)
 
-        # Se a sessão não tem ordens, gera um card sem seller
+        # Se a sessão não tem ordens visíveis para este usuário, pula
         if not seller_orders:
-            cards.append({
-                "card_id": f"{session.id}_0",
-                "session_id": session.id,
-                "seller_id": None,
-                "seller_name": "Sem pedidos",
-                "session_date": str(session.session_date),
-                "created_at": session.created_at.isoformat() if session.created_at else None,
-                "unit_id": session.unit_id,
-                "source_file": session.source_file,
-                "total_orders": 0,
-                "completed_orders": 0,
-                "status": "pending",
-                "all_checks_ok": session.all_checks_ok,
-            })
             continue
 
         for sid, info in seller_orders.items():

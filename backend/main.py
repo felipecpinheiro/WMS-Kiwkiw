@@ -44,38 +44,73 @@ async def lifespan(app: FastAPI):
 
 
 def run_light_migrations():
-    """
-    Migração simples para SQLite: adiciona colunas que não existem
-    ainda (equivalente manual do Alembic). Idempotente — roda toda vez
-    e só aplica o que falta.
-    """
     from sqlalchemy import text
     db = SessionLocal()
     try:
-        # Pega colunas existentes de picking_sessions
-        rows = db.execute(text("PRAGMA table_info(picking_sessions)")).fetchall()
-        existing = {r[1] for r in rows}
-        migrations = []
-        if "file_type" not in existing:
-            migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
-        if "for_billing" not in existing:
-            migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT 1 NOT NULL")
+        # Detecta se está usando PostgreSQL ou SQLite
+        db_url = os.environ.get("DATABASE_URL", "")
+        is_postgres = db_url.startswith("postgres")
 
-        # Sellers: colunas adicionadas na v3
-        rows_sel = db.execute(text("PRAGMA table_info(sellers)")).fetchall()
-        existing_sel = {r[1] for r in rows_sel}
-        if "contact_email" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
-        if "code" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
-        if "experience_file_path" not in existing_sel:
-            migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+        if is_postgres:
+            # PostgreSQL: usa information_schema em vez de PRAGMA
+            def col_exists(table, column):
+                r = db.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name=:t AND column_name=:c"
+                ), {"t": table, "c": column}).fetchone()
+                return r is not None
+
+            migrations = []
+            if not col_exists("picking_sessions", "file_type"):
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
+            if not col_exists("picking_sessions", "for_billing"):
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT TRUE NOT NULL")
+            if not col_exists("sellers", "contact_email"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
+            if not col_exists("sellers", "code"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
+            if not col_exists("sellers", "experience_file_path"):
+                migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sellers (
+                    user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+                    seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+                    PRIMARY KEY (user_id, seller_id)
+                )
+            """))
+
+        else:
+            # SQLite: comportamento original com PRAGMA
+            rows = db.execute(text("PRAGMA table_info(picking_sessions)")).fetchall()
+            existing = {r[1] for r in rows}
+            migrations = []
+            if "file_type" not in existing:
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN file_type VARCHAR(20) DEFAULT 'Saída' NOT NULL")
+            if "for_billing" not in existing:
+                migrations.append("ALTER TABLE picking_sessions ADD COLUMN for_billing BOOLEAN DEFAULT 1 NOT NULL")
+
+            rows_sel = db.execute(text("PRAGMA table_info(sellers)")).fetchall()
+            existing_sel = {r[1] for r in rows_sel}
+            if "contact_email" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN contact_email TEXT")
+            if "code" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
+            if "experience_file_path" not in existing_sel:
+                migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sellers (
+                    user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+                    seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+                    PRIMARY KEY (user_id, seller_id)
+                )
+            """))
 
         for sql in migrations:
             db.execute(text(sql))
             print(f"✅ Migração aplicada: {sql}")
-        if migrations:
-            db.commit()
+        db.commit()
     except Exception as e:
         print(f"⚠️  Aviso em migrações leves: {e}")
     finally:
@@ -132,10 +167,10 @@ app = FastAPI(
     * **Dashboard** — Cockpit gerencial e portal do seller
 
     ## Roles de Acesso
-    * **admin** — Acesso total ao sistema
-    * **master** — Gerencia operações diárias, gera relatórios
-    * **operator** — Interface de bipagem da unidade
-    * **seller** — Portal do seller (estoque + status de pedidos)
+    * **admin**    — Acesso total. Único que importa pedidos e cadastra usuários/sellers
+    * **manager**  — Gerente: vê e edita somente seu grupo de sellers
+    * **operator** — Operador: bipagem dos sellers que atende
+    * **client**   — Cliente (seller): portal somente leitura
     """,
     version="1.0.0",
     contact={"name": "Kiwkiw WMS", "email": "admin@kiwkiw.com.br"},

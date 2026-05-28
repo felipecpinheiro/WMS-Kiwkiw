@@ -48,8 +48,23 @@ def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(get_current_user)):
-    """Retorna dados do usuário autenticado."""
-    return current_user
+    """Retorna dados do usuário autenticado (enriquecido com nomes e seller_ids)."""
+    role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    return schemas.UserResponse(
+        id=current_user.id,
+        name=current_user.name,
+        email=current_user.email,
+        role=role,
+        unit_id=current_user.unit_id,
+        unit_name=current_user.unit.name if current_user.unit else None,
+        seller_id=current_user.seller_id,
+        seller_name=(current_user.seller.trade_name if current_user.seller else None),
+        seller_ids=[s.id for s in (current_user.sellers or [])],
+        seller_names=[s.trade_name for s in (current_user.sellers or [])],
+        active=current_user.active,
+        created_at=current_user.created_at,
+        last_login=current_user.last_login,
+    )
 
 
 @router.post("/change-password")

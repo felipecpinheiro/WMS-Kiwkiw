@@ -1,23 +1,171 @@
 /**
  * WMS Kiwkiw - Portal do Seller
- * Interface externa para sellers consultarem pedidos, estoque e status.
+ * Sidebar lateral, tabela de estoque com sort + modal de detalhe por SKU,
+ * aba de Movimentações e aba de Pedidos.
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
-import { Package, TrendingDown, CheckCircle, Clock, LogOut, Search, Download } from 'lucide-react';
+import {
+  Package, TrendingDown, CheckCircle, Clock, LogOut,
+  Search, Download, ClipboardList, Warehouse,
+  ChevronUp, ChevronDown, ChevronsUpDown, X,
+  BarChart2, List, CalendarDays,
+} from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend,
+} from 'recharts';
 import { dashboardApi, inventoryApi } from '../api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:     { label: 'Pendente',    color: 'bg-gray-100 text-white/60' },
-  scanning:    { label: 'Em Bipagem', color: 'bg-blue-100 text-blue-700' },
-  completed:   { label: 'Concluído',  color: 'bg-violet-900/40 text-violet-300' },
-  interrupted: { label: 'Interrompido', color: 'bg-orange-100 text-orange-700' },
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
+type Tab = 'orders' | 'stock' | 'movements';
+type StockSubTab = 'position' | 'chart';
+type SortDir = 'asc' | 'desc' | null;
+interface SortState { col: string; dir: SortDir }
+
+// ─── Configurações ────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
+  pending:     { label: 'Pendente',      cls: 'bg-gray-700/60 text-white/50' },
+  validated:   { label: 'Validado',      cls: 'bg-teal-900/40 text-teal-300' },
+  separating:  { label: 'Em Separação',  cls: 'bg-blue-900/40 text-blue-300' },
+  scanning:    { label: 'Em Bipagem',    cls: 'bg-violet-900/40 text-violet-300' },
+  completed:   { label: 'Concluído',     cls: 'bg-green-900/40 text-green-300' },
+  interrupted: { label: 'Interrompido',  cls: 'bg-orange-900/40 text-orange-300' },
+  cancelled:   { label: 'Cancelado',     cls: 'bg-red-900/40 text-red-400' },
 };
+
+// ─── Header de coluna com sort ────────────────────────────────────────────────
+
+function SortTh({
+  label, col, sort, onSort, className = '',
+}: {
+  label: string; col: string; sort: SortState;
+  onSort: (col: string) => void; className?: string;
+}) {
+  const active = sort.col === col;
+  return (
+    <th
+      className={`text-left text-[11px] font-semibold uppercase tracking-wide py-2.5 px-3 cursor-pointer select-none
+        hover:text-white/80 transition ${active ? 'text-violet-300' : 'text-white/45'} ${className}`}
+      onClick={() => onSort(col)}
+    >
+      <span className="flex items-center gap-1">
+        {label}
+        {active
+          ? sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+          : <ChevronsUpDown size={11} className="opacity-35" />}
+      </span>
+    </th>
+  );
+}
+
+// ─── Modal de detalhe do SKU (mesmo do Inventory) ────────────────────────────
+
+function SkuDetailModal({
+  sellerId, sku, onClose,
+}: {
+  sellerId: number; sku: string; onClose: () => void;
+}) {
+  const [days, setDays] = useState(90);
+  const { data, isLoading } = useQuery(
+    ['sku-history-portal', sellerId, sku, days],
+    () => inventoryApi.skuHistory(sellerId, sku, days).then(r => r.data),
+    { keepPreviousData: true },
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-white/8 sticky top-0 bg-gray-900 z-10">
+          <div>
+            <h2 className="text-base font-semibold text-white font-mono">{sku}</h2>
+            <p className="text-xs text-white/35 mt-0.5">{data?.product_name}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={days}
+              onChange={e => setDays(Number(e.target.value))}
+              className="border border-white/12 rounded-lg px-2 py-1.5 text-xs bg-gray-800 text-white outline-none focus:ring-2 focus:ring-violet-500"
+            >
+              <option value={30}>30 dias</option>
+              <option value={60}>60 dias</option>
+              <option value={90}>90 dias</option>
+              <option value={180}>180 dias</option>
+            </select>
+            <button onClick={onClose} className="text-white/35 hover:text-white/60">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center h-48 text-white/35 text-sm">Carregando...</div>
+        ) : data ? (
+          <div className="p-5 space-y-5">
+            {/* KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Saldo Atual',         value: data.current_stock,       color: 'text-white',      unit: '' },
+                { label: 'Média Diária (60d)',   value: data.avg_daily_sales_60d, color: 'text-blue-400',   unit: '/dia' },
+                { label: 'Total Saídas Período', value: data.total_sales_period,  color: 'text-red-400',    unit: '' },
+                {
+                  label: 'Projeção Duração',
+                  value: data.days_remaining != null ? data.days_remaining : '∞',
+                  color: data.days_remaining != null && data.days_remaining < 30
+                    ? 'text-red-400' : 'text-violet-400',
+                  unit: data.days_remaining != null ? ' dias' : '',
+                },
+              ].map(k => (
+                <div key={k.label} className="bg-white/4 rounded-xl p-3 text-center">
+                  <p className="text-[10px] text-white/35 uppercase tracking-wide mb-1">{k.label}</p>
+                  <p className={`text-xl font-bold ${k.color}`}>{k.value}{k.unit}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Gráfico barras */}
+            {data.chart_data && data.chart_data.length > 0 ? (
+              <div>
+                <p className="text-xs text-white/50 font-medium mb-3">Saídas e Entradas por Dia</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={data.chart_data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
+                    <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }} />
+                    <Bar dataKey="saidas"   name="Saídas"   fill="#ef4444" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="entradas" name="Entradas" fill="#7B63E8" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-center text-sm text-white/35 py-8">Sem movimentações no período</p>
+            )}
+
+            {/* Alerta ruptura */}
+            {data.days_remaining != null && data.days_remaining < 15 && (
+              <div className="bg-red-900/25 border border-red-500/20 rounded-xl p-3 text-sm text-red-300">
+                ⚠️ Atenção: com a média atual, o estoque se esgota em <strong>{data.days_remaining} dias</strong>. Considere reabastecer.
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-center text-sm text-white/35 py-10">Nenhum dado encontrado para este SKU.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function SellerPortalPage() {
   const navigate = useNavigate();
@@ -25,20 +173,34 @@ export default function SellerPortalPage() {
   const user = userStr ? JSON.parse(userStr) : {};
   const sellerId = user.seller_id;
 
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [tab, setTab] = useState<Tab>('orders');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [tab, setTab] = useState<'orders' | 'stock'>('orders');
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo]     = useState(today);
+  const [sort, setSort] = useState<SortState>({ col: '', dir: null });
+  const [selectedSku, setSelectedSku] = useState<string | null>(null);
+
+  // ── Dados ──────────────────────────────────────────────────────────────────
 
   const { data: dashboard } = useQuery(
-    ['seller-dashboard', sellerId],
-    () => sellerId ? dashboardApi.seller({ seller_id: sellerId }).then(r => r.data) : null,
-    { enabled: !!sellerId, refetchInterval: 60000 }
+    ['seller-dashboard', sellerId, dateFrom, dateTo],
+    () => sellerId ? dashboardApi.seller({ seller_id: sellerId, date_from: dateFrom, date_to: dateTo }).then(r => r.data) : null,
+    { enabled: !!sellerId, refetchInterval: 60000 },
   );
 
   const { data: stock = [] } = useQuery(
     ['seller-stock', sellerId],
     () => sellerId ? inventoryApi.stock(sellerId).then(r => r.data) : [],
-    { enabled: !!sellerId && tab === 'stock' }
+    { enabled: !!sellerId },
+  );
+
+  const { data: movements = [] } = useQuery(
+    ['seller-movements', sellerId],
+    () => sellerId ? inventoryApi.movements(sellerId).then(r => r.data) : [],
+    { enabled: !!sellerId && tab === 'movements' },
   );
 
   const handleLogout = () => {
@@ -47,178 +209,410 @@ export default function SellerPortalPage() {
     navigate('/login');
   };
 
-  const orders = dashboard?.orders ?? [];
+  // ── Pedidos ────────────────────────────────────────────────────────────────
+
+  const orders = dashboard?.recent_orders ?? [];
   const filteredOrders = orders.filter((o: any) =>
-    (!search || o.nf_number.includes(search) || o.customer_name.toLowerCase().includes(search.toLowerCase())) &&
-    (!statusFilter || o.status === statusFilter)
+    (!search || o.nf_number?.includes(search) || o.customer_name?.toLowerCase().includes(search.toLowerCase())) &&
+    (!statusFilter || o.status === statusFilter),
   );
 
-  const filteredStock = stock.filter((s: any) =>
-    !search || s.sku.toLowerCase().includes(search.toLowerCase()) || s.product_name.toLowerCase().includes(search.toLowerCase())
-  );
+  // ── Estoque com sort ───────────────────────────────────────────────────────
 
-  const completionPct = dashboard?.completion_rate ?? 0;
+  const handleSort = (col: string) => {
+    setSort(prev =>
+      prev.col === col
+        ? { col, dir: prev.dir === 'asc' ? 'desc' : prev.dir === 'desc' ? null : 'asc' }
+        : { col, dir: 'asc' },
+    );
+  };
+
+  const filteredStock: any[] = useMemo(() => {
+    const f = (stock as any[]).filter(s =>
+      !search ||
+      s.sku.toLowerCase().includes(search.toLowerCase()) ||
+      (s.product_name ?? '').toLowerCase().includes(search.toLowerCase()),
+    );
+    if (!sort.col || !sort.dir) return f;
+    return [...f].sort((a, b) => {
+      const av = a[sort.col] ?? '';
+      const bv = b[sort.col] ?? '';
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), 'pt-BR');
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [stock, search, sort]);
+
+  // ── Movimentações filtradas ────────────────────────────────────────────────
+
+  const filteredMovements: any[] = useMemo(() => {
+    if (!search) return movements as any[];
+    return (movements as any[]).filter(m =>
+      m.sku?.toLowerCase().includes(search.toLowerCase()) ||
+      (m.product_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (m.nf_number ?? '').includes(search),
+    );
+  }, [movements, search]);
+
+  const completionPct  = dashboard?.completion_rate ?? 0;
+  const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
+  const ordersCompleted = dashboard?.orders_completed ?? 0;
+  const ordersPending   = dashboard?.orders_pending ?? 0;
+  const initials = user.name
+    ? user.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
+    : 'S';
+
+  // ── Nav da sidebar ─────────────────────────────────────────────────────────
+
+  const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'orders',    label: 'Meus Pedidos',   icon: ClipboardList },
+    { id: 'stock',     label: 'Meu Estoque',    icon: Warehouse },
+    { id: 'movements', label: 'Movimentações',  icon: List },
+  ];
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-white/4">
-      {/* Header */}
-      <header className="bg-gray-900 border-b border-white/12 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-violet-500 rounded-lg flex items-center justify-center">
-              <span className="text-white font-black text-sm">K</span>
+    <div className="flex h-screen overflow-hidden" style={{ background: '#0C0B18' }}>
+
+      {/* ══ SIDEBAR ════════════════════════════════════════════════════════════ */}
+      <aside
+        className="w-56 flex flex-col flex-shrink-0 border-r"
+        style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)' }}
+      >
+        {/* Logo + seller */}
+        <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-8 h-8 flex-shrink-0 bg-violet-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-black text-xs">K</span>
             </div>
             <div>
-              <p className="text-sm font-bold text-white">WMS Kiwkiw</p>
-              <p className="text-xs text-white/35">Portal do Seller</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-white/90">{user.name}</p>
-              <p className="text-xs text-white/35">{format(new Date(), "dd/MM/yyyy", { locale: ptBR })}</p>
-            </div>
-            <button onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white/50 hover:text-red-600 border border-white/12 rounded-lg transition">
-              <LogOut size={14} /> Sair
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-
-        {/* KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: 'Pedidos Hoje', value: dashboard?.total_orders ?? 0, icon: Package, color: 'text-white/90' },
-            { label: 'Concluídos', value: dashboard?.completed_orders ?? 0, icon: CheckCircle, color: 'text-violet-400' },
-            { label: 'Em Andamento', value: dashboard?.in_progress_orders ?? 0, icon: Clock, color: 'text-blue-600' },
-            { label: 'SKUs c/ Estoque Baixo', value: stock.filter((s: any) => s.level === 'BAIXO').length, icon: TrendingDown, color: 'text-red-500' },
-          ].map(card => (
-            <div key={card.label} className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs text-white/35 mb-1">{card.label}</p>
-                  <p className={`text-2xl font-bold ${card.color}`}>{card.value}</p>
-                </div>
-                <card.icon size={18} className={card.color} />
+              <div className="text-xs font-bold text-white leading-tight">Kiwkiw WMS</div>
+              <div className="text-[9px] font-medium" style={{ color: 'rgba(255,255,255,0.30)' }}>
+                Portal do Seller
               </div>
             </div>
+          </div>
+          {/* Seller em destaque */}
+          <div className="rounded-xl px-3 py-2.5" style={{
+            background: 'linear-gradient(135deg, rgba(123,99,232,0.25) 0%, rgba(61,217,164,0.12) 100%)',
+            border: '1px solid rgba(123,99,232,0.30)',
+          }}>
+            <p className="text-[9px] uppercase tracking-widest font-bold mb-0.5" style={{ color: 'rgba(255,255,255,0.40)' }}>Seller</p>
+            <p className="text-sm font-bold text-white leading-tight truncate">{sellerName}</p>
+          </div>
+        </div>
+
+        {/* KPIs compactos */}
+        <div className="px-3 py-3 border-b space-y-1.5" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-2"
+            style={{ color: 'rgba(255,255,255,0.22)' }}>Hoje</p>
+          {[
+            { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-white/80' },
+            { label: 'Concluídos',    value: ordersCompleted,                color: 'text-green-400' },
+            { label: 'Pendentes',     value: ordersPending,                  color: 'text-violet-400' },
+            { label: 'Estoque Baixo', value: (stock as any[]).filter((s: any) => s.level === 'BAIXO').length, color: 'text-red-400' },
+          ].map(k => (
+            <div key={k.label} className="flex items-center justify-between">
+              <span className="text-[11px] text-white/40">{k.label}</span>
+              <span className={`text-sm font-bold ${k.color}`}>{k.value}</span>
+            </div>
           ))}
+          <div className="mt-2">
+            <div className="flex justify-between text-[10px] text-white/30 mb-1">
+              <span>Progresso</span>
+              <span>{completionPct.toFixed(0)}%</span>
+            </div>
+            <div className="w-full bg-white/10 rounded-full h-1.5">
+              <div className="bg-violet-500 h-1.5 rounded-full transition-all"
+                style={{ width: `${completionPct}%` }} />
+            </div>
+          </div>
         </div>
 
-        {/* Barra de progresso do dia */}
-        <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-5">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-semibold text-white/80">Progresso do Dia</p>
-            <p className="text-sm font-bold text-violet-400">{completionPct.toFixed(0)}%</p>
-          </div>
-          <div className="w-full bg-white/10 rounded-full h-3">
-            <div className="bg-violet-500 h-3 rounded-full transition-all" style={{ width: `${completionPct}%` }} />
-          </div>
-          <p className="text-xs text-white/35 mt-1.5">
-            {dashboard?.completed_orders ?? 0} de {dashboard?.total_orders ?? 0} pedidos finalizados
-          </p>
-        </div>
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-3 px-2.5">
+          <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]"
+            style={{ color: 'rgba(255,255,255,0.22)' }}>Consultas</p>
+          {navItems.map(({ id, label, icon: Icon }) => {
+            const isActive = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => { setTab(id); setSearch(''); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all mb-0.5 text-left
+                  ${isActive ? 'text-white font-medium' : 'text-white/50 hover:text-white/80 hover:bg-white/5'}`}
+                style={isActive ? {
+                  background: 'rgba(123,99,232,0.18)',
+                  border: '1px solid rgba(123,99,232,0.28)',
+                  color: 'rgba(255,255,255,0.92)',
+                } : {}}
+              >
+                <Icon size={14} style={isActive ? { color: '#9B87F0' } : {}} />
+                {label}
+              </button>
+            );
+          })}
 
-        {/* Tabs */}
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-          {(['orders', 'stock'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${tab === t ? 'bg-gray-900 shadow text-white' : 'text-white/50 hover:text-white/80'}`}>
-              {t === 'orders' ? 'Meus Pedidos' : 'Meu Estoque'}
-            </button>
-          ))}
-        </div>
+        </nav>
 
-        {/* Filtro de busca */}
-        <div className="flex gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder={tab === 'orders' ? 'Buscar NF ou cliente...' : 'Buscar SKU ou produto...'}
-              className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 outline-none focus:ring-2 focus:ring-violet-500" />
+        {/* User / Logout */}
+        <div className="p-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2.5 mb-2.5">
+            <div className="w-8 h-8 rounded-lg bg-violet-900/50 flex items-center justify-center flex-shrink-0">
+              <span className="text-xs font-bold text-violet-300">{initials}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-white/80 truncate">{user.name}</p>
+              <p className="text-[10px] text-white/30 truncate">
+                {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}
+              </p>
+            </div>
           </div>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-white/40
+              hover:text-red-400 hover:bg-red-900/15 transition"
+          >
+            <LogOut size={12} /> Sair
+          </button>
+        </div>
+      </aside>
+
+      {/* ══ CONTEÚDO PRINCIPAL ════════════════════════════════════════════════ */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="p-6 space-y-5">
+
+          {/* Header */}
+          <div>
+            <h1 className="text-xl font-bold text-white">
+              {navItems.find(n => n.id === tab)?.label}
+            </h1>
+            <p className="text-sm text-white/35 mt-0.5">
+              {tab === 'orders'    ? 'Acompanhe o status dos seus pedidos do dia' : ''}
+              {tab === 'stock'     ? 'Posição atual — clique em uma linha para ver o gráfico do SKU' : ''}
+              {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
+            </p>
+          </div>
+
+          {/* ── PEDIDOS ──────────────────────────────────────────────────── */}
           {tab === 'orders' && (
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-              className="border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 outline-none focus:ring-2 focus:ring-violet-500">
-              <option value="">Todos os status</option>
-              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-          )}
-        </div>
+            <>
+              {/* Filtros: período + busca + status */}
+              <div className="flex gap-3 flex-wrap items-center bg-gray-900/60 border border-white/8 rounded-xl px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
+                  <span className="text-xs text-white/40">De</span>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={e => setDateFrom(e.target.value)}
+                    className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
+                    style={{ background: '#14122A', colorScheme: 'dark' }}
+                  />
+                  <span className="text-xs text-white/40">até</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={e => setDateTo(e.target.value)}
+                    className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
+                    style={{ background: '#14122A', colorScheme: 'dark' }}
+                  />
+                </div>
 
-        {/* Tabela de pedidos */}
-        {tab === 'orders' && (
-          <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-white/4 border-b border-white/8">
-                  {['NF', 'Cliente Final', 'Transportadora', 'Data', 'Status'].map(h => (
-                    <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                <div className="relative flex-1 min-w-[160px]">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                  <input value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar NF ou cliente..."
+                    className="w-full pl-7 pr-3 py-1.5 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                  className="border border-white/12 rounded-lg px-3 py-1.5 text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500">
+                  <option value="">Todos os status</option>
+                  {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredOrders.length > 0 ? filteredOrders.map((o: any) => {
-                  const st = STATUS_CONFIG[o.status] ?? { label: o.status, color: 'bg-gray-100 text-white/60' };
-                  return (
-                    <tr key={o.id} className="border-b border-white/5 hover:bg-white/4">
-                      <td className="py-2.5 px-3 text-sm font-mono text-white/80">{o.nf_number}</td>
-                      <td className="py-2.5 px-3 text-sm text-white/90">{o.customer_name}</td>
-                      <td className="py-2.5 px-3 text-sm text-white/50">{o.carrier || '—'}</td>
-                      <td className="py-2.5 px-3 text-sm text-white/50">{o.order_date ? format(new Date(o.order_date), 'dd/MM/yy') : '—'}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${st.color}`}>{st.label}</span>
-                      </td>
+                </select>
+              </div>
+
+              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-white/4 border-b border-white/8">
+                      {['NF', 'Cliente Final', 'Transportadora', 'Data', 'Status'].map(h => (
+                        <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                      ))}
                     </tr>
-                  );
-                }) : (
-                  <tr><td colSpan={5} className="text-center text-sm text-white/35 py-10">Nenhum pedido encontrado</td></tr>
-                )}
-              </tbody>
-            </table>
-            <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">{filteredOrders.length} pedido(s)</div>
-          </div>
-        )}
+                  </thead>
+                  <tbody>
+                    {filteredOrders.length > 0 ? filteredOrders.map((o: any) => {
+                      const st = STATUS_CONFIG[o.status] ?? { label: o.status, cls: 'bg-gray-700 text-white/50' };
+                      return (
+                        <tr key={o.id} className="border-b border-white/5 hover:bg-white/4">
+                          <td className="py-2.5 px-3 text-sm font-mono text-white/80">{o.nf_number}</td>
+                          <td className="py-2.5 px-3 text-sm text-white/90">{o.customer_name}</td>
+                          <td className="py-2.5 px-3 text-sm text-white/50">{o.carrier || '—'}</td>
+                          <td className="py-2.5 px-3 text-sm text-white/50">
+                            {o.order_date ? format(new Date(o.order_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>{st.label}</span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan={5} className="text-center text-sm text-white/35 py-10">Nenhum pedido encontrado</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
+                  {filteredOrders.length} pedido(s)
+                  {dateFrom === dateTo
+                    ? ` · ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy")}`
+                    : ` · ${format(new Date(dateFrom + 'T00:00:00'), 'dd/MM')} → ${format(new Date(dateTo + 'T00:00:00'), 'dd/MM/yyyy')}`
+                  }
+                </div>
+              </div>
+            </>
+          )}
 
-        {/* Tabela de estoque */}
-        {tab === 'stock' && (
-          <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-white/4 border-b border-white/8">
-                  {['SKU', 'Produto', 'Entradas', 'Saídas', 'Saldo', 'Nível'].map(h => (
-                    <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredStock.length > 0 ? filteredStock.map((s: any) => (
-                  <tr key={s.sku} className={`border-b border-white/5 hover:bg-white/4 ${s.level === 'BAIXO' ? 'bg-red-50/20' : ''}`}>
-                    <td className="py-2.5 px-3 text-xs font-mono text-white/60">{s.sku}</td>
-                    <td className="py-2.5 px-3 text-sm text-white/90">{s.product_name}</td>
-                    <td className="py-2.5 px-3 text-sm text-violet-400 font-medium text-right">+{s.entries}</td>
-                    <td className="py-2.5 px-3 text-sm text-red-500 font-medium text-right">-{s.exits}</td>
-                    <td className="py-2.5 px-3 text-sm font-bold text-white text-right">{s.final_stock}</td>
-                    <td className="py-2.5 px-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                        s.level === 'ALTO' ? 'bg-violet-900/40 text-violet-300' :
-                        s.level === 'MÉDIO' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-red-100 text-red-600'
-                      }`}>{s.level}</span>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={6} className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</td></tr>
+          {/* ── ESTOQUE (tabela com sort + click p/ gráfico) ──────────────── */}
+          {tab === 'stock' && (
+            <>
+              <div className="relative max-w-sm">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar SKU ou produto..."
+                  className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+
+              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-white/4 border-b border-white/8">
+                      <SortTh label="SKU"      col="sku"           sort={sort} onSort={handleSort} />
+                      <SortTh label="Produto"  col="product_name"  sort={sort} onSort={handleSort} />
+                      <SortTh label="Entradas" col="total_in"      sort={sort} onSort={handleSort} className="text-right" />
+                      <SortTh label="Saídas"   col="total_out"     sort={sort} onSort={handleSort} className="text-right" />
+                      <SortTh label="Saldo"    col="current_stock" sort={sort} onSort={handleSort} className="text-right" />
+                      <SortTh label="Nível"    col="level"         sort={sort} onSort={handleSort} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredStock.length > 0 ? filteredStock.map((s: any) => {
+                      const stockVal = s.current_stock ?? s.final_stock ?? 0;
+                      const levelCls =
+                        s.level === 'ALTO'  ? 'bg-violet-900/40 text-violet-300' :
+                        s.level === 'MÉDIO' ? 'bg-yellow-900/40 text-yellow-300' :
+                                              'bg-red-900/40 text-red-400';
+                      return (
+                        <tr
+                          key={s.sku}
+                          onClick={() => setSelectedSku(s.sku)}
+                          className={`border-b border-white/5 cursor-pointer transition
+                            hover:bg-violet-900/15 ${s.level === 'BAIXO' ? 'bg-red-950/20' : ''}`}
+                          title="Clique para ver gráfico deste SKU"
+                        >
+                          <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80">{s.sku}</td>
+                          <td className="py-2.5 px-3 text-sm text-white/90 max-w-xs truncate">{s.product_name}</td>
+                          <td className="py-2.5 px-3 text-sm text-teal-400 font-medium text-right">
+                            +{s.total_in ?? s.entries ?? 0}
+                          </td>
+                          <td className="py-2.5 px-3 text-sm text-red-400 font-medium text-right">
+                            -{s.total_out ?? s.exits ?? 0}
+                          </td>
+                          <td className="py-2.5 px-3 text-sm font-bold text-white text-right">{stockVal}</td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${levelCls}`}>
+                              {s.level}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan={6} className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35 flex items-center gap-2">
+                  <BarChart2 size={11} className="text-violet-400" />
+                  {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── MOVIMENTAÇÕES ─────────────────────────────────────────────── */}
+          {tab === 'movements' && (
+            <>
+              <div className="flex gap-3 items-center flex-wrap">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                  <input value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar SKU, produto ou NF..."
+                    className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+                {sellerId && (
+                  <button
+                    onClick={() => { inventoryApi.exportStockCsv(sellerId); toast.success('Export iniciado'); }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-white/12 text-white/60 hover:text-white hover:bg-white/5 hover:border-white/20"
+                  >
+                    <Download size={14} />
+                    Exportar CSV
+                  </button>
                 )}
-              </tbody>
-            </table>
-            <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">{filteredStock.length} SKU(s)</div>
-          </div>
-        )}
-      </div>
+              </div>
+
+              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-white/4 border-b border-white/8">
+                      {['Data', 'SKU', 'Produto', 'Tipo', 'Qtd', 'NF'].map(h => (
+                        <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => (
+                      <tr key={m.id ?? i} className="border-b border-white/5 hover:bg-white/4">
+                        <td className="py-2.5 px-3 text-xs text-white/50">
+                          {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80">{m.sku}</td>
+                        <td className="py-2.5 px-3 text-sm text-white/80 max-w-xs truncate">{m.product_name}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`text-xs font-semibold ${m.movement_type === 'Entrada' ? 'text-teal-400' : 'text-red-400'}`}>
+                            {m.movement_type}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-sm font-bold text-white">
+                          {m.movement_type === 'Entrada' ? '+' : '-'}{m.quantity}
+                        </td>
+                        <td className="py-2.5 px-3 text-xs font-mono text-white/40">{m.nf_number || '—'}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={6} className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
+                  {filteredMovements.length} movimentação(ões)
+                </div>
+              </div>
+            </>
+          )}
+
+        </div>
+      </main>
+
+      {/* ── Modal de detalhe do SKU ─────────────────────────────────────────── */}
+      {selectedSku && sellerId && (
+        <SkuDetailModal
+          sellerId={sellerId}
+          sku={selectedSku}
+          onClose={() => setSelectedSku(null)}
+        />
+      )}
     </div>
   );
 }

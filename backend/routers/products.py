@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..auth import get_current_user, require_master_or_above, require_admin
+from ..auth import get_current_user, require_manager_or_above, require_admin
 from .. import models, schemas
 
 router = APIRouter(prefix="/cadastros", tags=["Cadastros"])
@@ -93,7 +93,7 @@ def list_products(
 @router.post("/products", response_model=schemas.ProductResponse)
 def create_product(
     product: schemas.ProductCreate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.Product).filter(
@@ -132,7 +132,7 @@ def create_product(
 def update_product(
     product_id: int,
     data: schemas.ProductUpdate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
@@ -171,7 +171,7 @@ def update_product(
 async def upload_product_photo(
     product_id: int,
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Upload de foto do produto para exibição durante a bipagem."""
@@ -215,7 +215,7 @@ def list_kits(
 @router.post("/kits", response_model=schemas.KitResponse)
 def create_kit(
     kit: schemas.KitCreate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.Kit).filter(
@@ -262,7 +262,7 @@ def create_kit(
 def update_kit(
     kit_id: int,
     kit: schemas.KitCreate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.Kit).filter(models.Kit.id == kit_id).first()
@@ -297,7 +297,7 @@ def update_kit(
 @router.delete("/kits/{kit_id}")
 def delete_kit(
     kit_id: int,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     kit = db.query(models.Kit).filter(models.Kit.id == kit_id).first()
@@ -321,7 +321,7 @@ def delete_kit(
 @router.post("/products/bulk-paste")
 def bulk_paste_products(
     items: List[schemas.ProductBulkItem],
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Upsert em massa de produtos via colagem de tabela."""
@@ -378,7 +378,7 @@ def bulk_paste_products(
 @router.post("/products/bulk-upload")
 async def bulk_upload_products(
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -571,7 +571,7 @@ async def bulk_upload_products(
 @router.post("/kits/bulk-import")
 def bulk_import_kits(
     payload: schemas.KitBulkImport,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Import em massa de kits."""
@@ -658,7 +658,7 @@ def get_box_algorithm(
 @router.post("/box-algorithm", response_model=schemas.BoxRuleResponse)
 def create_box_rule(
     rule: schemas.BoxRuleCreate,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.BoxAlgorithm).filter(
@@ -817,30 +817,68 @@ def create_unit(
 
 
 # ============================================================
-# USUÁRIOS
+# USUÁRIOS — helpers
+# ============================================================
+
+def _user_to_response(u: models.User) -> schemas.UserResponse:
+    """Converte User ORM → UserResponse enriquecendo com nomes e seller_ids."""
+    role = u.role.value if hasattr(u.role, "value") else u.role
+    return schemas.UserResponse(
+        id=u.id,
+        name=u.name,
+        email=u.email,
+        role=role,
+        unit_id=u.unit_id,
+        unit_name=u.unit.name if u.unit else None,
+        seller_id=u.seller_id,
+        seller_name=(u.seller.trade_name if u.seller else None),
+        seller_ids=[s.id for s in (u.sellers or [])],
+        seller_names=[s.trade_name for s in (u.sellers or [])],
+        active=u.active,
+        created_at=u.created_at,
+        last_login=u.last_login,
+    )
+
+
+def _sync_sellers(u: models.User, seller_ids: list, db: Session) -> None:
+    """Sincroniza a lista de sellers associados ao usuário (many-to-many)."""
+    if seller_ids is None:
+        return
+    sellers = db.query(models.Seller).filter(models.Seller.id.in_(seller_ids)).all() if seller_ids else []
+    u.sellers = sellers
+
+
+# ============================================================
+# USUÁRIOS — endpoints
 # ============================================================
 
 @router.get("/users", response_model=List[schemas.UserResponse])
 def list_users(
     unit_id: Optional[int] = None,
     role: Optional[str] = None,
+    active_only: bool = True,
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Lista todos os usuários. Somente administrador."""
     query = db.query(models.User)
+    if active_only:
+        query = query.filter(models.User.active == True)
     if unit_id:
         query = query.filter(models.User.unit_id == unit_id)
     if role:
         query = query.filter(models.User.role == role)
-    return query.order_by(models.User.name).all()
+    users = query.order_by(models.User.name).all()
+    return [_user_to_response(u) for u in users]
 
 
-@router.post("/users", response_model=schemas.UserResponse)
+@router.post("/users", response_model=schemas.UserResponse, status_code=201)
 def create_user(
     user: schemas.UserCreate,
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Cria novo usuário. Somente administrador."""
     from ..auth import hash_password
     existing = db.query(models.User).filter(models.User.email == user.email).first()
     if existing:
@@ -852,23 +890,29 @@ def create_user(
         password_hash=hash_password(user.password),
         role=user.role,
         unit_id=user.unit_id,
-        seller_id=user.seller_id,
+        seller_id=user.seller_id,   # seller principal (client)
     )
     db.add(u)
-    db.flush()
+    db.flush()   # gera u.id antes de vincular sellers
 
-    # ── Trilha de auditoria ──────────────────────────────────────────────────
+    # Vincula sellers (many-to-many) para manager/operator
+    _sync_sellers(u, user.seller_ids or [], db)
+
     db.add(models.AuditLog(
         entity_type="User",
         entity_id=u.id,
         action="CREATE",
-        detail=f"Usuário criado: {u.name} | email={u.email} | role={u.role.value if hasattr(u.role, 'value') else u.role}",
+        detail=(
+            f"Usuário criado: {u.name} | email={u.email} "
+            f"| role={u.role.value if hasattr(u.role, 'value') else u.role} "
+            f"| sellers={user.seller_ids}"
+        ),
         user_id=current_user.id,
     ))
 
     db.commit()
     db.refresh(u)
-    return u
+    return _user_to_response(u)
 
 
 @router.put("/users/{user_id}", response_model=schemas.UserResponse)
@@ -878,30 +922,70 @@ def update_user(
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Edita usuário. Somente administrador."""
     from ..auth import hash_password
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
+    u = db.query(models.User).filter(models.User.id == user_id).first()
+    if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
+    # Campos simples
     update_data = data.model_dump(exclude_none=True)
+    seller_ids_new = update_data.pop("seller_ids", None)   # trata separado
+
     if "password" in update_data:
         update_data["password_hash"] = hash_password(update_data.pop("password"))
 
     for field, value in update_data.items():
-        setattr(user, field, value)
+        if hasattr(u, field):
+            setattr(u, field, value)
 
-    # ── Trilha de auditoria ──────────────────────────────────────────────────
+    # Sincroniza sellers (many-to-many) se enviado
+    if seller_ids_new is not None:
+        _sync_sellers(u, seller_ids_new, db)
+
     db.add(models.AuditLog(
         entity_type="User",
         entity_id=user_id,
         action="UPDATE",
-        detail=f"Usuário atualizado: {user.name} | Campos: {', '.join(k for k in update_data if k != 'password_hash')}",
+        detail=(
+            f"Usuário atualizado: {u.name} "
+            f"| Campos: {', '.join(k for k in update_data if k != 'password_hash')}"
+            + (f" | sellers={seller_ids_new}" if seller_ids_new is not None else "")
+        ),
         user_id=current_user.id,
     ))
 
     db.commit()
-    db.refresh(user)
-    return user
+    db.refresh(u)
+    return _user_to_response(u)
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Inativa o usuário (nunca deleta fisicamente, preserva auditoria)."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Você não pode inativar a si mesmo")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    user.active = False
+
+    db.add(models.AuditLog(
+        entity_type="User",
+        entity_id=user_id,
+        action="DEACTIVATE",
+        detail=f"Usuário inativado: {user.name} | email={user.email}",
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+    return {"message": f"Usuário {user.name} inativado com sucesso"}
 
 
 # ============================================================
@@ -915,7 +999,7 @@ EXPERIENCE_DIR = os.path.join(BASE_DIR, "data", "media", "experience")
 def upload_experience_file(
     seller_id: int,
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """Salva o arquivo PPT/PDF de roteiro de experiencia do seller."""

@@ -232,7 +232,7 @@ export default function ScannerPage() {
         })),
       }));
     },
-    { refetchInterval: 15000 },
+    { refetchInterval: 15000, enabled: !!sessionId },
   );
 
   // Sync remote → local (only when not actively scanning)
@@ -565,6 +565,13 @@ export default function ScannerPage() {
     error: <XCircle size={28} className="text-red-400" />,
     warning: <AlertTriangle size={28} className="text-yellow-400" />,
   };
+
+  // ── Sem sessionId: redireciona para Manuseios ──────────────────────────────
+  if (!sessionId) {
+    navigate('/manuseios', { replace: true });
+    return null;
+  }
+
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">

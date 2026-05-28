@@ -5,7 +5,7 @@ Todos os modelos SQLAlchemy do sistema.
 
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, DateTime, Text,
-    ForeignKey, Enum, Date, UniqueConstraint, Index
+    ForeignKey, Enum, Date, UniqueConstraint, Index, Table
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -20,10 +20,10 @@ from .database import Base
 # ============================================================
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"          # Administrador do sistema (Flávio)
-    MASTER = "master"        # Operador master (gera separações, acompanha)
-    OPERATOR = "operator"    # Operador de bipagem
-    SELLER = "seller"        # Representante do seller (acesso ao portal)
+    ADMIN    = "admin"      # Administrador: acesso total, único que importa pedidos
+    MANAGER  = "manager"    # Gerente: vê/edita somente seu grupo de sellers
+    OPERATOR = "operator"   # Operador: bipagem dos sellers que atende
+    CLIENT   = "client"     # Cliente (seller): portal somente leitura
 
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"          # Importado, aguardando validação
@@ -41,6 +41,21 @@ class MovementType(str, enum.Enum):
 class FileType(str, enum.Enum):
     IMPORT = "entrada"
     EXPORT = "saida"
+
+
+# ============================================================
+# TABELAS DE ASSOCIAÇÃO
+# ============================================================
+
+# Associação muitos-para-muitos: usuário ↔ sellers que atende.
+# Usada por operadores (sellers que bipam) e gerentes (grupo de sellers).
+# Clientes (role=client) usam apenas o FK seller_id (portal single-seller).
+user_sellers = Table(
+    "user_sellers",
+    Base.metadata,
+    Column("user_id",   Integer, ForeignKey("users.id",   ondelete="CASCADE"), primary_key=True),
+    Column("seller_id", Integer, ForeignKey("sellers.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 # ============================================================
@@ -79,10 +94,15 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
 
     # Relacionamentos
-    unit = relationship("Unit", back_populates="users")
-    seller = relationship("Seller", back_populates="users")
+    unit   = relationship("Unit",   back_populates="users")
+    seller = relationship("Seller", back_populates="users", foreign_keys=[seller_id])
+
+    # Sellers atendidos por este usuário (manager/operator — many-to-many)
+    # Para client: use seller_id (FK simples) + portal single-seller
+    sellers = relationship("Seller", secondary="user_sellers", lazy="select")
+
     scanning_logs = relationship("ScanningLog", back_populates="operator")
-    audit_logs = relationship("AuditLog", back_populates="user")
+    audit_logs    = relationship("AuditLog",    back_populates="user")
 
 
 # ============================================================

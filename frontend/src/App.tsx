@@ -53,21 +53,32 @@ export default function App() {
           {/* Rota pública */}
           <Route path="/login" element={<LoginPage />} />
 
-          {/* Portal do Seller (layout diferente) */}
+          {/* Portal do Cliente/Seller — somente leitura */}
           <Route
-            path="/seller/*"
+            path="/portal"
             element={
-              <ProtectedRoute allowedRoles={['seller', 'admin']}>
+              <ProtectedRoute allowedRoles={['client', 'admin']}>
                 <SellerPortalPage />
               </ProtectedRoute>
             }
           />
+          {/* Compat: redireciona /seller → /portal */}
+          <Route path="/seller" element={<Navigate to="/portal" replace />} />
+          <Route path="/seller/*" element={<Navigate to="/portal" replace />} />
 
           {/* Interface de Bipagem (fullscreen) */}
           <Route
+            path="/scan"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'manager', 'operator']}>
+                <ScannerPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/scan/:sessionId"
             element={
-              <ProtectedRoute allowedRoles={['admin', 'master', 'operator']}>
+              <ProtectedRoute allowedRoles={['admin', 'manager', 'operator']}>
                 <ScannerPage />
               </ProtectedRoute>
             }
@@ -77,7 +88,7 @@ export default function App() {
           <Route
             path="/"
             element={
-              <ProtectedRoute allowedRoles={['admin', 'master', 'operator']}>
+              <ProtectedRoute allowedRoles={['admin', 'manager', 'operator']}>
                 <Layout />
               </ProtectedRoute>
             }

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from ..database import get_db
-from ..auth import get_current_user, require_master_or_above, require_admin
+from ..auth import get_current_user, require_manager_or_above, require_admin
 from .. import models
 from ..services.stock_manager import (
     get_stock_report, update_stock_position, get_sku_history, calculate_stock_level,
@@ -69,7 +69,7 @@ def get_stock(
         if hasattr(current_user.role, "value")
         else current_user.role
     )
-    if user_role == "seller" and current_user.seller_id != seller_id:
+    if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     return get_stock_report(seller_id, db)
@@ -96,7 +96,7 @@ def sku_history(
         if hasattr(current_user.role, "value")
         else current_user.role
     )
-    if user_role == "seller" and current_user.seller_id != seller_id:
+    if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     return get_sku_history(seller_id=seller_id, sku=sku, db=db, days=days)
@@ -124,7 +124,7 @@ def get_movements(
         if hasattr(current_user.role, "value")
         else current_user.role
     )
-    if user_role == "seller" and current_user.seller_id != seller_id:
+    if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     q = db.query(models.StockMovement).filter(
@@ -176,7 +176,7 @@ def get_movements(
 @router.post("/movements/manual", status_code=201)
 def create_manual_movement(
     body: dict,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -290,7 +290,7 @@ def create_manual_movement(
 @router.post("/movements/bulk", status_code=201)
 def create_bulk_movements(
     body: dict,
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -591,7 +591,7 @@ def export_stock_csv(
         if hasattr(current_user.role, "value")
         else current_user.role
     )
-    if user_role == "seller" and current_user.seller_id != seller_id:
+    if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     positions = db.query(models.StockPosition).filter(
@@ -649,7 +649,7 @@ def export_movements_csv(
         if hasattr(current_user.role, "value")
         else current_user.role
     )
-    if user_role == "seller" and current_user.seller_id != seller_id:
+    if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
     q = db.query(models.StockMovement).filter(
@@ -801,7 +801,7 @@ def _parse_history_excel(file_bytes: bytes):
 async def analyze_history(
     seller_id: int,
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
@@ -852,7 +852,7 @@ async def execute_history_import(
     seller_id: int,
     file: UploadFile = File(...),
     product_names: str = Form("{}"),
-    current_user: models.User = Depends(require_master_or_above),
+    current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """

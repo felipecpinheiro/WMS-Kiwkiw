@@ -29,6 +29,9 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     role: Optional[str] = None
+    unit_id: Optional[int] = None
+    seller_id: Optional[int] = None
+    seller_ids: Optional[List[int]] = None
 
 
 # ============================================================
@@ -42,6 +45,7 @@ class UserCreate(BaseModel):
     role: str = "operator"
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None
+    seller_ids: Optional[List[int]] = None  # grupo de sellers (manager/operator)
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -49,6 +53,8 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     unit_id: Optional[int] = None
+    seller_id: Optional[int] = None        # seller principal (client)
+    seller_ids: Optional[List[int]] = None  # grupo de sellers (manager/operator)
     active: Optional[bool] = None
 
 class UserResponse(BaseModel):
@@ -57,7 +63,11 @@ class UserResponse(BaseModel):
     email: str
     role: str
     unit_id: Optional[int] = None
-    seller_id: Optional[int] = None
+    unit_name: Optional[str] = None    # nome da unidade (enriquecido no router)
+    seller_id: Optional[int] = None    # seller principal (client)
+    seller_name: Optional[str] = None  # nome do seller principal
+    seller_ids: List[int] = []         # grupo de sellers (manager/operator)
+    seller_names: List[str] = []       # nomes dos sellers do grupo
     active: bool
     created_at: datetime
     last_login: Optional[datetime] = None
@@ -551,7 +561,8 @@ class SellerDashboard(BaseModel):
     """Dados para o cockpit do seller."""
     seller_id: int
     seller_name: str
-    today: date
+    date_from: date
+    date_to: date
     total_orders: int
     orders_completed: int
     orders_pending: int

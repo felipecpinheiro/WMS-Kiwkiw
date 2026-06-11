@@ -91,6 +91,14 @@ export interface DashboardStats {
   checks?: DashboardChecks;
   sellers_no_orders?: SellerSummary[];
   sessions_today?: PickingSession[];
+  operators_summary?: Array<{
+    operator_id: number;
+    operator_name: string;
+    scans: number;
+    orders_touched: number;
+    orders_completed: number;
+  }>;
+  orders_no_operator?: number;
 }
 
 export interface UnitSummary {
@@ -307,6 +315,8 @@ export const ordersApi = {
   },
   configure: (id: number, data: { file_type?: string; for_billing?: boolean }) =>
     api.patch(`/orders/${id}/config`, null, { params: data }),
+  updateCarrier: (orderId: number, carrier: string) =>
+    api.patch(`/orders/${orderId}/carrier`, { carrier }),
 };
 
 
@@ -355,6 +365,15 @@ export const scanningApi = {
     api.post<{ success: boolean; cancelled: number; message: string }>(
       `/scanning/sessions/${sessionId}/cancel-handling`,
       { seller_id: sellerId },
+    ),
+  suggestedBox: (orderId: number) =>
+    api.get<{ order_id: number; suggested: string | null; box_used: string | null; effective: string | null }>(
+      `/scanning/orders/${orderId}/suggested-box`
+    ),
+  saveOrderBox: (orderId: number, boxUsed: string | null) =>
+    api.patch<{ order_id: number; box_used: string | null }>(
+      `/scanning/orders/${orderId}/box`,
+      { box_used: boxUsed }
     ),
 };
 
@@ -420,6 +439,23 @@ export const inventoryApi = {
       timeout: 180000, // 3 min — pode ter muitas movimentações
     });
   },
+  /** Bulk upload de posição de estoque multi-seller (admin) — otimizado para 1M+ linhas */
+  bulkStockUpload: (
+    formData: FormData,
+    onUploadProgress?: (e: { loaded: number; total: number }) => void,
+  ) =>
+    api.post<{
+      ok: boolean;
+      total_rows: number;
+      valid_rows: number;
+      created: number;
+      errors: string[];
+      duration_sec: number;
+    }>('/inventory/bulk-stock-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000, // 5 min para 1M+ linhas
+      onUploadProgress,
+    }),
 };
 
 
@@ -432,8 +468,17 @@ export const cadastrosApi = {
   createSeller: (data: Record<string, any>) => api.post('/cadastros/sellers', data),
   updateSeller: (id: number, data: Record<string, any>) => api.put(`/cadastros/sellers/${id}`, data),
   deleteSeller: (id: number) => api.delete(`/cadastros/sellers/${id}`),
-  units: () => api.get('/cadastros/units'),
+  units: (includeInactive = false) => api.get('/cadastros/units', { params: { include_inactive: includeInactive } }),
   createUnit: (data: Record<string, any>) => api.post('/cadastros/units', data),
+  updateUnit: (id: number, data: Record<string, any>) => api.put(`/cadastros/units/${id}`, data),
+  deleteUnit: (id: number) => api.delete(`/cadastros/units/${id}`),
+  assignSellersToUnit: (unitId: number, sellerIds: number[]) =>
+    api.patch(`/cadastros/units/${unitId}/sellers`, { seller_ids: sellerIds }),
+  sellersWithoutUnit: () => api.get('/cadastros/sellers/without-unit'),
+  sellerStats: (sellerId: number) =>
+    api.get<{ seller_id: number; total_skus: number; skus_with_stock: number; skus_zero_stock: number; total_stock_value: number }>(
+      `/cadastros/sellers/${sellerId}/stats`
+    ),
   products: (params?: {
     seller_id?: number;
     search?: string;
@@ -524,14 +569,69 @@ export const settingsApi = {
   watcherStatus: () =>
     api.get<{
       running: boolean;
-      enabled: boolean;
-      inbox_folder: string;
-      processed_folder: string;
-      interval_sec: number;
+      last_run: string | null;
+      next_run: string | null;
       last_check: string | null;
+      interval_sec: number;
       files_processed: number;
-      last_files: Array<{ file: string; timestamp: string; success: boolean; orders: number; error: string | null }>;
+      error: string | null;
+      last_files: Array<{ name: string; dest: string; reason: string; details: string }>;
     }>('/settings/watcher/status'),
-  startWatcher: () => api.post('/settings/watcher/start'),
-  stopWatcher:  () => api.post('/settings/watcher/stop'),
+  startWatcher: () =>
+    api.post('/settings/watcher/start'),
+  stopWatcher: () =>
+    api.post('/settings/watcher/stop'),
+};
+
+
+// ============================================================
+// IMPORTAÇÃO / SESSIONS
+// ============================================================
+
+export const importApi = {
+  upload: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<{ session_id: number; message: string }>('/orders/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  sessions: (params?: { skip?: number; limit?: number; seller_id?: number }) =>
+    api.get<{ items: any[]; total: number }>('/orders/sessions', { params }),
+  sessionDetail: (sessionId: number) =>
+    api.get<any>(`/orders/sessions/${sessionId}`),
+  deleteSession: (sessionId: number) =>
+    api.delete(`/orders/sessions/${sessionId}`),
+  regeneratePdfs: (sessionId: number) =>
+    api.post<{ message: string; files: string[] }>(`/orders/sessions/${sessionId}/regenerate-pdfs`),
+};
+
+
+// ============================================================
+// RELATÓRIO DE ESTOQUE
+// ============================================================
+
+export const stockApi = {
+  report: (params?: { seller_id?: number; search?: string; low_stock?: boolean }) =>
+    api.get<any[]>('/stock/report', { params }),
+  exportReport: (sellerId?: number) => {
+    const params = sellerId ? `?seller_id=${sellerId}` : '';
+    window.open(`${API_BASE}/stock/report/export${params}`, '_blank');
+  },
+  history: (skuId: number) =>
+    api.get<any[]>(`/stock/history/${skuId}`),
+};
+
+
+// ============================================================
+// PORTAL DO SELLER
+// ============================================================
+
+export const portalApi = {
+  orders: (params?: { date?: string; status?: string; search?: string }) =>
+    api.get<any[]>('/portal/orders', { params }),
+  stockReport: (params?: { search?: string }) =>
+    api.get<any[]>('/portal/stock', { params }),
+  movements: (params?: { date_from?: string; date_to?: string; search?: string }) =>
+    api.get<any[]>('/portal/movements', { params }),
 };

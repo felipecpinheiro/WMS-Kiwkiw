@@ -82,15 +82,35 @@ class UserResponse(BaseModel):
 
 class UnitCreate(BaseModel):
     name: str
+    code: Optional[str] = None
     location: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
     responsible: Optional[str] = None
+    phone: Optional[str] = None
+
+class UnitUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    location: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    responsible: Optional[str] = None
+    phone: Optional[str] = None
+    active: Optional[bool] = None
 
 class UnitResponse(BaseModel):
     id: int
     name: str
+    code: Optional[str] = None
     location: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
     responsible: Optional[str] = None
+    phone: Optional[str] = None
     active: bool
+    # Lista de IDs dos sellers associados (para o frontend)
+    seller_ids: Optional[List[int]] = None
 
     class Config:
         from_attributes = True
@@ -136,6 +156,8 @@ class SellerCreate(BaseModel):
     unit_name: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    # Outros apelidos para match automático na importação (separados por ";")
+    other_aliases: Optional[str] = None
 
 class SellerUpdate(BaseModel):
     name: Optional[str] = None
@@ -172,6 +194,9 @@ class SellerUpdate(BaseModel):
     unit_name: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    # Outros apelidos para match automático na importação (separados por ";")
+    other_aliases: Optional[str] = None
+    unit_id: Optional[int] = None
 
 class SellerResponse(BaseModel):
     id: int
@@ -205,13 +230,19 @@ class SellerResponse(BaseModel):
     manuseio: Optional[float] = None
     caixa_prop: Optional[bool] = False
     mes_reajuste: Optional[int] = None
-    unit_name: Optional[str] = None
+    unit_name: Optional[str] = None       # legado (campo texto direto do seller)
+    unit_display_name: Optional[str] = None  # derivado do relacionamento unit FK
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     contact_email: Optional[str] = None
     code: Optional[str] = None
+    # Outros apelidos para match automático na importação (separados por ";")
+    other_aliases: Optional[str] = None
     # `is_active` exposto ao frontend; mapeado manualmente a partir do campo `active` do modelo
     is_active: Optional[bool] = True
+    # Estatísticas de SKU (enriquecidas pelo list_sellers)
+    total_skus: Optional[int] = 0
+    skus_with_stock: Optional[int] = 0
 
     class Config:
         from_attributes = True
@@ -547,6 +578,8 @@ class DashboardStats(BaseModel):
     sessions_today: List[dict] = []       # histórico de uploads do dia
     recent_scans: List[dict]
     alerts: List[dict]
+    operators_summary: List[dict] = []    # agrupamento por operador
+    orders_no_operator: int = 0            # pedidos sem nenhum scan no dia
     checks: dict = {
         "transport": False,
         "separation": False,
@@ -604,46 +637,15 @@ class OpenByNfeRequest(BaseModel):
 # IMPORTAÇÃO
 # ============================================================
 
-class DuplicateOrderInfo(BaseModel):
-    """Detalhe de um pedido já existente detectado na importação."""
-    nf_number: str
-    seller_name: str
-    existing_order_id: Optional[int] = None
-    existing_session_id: Optional[int] = None
-    existing_imported_at: Optional[datetime] = None
 
-
-class ImportResult(BaseModel):
-    """
-    Resultado da importação de arquivo Excel.
-
-    Quando `requires_confirmation` for True, a importação foi ABORTADA porque
-    há NFs já presentes no banco. O frontend deve exibir `duplicates` e, se o
-    usuário confirmar, refazer o POST com `force_duplicates=true`.
-    """
-    success: bool
-    message: str
-    session_id: Optional[int] = None
-    total_rows: int = 0
-    orders_imported: int = 0
-    orders_with_kits: int = 0
-    errors: List[str] = []
-    warnings: List[str] = []
-    # Confirmação de duplicatas
-    requires_confirmation: bool = False
-    duplicates: List[DuplicateOrderInfo] = []
-
-
-# ============================================================
-# FATURAMENTO
-# ============================================================
 
 class BillingConfigCreate(BaseModel):
     seller_id: int
     config_key: str
-    config_value: str
+    config_value: Optional[str] = None
     valid_from: Optional[date] = None
     valid_to: Optional[date] = None
+
 
 class BillingConfigResponse(BaseModel):
     id: int
@@ -655,3 +657,26 @@ class BillingConfigResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class DuplicateOrderInfo(BaseModel):
+    """Detalhe de um pedido já existente detectado na importação."""
+    nf_number: str
+    seller_name: str
+    existing_order_id: Optional[int] = None
+    existing_session_id: Optional[int] = None
+    existing_imported_at: Optional[datetime] = None
+
+
+class ImportResult(BaseModel):
+    """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
+    success: bool = False
+    message: str = ""
+    session_id: Optional[int] = None
+    session_date: Optional[str] = None
+    total_rows: int = 0
+    orders_imported: int = 0
+    orders_with_kits: int = 0
+    errors: List[str] = []
+    warnings: List[str] = []
+    requires_confirmation: bool = False
+    duplicates: List[DuplicateOrderInfo] = []

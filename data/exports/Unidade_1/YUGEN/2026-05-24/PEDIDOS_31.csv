@@ -1,0 +1,4 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+31;Unidade 1;YUGEN;2026-05-24;2961;n.a;Katia;2026-05-21;;;Venda de mercadoria a nao contribuinte;35260544793585000110550010000029611703820559;00000577;Conjunto de Mini Garfos de Bambu 6 Pecas Oikos;1;False;;pending;2026-05-24T16:51:09.512326
+31;Unidade 1;YUGEN;2026-05-24;2962;n.a;Martin;2026-05-21;;;Venda de mercadoria a nao contribuinte;35260544793585000110550010000029621703824780;00000014;Escova de Limpeza Redonda com Pega de Bambu (Branco)  Oikos;1;False;;pending;2026-05-24T16:51:09.512326
+31;Unidade 1;YUGEN;2026-05-24;2963;n.a;Nadia Biasi;2026-05-21;;;Venda de mercadoria a nao contribuinte;35260544793585000110550010000029631703827841;00000014;Escova de Limpeza Redonda com Pega de Bambu (Branco)  Oikos;1;False;;pending;2026-05-24T16:51:09.512326

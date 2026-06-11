@@ -1,0 +1,4 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-21 10:37:58,11296,Aeroclube de Blumenau,7897876124403,1,1,False,,Administrador
+2026-04-21 10:38:04,11296,Aeroclube de Blumenau,7897876124403,1,1,False,,Administrador
+2026-04-21 10:38:07,11296,Aeroclube de Blumenau,7897876124403,1,1,False,,Administrador

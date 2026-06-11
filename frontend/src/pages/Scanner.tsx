@@ -145,7 +145,7 @@ function ItemCard({
         <>
           <p className="text-xs font-mono text-white/40 mb-0.5 truncate">{item.sku}</p>
           {item.barcode_seller && (
-            <p className="text-[10px] font-mono text-yellow-400/50 mb-1 truncate" title="Cód. barras">
+            <p className="text-sm font-mono font-semibold text-yellow-300/80 mb-1 truncate" title="Cód. barras">
               ⬛ {item.barcode_seller}
             </p>
           )}
@@ -196,6 +196,12 @@ export default function ScannerPage() {
   const [interruptReason, setInterruptReason] = useState('');
   const [showExitDialog, setShowExitDialog] = useState(false); // 1b: confirmar saída
   const [exitReason, setExitReason] = useState('');
+  // ── Caixa sugerida ────────────────────────────────────────
+  const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
+  const [boxUsed, setBoxUsed]             = useState<string | null>(null);
+  const [boxEditing, setBoxEditing]       = useState(false);
+  const [boxEditVal, setBoxEditVal]       = useState('');
+  const [boxSaving, setBoxSaving]         = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; item: SessionOrderItem;
   } | null>(null);
@@ -268,6 +274,27 @@ export default function ScannerPage() {
     }
   }, [activeOrderId, sessionId]);
 
+  // ── Busca caixa sugerida quando muda o pedido ───────────────
+  useEffect(() => {
+    if (!activeOrderId) { setBoxSuggested(null); setBoxUsed(null); setBoxEditing(false); return; }
+    scanningApi.suggestedBox(activeOrderId).then(r => {
+      setBoxSuggested(r.data.suggested);
+      setBoxUsed(r.data.box_used);
+    }).catch(() => {});
+  }, [activeOrderId]);
+
+  const handleBoxSave = async (val: string) => {
+    if (!activeOrderId) return;
+    setBoxSaving(true);
+    try {
+      const v = val.trim() || null;
+      await scanningApi.saveOrderBox(activeOrderId, v);
+      setBoxUsed(v);
+      setBoxEditing(false);
+    } catch { /* silent */ }
+    finally { setBoxSaving(false); }
+  };
+
   // Fecha context menu ao clicar fora
   useEffect(() => {
     const handler = () => setContextMenu(null);
@@ -331,6 +358,19 @@ export default function ScannerPage() {
             return;
           }
         }
+        // B: bloquear pedido interrompido — não pode ser reaberto
+        const matchedOrder = localOrders.find(o => o.id === data.order_id);
+        if (matchedOrder?.status === 'interrupted') {
+          setFeedback({
+            state: 'error',
+            title: '✗ Pedido interrompido',
+            message: `NF ${matchedOrder.nf_number} foi interrompida e não pode ser reaberta. Contate o supervisor.`,
+          });
+          setScanning(false);
+          setBarcodeInput('');
+          inputRef.current?.focus();
+          return;
+        }
         setActiveOrderId(data.order_id);
         qc.invalidateQueries(['session-orders', sessionId, sellerId]);
         setFeedback({ state: 'success', title: `✓ Pedido aberto`, message: `NF ${data.nf_number} — ${data.customer_name ?? ''}` });
@@ -351,6 +391,13 @@ export default function ScannerPage() {
       if (matched) {
         if (matched.status === 'completed') {
           setFeedback({ state: 'warning', title: 'Pedido já concluído', message: `NF ${matched.nf_number} está completa` });
+        } else if (matched.status === 'interrupted') {
+          // B: pedido interrompido não pode ser reaberto via bipagem
+          setFeedback({
+            state: 'error',
+            title: '✗ Pedido interrompido',
+            message: `NF ${matched.nf_number} foi interrompida e não pode ser reaberta. Contate o supervisor.`,
+          });
         } else {
           setActiveOrderId(matched.id);
           setFeedback({ state: 'success', title: `✓ Pedido aberto`, message: `NF ${matched.nf_number} — ${matched.customer_name}` });
@@ -666,8 +713,8 @@ export default function ScannerPage() {
                 navigate('/manuseios');
               }
             }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-white/40 hover:text-white hover:bg-white/5 rounded-lg transition">
-            <LogOut size={13} /> Sair da bipagem
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 hover:border-red-500/60 rounded-lg transition">
+            <LogOut size={15} /> Sair da Bipagem
           </button>
         </div>
       </aside>
@@ -685,11 +732,45 @@ export default function ScannerPage() {
                     <span className="text-[10px] font-mono text-white/35">NF {activeOrder.nf_number}</span>
                     {activeOrder.carrier && (
                       <span
-                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold"
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold"
                         style={{ background: 'rgba(61,217,164,0.15)', color: '#3DD9A4', border: '1px solid rgba(61,217,164,0.30)' }}
                       >
                         🚚 {activeOrder.carrier}
                       </span>
+                    )}
+                    {/* Caixa sugerida */}
+                    {boxEditing ? (
+                      <span className="inline-flex items-center gap-1">
+                        <input
+                          autoFocus
+                          value={boxEditVal}
+                          onChange={e => setBoxEditVal(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleBoxSave(boxEditVal);
+                            if (e.key === 'Escape') setBoxEditing(false);
+                          }}
+                          placeholder="Ex: c1"
+                          className="w-20 bg-white/10 border border-violet-400/50 rounded px-2 py-0.5 text-xs text-white outline-none"
+                        />
+                        <button onClick={() => handleBoxSave(boxEditVal)} disabled={boxSaving}
+                          className="text-[10px] text-violet-300 hover:text-violet-100 px-1">
+                          {boxSaving ? '…' : '✓'}
+                        </button>
+                        <button onClick={() => setBoxEditing(false)} className="text-[10px] text-white/30 hover:text-white/60 px-1">✕</button>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => { setBoxEditVal(boxUsed || boxSuggested || ''); setBoxEditing(true); }}
+                        title="Caixa sugerida pelo algoritmo — clique para ajustar"
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold transition hover:opacity-80"
+                        style={
+                          (boxUsed || boxSuggested)
+                            ? { background: 'rgba(123,99,232,0.18)', color: '#9B87F0', border: '1px solid rgba(123,99,232,0.35)' }
+                            : { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)' }
+                        }
+                      >
+                        📦 {boxUsed ? `${boxUsed} ✏` : boxSuggested ? boxSuggested : 'N.A'}
+                      </button>
                     )}
                   </div>
                   {activeOrder.seller && (

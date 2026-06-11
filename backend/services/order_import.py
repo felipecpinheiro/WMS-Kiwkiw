@@ -123,8 +123,68 @@ def parse_date_safe(value) -> Optional[date]:
     return None
 
 
-def get_or_create_seller(db: Session, seller_name: str) -> models.Seller:
-    """Busca seller pelo apelido ou cria um novo."""
+def _build_seller_alias_map(db: Session) -> dict:
+    """
+    Carrega todos os sellers ativos uma única vez e constrói um dict de lookup:
+        alias_normalizado (lower+strip) → objeto models.Seller
+
+    Inclui três fontes de chave por seller:
+      1. trade_name  — apelido oficial (ex: "YUGEN")
+      2. name        — razão social (ex: "YUGEN COSMETICOS LTDA")
+      3. other_aliases — strings extras separadas por ";" cadastradas pelo usuário
+                        (ex: "MERU SERVICOS EMPRESARIAIS E VAREJO LTDA;MERU SERVICOS")
+    """
+    sellers = db.query(models.Seller).filter(models.Seller.active == True).all()
+    alias_map: dict[str, models.Seller] = {}
+    for s in sellers:
+        for key in (s.trade_name, s.name):
+            if key:
+                alias_map[key.strip().lower()] = s
+        # Expande outros apelidos cadastrados
+        if getattr(s, "other_aliases", None):
+            for alias in s.other_aliases.split(";"):
+                alias = alias.strip()
+                if alias:
+                    alias_map[alias.lower()] = s
+    return alias_map
+
+
+def _resolve_seller_name(raw_name: str, alias_map: dict) -> str:
+    """
+    Dado um nome vindo do Excel (pode ser razão social longa, apelido, etc.),
+    tenta encontrar o seller correspondente no mapa de aliases e retorna o
+    trade_name canônico. Se não encontrar, retorna o nome original sem alteração.
+
+    A resolução é case-insensitive e ignora espaços extras nas extremidades.
+    """
+    if not raw_name:
+        return raw_name
+    key = raw_name.strip().lower()
+    seller = alias_map.get(key)
+    if seller:
+        return seller.trade_name   # sempre retorna o apelido oficial
+    return raw_name.strip()
+
+
+def get_or_create_seller(
+    db: Session,
+    seller_name: str,
+    alias_map: dict | None = None,
+) -> models.Seller:
+    """
+    Busca seller pelo apelido, razão social, outros aliases ou cria um novo.
+
+    Se alias_map for fornecido (recomendado no import em lote), o lookup é O(1).
+    Sem o mapa, faz queries individuais no banco (compatível com chamadas avulsas).
+    """
+    # 1. Tenta pelo mapa em memória (sem query extra)
+    if alias_map is not None:
+        key = seller_name.strip().lower()
+        seller = alias_map.get(key)
+        if seller:
+            return seller
+
+    # 2. Fallback: queries individuais (trade_name, name, other_aliases)
     seller = db.query(models.Seller).filter(
         models.Seller.trade_name == seller_name
     ).first()
@@ -133,6 +193,23 @@ def get_or_create_seller(db: Session, seller_name: str) -> models.Seller:
         seller = db.query(models.Seller).filter(
             models.Seller.name == seller_name
         ).first()
+
+    if not seller:
+        # Busca em other_aliases — matching parcial por substring do campo
+        # (SQLite: LIKE '%alias%'; funciona tb em PostgreSQL)
+        from sqlalchemy import or_
+        key_lower = seller_name.strip().lower()
+        sellers_with_aliases = db.query(models.Seller).filter(
+            models.Seller.other_aliases.isnot(None)
+        ).all()
+        for s in sellers_with_aliases:
+            if s.other_aliases:
+                for alias in s.other_aliases.split(";"):
+                    if alias.strip().lower() == key_lower:
+                        seller = s
+                        break
+            if seller:
+                break
 
     if not seller:
         # Cria seller automaticamente se não existir
@@ -436,6 +513,11 @@ async def import_excel_orders(
 
         cmap = _build_column_map(header_row)
 
+        # ── Constrói mapa de aliases uma única vez ──────────────────────────────
+        # Permite resolução O(1) de "MERU SERVICOS EMPRESARIAIS" → "YUGEN" para
+        # todas as linhas do arquivo, sem queries adicionais por row.
+        seller_alias_map = _build_seller_alias_map(db)
+
         # Valida campos essenciais
         required = ["nf_number", "sku", "seller_name"]
         missing = [f for f in required if f not in cmap]
@@ -486,7 +568,10 @@ async def import_excel_orders(
             carrier         = str(get(row, "carrier")).strip() if get(row, "carrier") else None
             # parse_danfe_key_safe: trata floats em notação científica (Bling)
             danfe_key       = parse_danfe_key_safe(get(row, "danfe_key"))
-            seller_name     = str(get(row, "seller_name")).strip() if get(row, "seller_name") else None
+            seller_name_raw = str(get(row, "seller_name")).strip() if get(row, "seller_name") else None
+            # ── Resolução de aliases: substitui razão social / apelido alternativo
+            # pelo trade_name canônico do seller (ex: "MERU SERVICOS..." → "YUGEN")
+            seller_name     = _resolve_seller_name(seller_name_raw, seller_alias_map) if seller_name_raw else None
             expedition_date = parse_date_safe(get(row, "expedition_date"))
             nature          = str(get(row, "nature")).strip() if get(row, "nature") else None
             nf_key_raw      = get(row, "nf_key")
@@ -541,10 +626,15 @@ async def import_excel_orders(
         # já existe no banco. Se sim e o usuário não confirmou (force_duplicates=False),
         # abortamos e devolvemos a lista pro frontend exibir e perguntar.
         for order_key, order_data in orders_dict.items():
-            seller_obj = db.query(models.Seller).filter(
-                (models.Seller.trade_name == order_data["seller_name"]) |
-                (models.Seller.name == order_data["seller_name"])
-            ).first()
+            # Usa o mapa em memória (seller_name já está resolvido pelo alias neste ponto)
+            resolved_key = order_data["seller_name"].strip().lower()
+            seller_obj = seller_alias_map.get(resolved_key)
+            if not seller_obj:
+                # Fallback para query direta (seller novo, ainda não no mapa)
+                seller_obj = db.query(models.Seller).filter(
+                    (models.Seller.trade_name == order_data["seller_name"]) |
+                    (models.Seller.name == order_data["seller_name"])
+                ).first()
             if not seller_obj:
                 # seller ainda não cadastrado → impossível ser duplicata
                 continue
@@ -608,8 +698,8 @@ async def import_excel_orders(
         # Persiste os pedidos
         for order_key, order_data in orders_dict.items():
             try:
-                # Resolve o seller
-                seller = get_or_create_seller(db, order_data["seller_name"])
+                # Resolve o seller (usa mapa em memória — sem query extra)
+                seller = get_or_create_seller(db, order_data["seller_name"], alias_map=seller_alias_map)
 
                 is_duplicate = (order_data["nf_number"], order_data["seller_name"]) in duplicate_keys
                 if is_duplicate and force_duplicates:
@@ -642,13 +732,16 @@ async def import_excel_orders(
                 # A natureza da NF continua sendo armazenada para auditoria/relatórios.
 
                 # Cria o pedido — imported_at explícito com hora local
+                # unit_id: usa a unidade do seller se configurada;
+                # só cai no unit_id da sessão se o seller não tiver unidade associada.
+                order_unit_id = seller.unit_id if seller.unit_id else unit_id
                 order = models.Order(
                     erp_code=order_data["erp_code"],
                     nf_number=order_data["nf_number"],
                     customer_name=order_data["customer_name"],
                     order_date=order_data["order_date"],
                     seller_id=seller.id,
-                    unit_id=unit_id,
+                    unit_id=order_unit_id,
                     carrier=order_data["carrier"],
                     expedition_date=order_data["expedition_date"],
                     nature=order_data["nature"],

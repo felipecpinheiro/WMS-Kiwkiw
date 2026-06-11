@@ -1,0 +1,5 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-05-24 16:15:39,002488,Fernanda Masciotro,PA00268,7898410939538,1,False,,Administrador
+2026-05-24 16:17:17,002487,Leandro T R Babolin,PA00268,7898410939538,1,False,,Administrador
+2026-05-24 16:17:22,002487,Leandro T R Babolin,PA00268,7898410939538,1,False,,Administrador
+2026-05-24 16:17:31,002487,Leandro T R Babolin,PA00317,7898410939668,1,False,,Administrador

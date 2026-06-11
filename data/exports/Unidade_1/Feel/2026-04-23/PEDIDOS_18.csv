@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+18;Unidade 1;Feel;2026-04-23;137113;756481729;Rosa Maria Esteves Migotto;2026-04-23;2026-04-23;Mercado Envios;Venda de Mercadoria Adquirida de Terceiros - LP;35260437369891000168550010001371131564817290;LUBE-HIALU;Feel Lube HialuCare;1;False;;pending;2026-04-23T15:29:14.950242

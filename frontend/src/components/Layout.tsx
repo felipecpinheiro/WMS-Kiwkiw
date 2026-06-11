@@ -26,6 +26,7 @@ const navItems = [
     { to: '/kits',          icon: PackagePlus,label: 'Kits'            },
     { to: '/box-algorithm', icon: Box,        label: 'Algoritmo Caixa' },
     { to: '/sellers',       icon: Building2,  label: 'Sellers'         },
+    { to: '/units',         icon: Warehouse,  label: 'Unidades'        },
     { to: '/users',         icon: Users,      label: 'Usuários'        },
   ]},
   { group: 'Sistema', items: [

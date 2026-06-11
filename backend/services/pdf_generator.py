@@ -21,7 +21,7 @@ from reportlab.platypus import (
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .. import models
 
 # Cores da identidade visual Kiwkiw
@@ -35,258 +35,557 @@ KIWKIW_GREEN  = KIWKIW_PURPLE
 LIGHT_GREEN   = LIGHT_PURPLE
 
 
-def generate_separation_report(
+def _sellers_suffix(orders) -> str:
+    """
+    Gera sufixo com nomes dos sellers para uso no nome do arquivo PDF.
+    Mostra todos os sellers. Cada nome é truncado em 12 caracteres para
+    evitar nomes de arquivo excessivamente longos no Windows.
+    Ex.: 4 sellers → "YUGEN_LORM_QOLOR_ESPACO"
+    Caracteres inválidos em nomes de arquivo são removidos.
+    """
+    import re
+    sellers = sorted({
+        (o.seller.trade_name if o.seller else "SELLER")
+        for o in orders
+    })
+    # Sanitiza: apenas letras, números e underscores; trunca em 12 chars
+    safe = [re.sub(r'[^\w]', '', s.upper())[:12] for s in sellers]
+    # Remove entradas vazias após sanitização
+    safe = [s for s in safe if s] or ["SELLER"]
+    return "_".join(safe)
+
+
+def _resolve_pdf_dir(base_folder: str, unit_name: str, session_date) -> str:
+    """
+    Constrói e cria a pasta de destino dos PDFs seguindo a estrutura:
+        base_folder / unit_name_safe / mês-AAAA / dia
+    """
+    import re
+    safe_unit = re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
+    month_folder = session_date.strftime('%m-%Y')
+    day_folder   = session_date.strftime('%d')
+    path = os.path.join(base_folder, safe_unit, month_folder, day_folder)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def generate_pdfs_for_session(
     session: models.PickingSession,
     db: Session,
-    output_dir: str,
-) -> str:
+    base_folder: str,
+) -> list[tuple[str, str]]:
     """
-    Gera o Relatório de Separação (equivalente ao 'RELATORIO DE SEPARACAO').
-    Consolida SKUs por seller, mostrando quantidades totais a separar.
+    Função de alto nível: gera PDFs de separação e expedição para uma sessão.
+
+    - Se os pedidos da sessão pertencerem a sellers de unidades diferentes,
+      gera UM par de PDFs (sep + exp) por unidade.
+    - Usa a estrutura: base_folder / Unidade / mês-AAAA / dia / arquivo.pdf
+
+    Retorna lista de tuplas (separation_pdf_path, expedition_pdf_path).
     """
-    output_path = os.path.join(
-        output_dir,
-        f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{session.id}.pdf"
-    )
-    os.makedirs(output_dir, exist_ok=True)
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.seller).joinedload(models.Seller.unit),
+        joinedload(models.Order.items),
+    ).filter(models.Order.session_id == session.id).all()
 
-    # Busca pedidos da sessão
-    orders = db.query(models.Order).filter(
-        models.Order.session_id == session.id
-    ).all()
+    if not orders:
+        return []
 
-    # Agrupa itens por seller → sku
-    seller_skus: Dict[str, Dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {"name": "", "qty": 0}))
-    seller_order_count: Dict[str, int] = defaultdict(int)
-
+    # ── Agrupa pedidos por unidade ────────────────────────────────────────────
+    from collections import defaultdict
+    unit_orders: dict[str, list] = defaultdict(list)
     for order in orders:
-        seller_name = order.seller.trade_name if order.seller else "N/A"
-        seller_order_count[seller_name] += 1
-        for item in order.items:
-            seller_skus[seller_name][item.sku]["name"] = item.product_name
-            seller_skus[seller_name][item.sku]["qty"] += item.quantity
+        if order.seller and order.seller.unit:
+            unit_name = order.seller.unit.name
+        else:
+            unit_name = "SEM_UNIDADE"
+        unit_orders[unit_name].append(order)
 
-    # Monta documento PDF
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=A4,
-        topMargin=1.5*cm,
-        bottomMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        rightMargin=1.5*cm,
-    )
+    results: list[tuple[str, str]] = []
 
-    styles = getSampleStyleSheet()
-    story = []
+    for unit_name, unit_order_list in sorted(unit_orders.items()):
+        output_dir = _resolve_pdf_dir(base_folder, unit_name, session.session_date)
+        sep_path = generate_separation_report(session, db, output_dir, orders=unit_order_list)
+        exp_path = generate_expedition_report(session, db, output_dir, orders=unit_order_list)
+        results.append((sep_path, exp_path))
 
-    # Cabeçalho
-    title_style = ParagraphStyle("title", fontSize=18, fontName="Helvetica-Bold",
-                                  textColor=KIWKIW_GREEN, alignment=TA_CENTER)
-    subtitle_style = ParagraphStyle("subtitle", fontSize=11, fontName="Helvetica",
-                                     textColor=KIWKIW_DARK, alignment=TA_CENTER)
-    label_style = ParagraphStyle("label", fontSize=9, fontName="Helvetica-Bold",
-                                  textColor=KIWKIW_DARK)
-
-    story.append(Paragraph("WMS KIWKIW", title_style))
-    story.append(Paragraph("RELATÓRIO DE SEPARAÇÃO", ParagraphStyle("sep_title",
-        fontSize=14, fontName="Helvetica-Bold", textColor=KIWKIW_DARK, alignment=TA_CENTER)))
-    story.append(Spacer(1, 5))
-    story.append(Paragraph(
-        f"Data: {session.session_date.strftime('%d/%m/%Y')} | "
-        f"Total de Pedidos: {len(orders)} | "
-        f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        subtitle_style
-    ))
-    story.append(HRFlowable(width="100%", thickness=2, color=KIWKIW_TEAL))
-    story.append(Spacer(1, 10))
-
-    total_global = 0
-
-    for seller_name in sorted(seller_skus.keys()):
-        # Cabeçalho do seller
-        story.append(Paragraph(
-            f"SELLER: {seller_name.upper()} — {seller_order_count[seller_name]} pedidos",
-            ParagraphStyle("seller_header", fontSize=12, fontName="Helvetica-Bold",
-                          textColor=colors.white, backColor=KIWKIW_GREEN, spaceAfter=2,
-                          leftIndent=5, rightIndent=5)
-        ))
-        story.append(Spacer(1, 5))
-
-        # Tabela de SKUs do seller
-        data = [["SKU", "PRODUTO", "QTDE TOTAL"]]
-        seller_total = 0
-        for sku, info in sorted(seller_skus[seller_name].items()):
-            data.append([sku, info["name"], str(info["qty"])])
-            seller_total += info["qty"]
-            total_global += info["qty"]
-
-        data.append(["", "TOTAL SELLER", str(seller_total)])
-
-        table = Table(data, colWidths=[4*cm, 10*cm, 3*cm])
-        table.setStyle(TableStyle([
-            # Cabeçalho
-            ("BACKGROUND", (0, 0), (-1, 0), LIGHT_GREEN),
-            ("TEXTCOLOR", (0, 0), (-1, 0), KIWKIW_DARK),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            # Dados
-            ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -2), 8),
-            ("ALIGN", (2, 1), (2, -1), "CENTER"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, LIGHT_GRAY]),
-            # Total
-            ("BACKGROUND", (0, -1), (-1, -1), LIGHT_GREEN),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, -1), (-1, -1), 9),
-            # Grid
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
-            ("BOX", (0, 0), (-1, -1), 1.5, KIWKIW_PURPLE),
-        ]))
-        story.append(table)
-        story.append(Spacer(1, 15))
-
-    # Rodapé com totais globais
-    story.append(HRFlowable(width="100%", thickness=1, color=KIWKIW_TEAL))
-    story.append(Paragraph(
-        f"TOTAL GERAL DE UNIDADES: {total_global}",
-        ParagraphStyle("total", fontSize=12, fontName="Helvetica-Bold",
-                       textColor=KIWKIW_TEAL, alignment=TA_RIGHT)
-    ))
-
-    doc.build(story)
-    return output_path
+    return results
 
 
+# ════════════════════════════════════════════════════════════════
+# RELATÓRIO DE EXPEDIÇÃO — Lista de picking consolidada por seller
+# Para o separador ir ao estoque e retirar os produtos.
+# ════════════════════════════════════════════════════════════════
 def generate_expedition_report(
     session: models.PickingSession,
     db: Session,
     output_dir: str,
+    orders: list | None = None,
 ) -> str:
     """
-    Gera o Relatório de Expedição/Planejamento.
-    Detalha cada pedido por seller com itens e transportadora.
-    Equivalente ao 'Relatório de Expedição' / 'Planejamento dia'.
+    Relatório de Expedição = lista de PICKING consolidada.
+    Agrupa por seller → SKU, mostrando quantidade total a separar no estoque.
+    Design claro (branco) para impressão econômica.
     """
+    if orders is None:
+        orders = db.query(models.Order).options(
+            joinedload(models.Order.seller),
+            joinedload(models.Order.items),
+        ).filter(models.Order.session_id == session.id).all()
+
+    sellers_tag = _sellers_suffix(orders)
     output_path = os.path.join(
         output_dir,
-        f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{session.id}.pdf"
+        f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
     )
     os.makedirs(output_dir, exist_ok=True)
 
-    orders = db.query(models.Order).filter(
-        models.Order.session_id == session.id
-    ).order_by(models.Order.seller_id, models.Order.nf_number).all()
+    # ── Paleta print-friendly ─────────────────────────────────────────────────
+    ACCENT      = colors.HexColor("#5B45C2")
+    HDR_BG      = colors.HexColor("#5B45C2")
+    HDR_FG      = colors.white
+    SELLER_BG   = colors.HexColor("#EDE9FC")
+    SELLER_FG   = colors.HexColor("#2E1F8A")
+    TOTAL_BG    = colors.HexColor("#F0F0F0")
+    ROW_ODD     = colors.white
+    ROW_EVEN    = colors.HexColor("#FAFAFA")
+    BORDER      = colors.HexColor("#D0CCEE")
+    TEXT        = colors.HexColor("#111111")
 
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=landscape(A4),
-        topMargin=1.5*cm,
-        bottomMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        rightMargin=1.5*cm,
-    )
+    # ── Estilos ───────────────────────────────────────────────────────────────
+    s_cell  = ParagraphStyle("ec",  fontSize=8, fontName="Helvetica",      textColor=TEXT,      leading=10)
+    s_bold  = ParagraphStyle("eb",  fontSize=8, fontName="Helvetica-Bold", textColor=TEXT,      leading=10)
+    s_sell  = ParagraphStyle("esl", fontSize=8, fontName="Helvetica-Bold", textColor=SELLER_FG, leading=10)
+    s_tot   = ParagraphStyle("etl", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT,      leading=10)
+    s_hdr   = ParagraphStyle("eh",  fontSize=8, fontName="Helvetica-Bold", textColor=HDR_FG,    leading=10, alignment=TA_CENTER)
+    s_title = ParagraphStyle("et",  fontSize=15, fontName="Helvetica-Bold", textColor=ACCENT,   leading=18)
+    s_sub   = ParagraphStyle("es",  fontSize=8,  fontName="Helvetica",      textColor=colors.HexColor("#555555"), leading=11)
 
-    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(output_path, pagesize=A4,
+        topMargin=1.2*cm, bottomMargin=1.2*cm, leftMargin=1.2*cm, rightMargin=1.2*cm)
     story = []
 
-    title_style = ParagraphStyle("title", fontSize=16, fontName="Helvetica-Bold",
-                                  textColor=KIWKIW_GREEN, alignment=TA_CENTER)
-
-    story.append(Paragraph("WMS KIWKIW — RELATÓRIO DE EXPEDIÇÃO", title_style))
+    # ── Cabeçalho ─────────────────────────────────────────────────────────────
+    total_vol = sum(item.quantity for o in orders for item in o.items)
+    story.append(Paragraph("Relatório de Expedição", s_title))
     story.append(Paragraph(
-        f"Data: {session.session_date.strftime('%d/%m/%Y')} | "
-        f"Total: {len(orders)} pedidos | "
+        f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
+        f"Total Pedidos: <b>{len(orders)}</b>  ·  "
+        f"Total Volumes: <b>{total_vol}</b>  ·  "
         f"Gerado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        ParagraphStyle("sub", fontSize=10, fontName="Helvetica", alignment=TA_CENTER)
-    ))
-    story.append(HRFlowable(width="100%", thickness=2, color=KIWKIW_TEAL))
-    story.append(Spacer(1, 10))
+        s_sub))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=6))
 
-    # Agrupa por seller
-    sellers_orders: Dict[str, List[models.Order]] = defaultdict(list)
+    # ── Consolida por seller → sku ────────────────────────────────────────────
+    from collections import defaultdict as _dd, OrderedDict as _OD
+    seller_data: dict = _dd(lambda: {"orders": set(), "skus": _dd(lambda: {"name": "", "qty": 0})})
     for order in orders:
-        seller_name = order.seller.trade_name if order.seller else "N/A"
-        sellers_orders[seller_name].append(order)
+        sname = order.seller.trade_name if order.seller else "—"
+        seller_data[sname]["orders"].add(order.id)
+        for item in order.items:
+            seller_data[sname]["skus"][item.sku]["name"] = item.product_name or "—"
+            seller_data[sname]["skus"][item.sku]["qty"] += item.quantity
 
-    for seller_name, s_orders in sorted(sellers_orders.items()):
-        story.append(Paragraph(
-            f"SELLER: {seller_name.upper()} — {len(s_orders)} pedidos",
-            ParagraphStyle("seller", fontSize=11, fontName="Helvetica-Bold",
-                          textColor=colors.white, backColor=KIWKIW_GREEN)
-        ))
-        story.append(Spacer(1, 5))
+    # Larguras: seller | cod sku | nome produto | qtd total
+    C = [2.8*cm, 3.2*cm, 10.0*cm, 1.8*cm]
+    HDR = ["Seller", "Cód SKU", "Nome Produto", "Qtd"]
 
-        # Tabela de pedidos
-        data = [["# NF", "CLIENTE", "PRODUTO", "SKU", "TRANSPORTADORA", "QTDE"]]
-        for order in s_orders:
-            first = True
-            for item in order.items:
-                if first:
-                    data.append([
-                        order.nf_number,
-                        order.customer_name[:35],
-                        item.product_name[:40],
-                        item.sku,
-                        (order.carrier or "N/D")[:20],
-                        str(item.quantity),
-                    ])
-                    first = False
-                else:
-                    data.append([
-                        "", "",
-                        item.product_name[:40],
-                        item.sku,
-                        "",
-                        str(item.quantity),
-                    ])
-            # Linha separadora entre pedidos
-            data.append(["", "", "", "", "", ""])
+    grand_qty = 0
+    grand_orders = 0
 
-        col_widths = [2.5*cm, 5.5*cm, 7*cm, 3.5*cm, 4*cm, 1.5*cm]
-        table = Table(data, colWidths=col_widths, repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), LIGHT_GREEN),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 8),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -1), 7),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT_GRAY]),
-            ("GRID", (0, 0), (-1, -1), 0.3, colors.lightgrey),
-            ("BOX", (0, 0), (-1, -1), 1, KIWKIW_GREEN),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        story.append(table)
-        story.append(Spacer(1, 15))
+    for sname in sorted(seller_data.keys()):
+        sd = seller_data[sname]
+        n_orders   = len(sd["orders"])
+        seller_qty = sum(v["qty"] for v in sd["skus"].values())
+        grand_qty    += seller_qty
+        grand_orders += n_orders
 
-        # Área de assinatura por transportadora
-        carriers = list(set(o.carrier for o in s_orders if o.carrier))
-        if carriers:
-            sig_data = [["TRANSPORTADORA", "ASSINATURA", "VOLUMES", "DATA/HORA"]]
-            for carrier in carriers:
-                carrier_orders = [o for o in s_orders if o.carrier == carrier]
-                sig_data.append([carrier, "", str(len(carrier_orders)), ""])
+        skus_sorted = sorted(sd["skus"].items())  # alfabético por SKU
+        rows = []
+        for i, (sku, info) in enumerate(skus_sorted):
+            rows.append([
+                Paragraph(sname if i == 0 else "", s_sell if i == 0 else s_cell),
+                Paragraph(sku, s_bold),
+                Paragraph(info["name"], s_cell),
+                Paragraph(str(info["qty"]), s_bold),
+            ])
 
-            sig_table = Table(sig_data, colWidths=[5*cm, 7*cm, 3*cm, 4*cm])
-            sig_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), LIGHT_GREEN),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 8),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTSIZE", (0, 1), (-1, -1), 8),
-                ("ROWHEIGHT", (0, 1), (-1, -1), 20),
-            ]))
-            story.append(Paragraph("ASSINATURA DE COLETA POR TRANSPORTADORA:", label_style
-                if (label_style := ParagraphStyle("label", fontSize=8, fontName="Helvetica-Bold")) else None))
-            story.append(Spacer(1, 3))
-            story.append(sig_table)
+        # Span da coluna seller em todas as linhas do seller
+        total_row_idx = len(rows) + 1  # +1 header
+        rows.append([
+            Paragraph("", s_tot),
+            Paragraph("", s_tot),
+            Paragraph(f"Total {sname}  ·  {n_orders} pedido(s)", s_tot),
+            Paragraph(str(seller_qty), s_tot),
+        ])
 
-        story.append(PageBreak())
+        header_row = [Paragraph(h, s_hdr) for h in HDR]
+        tdata = [header_row] + rows
+
+        ts = TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0),             HDR_BG),
+            ("ROWBACKGROUNDS", (0, 1), (-1, total_row_idx-1), [ROW_ODD, ROW_EVEN]),
+            ("BACKGROUND",     (0, total_row_idx), (-1, total_row_idx), TOTAL_BG),
+            ("ALIGN",          (3, 0), (3, -1),             "CENTER"),
+            ("VALIGN",         (0, 0), (-1, -1),             "TOP"),
+            ("TOPPADDING",     (0, 0), (-1, -1),             3),
+            ("BOTTOMPADDING",  (0, 0), (-1, -1),             3),
+            ("LEFTPADDING",    (0, 0), (-1, -1),             4),
+            ("RIGHTPADDING",   (0, 0), (-1, -1),             4),
+            ("GRID",           (0, 0), (-1, -1),             0.4, BORDER),
+            ("BOX",            (0, 0), (-1, -1),             1.0, ACCENT),
+            ("LINEABOVE",      (0, total_row_idx), (-1, total_row_idx), 0.8, ACCENT),
+        ])
+        # Span da coluna Seller em todas as linhas do seller
+        if len(rows) > 1:
+            ts.add("SPAN",   (0, 1), (0, total_row_idx - 1))
+            ts.add("VALIGN", (0, 1), (0, total_row_idx - 1), "MIDDLE")
+
+        t = Table(tdata, colWidths=C, repeatRows=1)
+        t.setStyle(ts)
+        story.append(t)
+        story.append(Spacer(1, 8))
+
+    story.append(HRFlowable(width="100%", thickness=1.0, color=ACCENT, spaceBefore=2))
+    story.append(Paragraph(
+        f"<b>TOTAL GERAL:</b>  {grand_orders} pedidos  ·  {grand_qty} unidades",
+        ParagraphStyle("egt", fontSize=10, fontName="Helvetica-Bold",
+                       textColor=ACCENT, alignment=TA_RIGHT, leading=14)))
 
     doc.build(story)
     return output_path
 
 
-def label_style():
-    return ParagraphStyle("label", fontSize=8, fontName="Helvetica-Bold")
+# ════════════════════════════════════════════════════════════════
+# RELATÓRIO DE SEPARAÇÃO — Resumo + detalhe por NF/cliente/transportadora
+# ════════════════════════════════════════════════════════════════
+def generate_separation_report(
+    session: models.PickingSession,
+    db: Session,
+    output_dir: str,
+    orders: list | None = None,
+) -> str:
+    """
+    Relatório de Separação = detalhado por NF/cliente/transportadora.
+    Página 1: resumo por seller (pedidos + volumes).
+    Páginas seguintes: seller | #NF | cliente | cód sku | nome produto | transportadora | qtd.
+    - Quebra de página entre sellers.
+    - Células de seller/NF/cliente/transportadora com span vertical por pedido.
+    - Qtd > 1 destacado em amarelo.
+    """
+    if orders is None:
+        orders = db.query(models.Order).options(
+            joinedload(models.Order.seller),
+            joinedload(models.Order.items),
+        ).filter(models.Order.session_id == session.id
+        ).order_by(models.Order.seller_id, models.Order.nf_number).all()
+    else:
+        orders = sorted(orders, key=lambda o: (
+            o.seller.trade_name if o.seller else "",
+            o.nf_number or ""
+        ))
+
+    sellers_tag = _sellers_suffix(orders)
+    output_path = os.path.join(
+        output_dir,
+        f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
+    )
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ── Paleta ────────────────────────────────────────────────────────────────
+    ACCENT    = colors.HexColor("#5B45C2")
+    HDR_BG    = colors.HexColor("#5B45C2")
+    HDR_FG    = colors.white
+    SELLER_FG = colors.HexColor("#2E1F8A")
+    TOTAL_BG  = colors.HexColor("#F0F0F0")
+    ROW_ODD   = colors.white
+    ROW_EVEN  = colors.HexColor("#FAFAFA")
+    BORDER    = colors.HexColor("#D0CCEE")
+    TEXT      = colors.HexColor("#111111")
+    QTY_HI    = colors.HexColor("#FFF3CD")
+    QTY_FG    = colors.HexColor("#7A4800")
+    SUM_HDR   = colors.HexColor("#3B2D8A")
+
+    # ── Estilos ───────────────────────────────────────────────────────────────
+    s_cell  = ParagraphStyle("sc",   fontSize=7.5, fontName="Helvetica",      textColor=TEXT,      leading=10)
+    s_bold  = ParagraphStyle("sb",   fontSize=7.5, fontName="Helvetica-Bold", textColor=TEXT,      leading=10)
+    s_sell  = ParagraphStyle("ssl",  fontSize=7.5, fontName="Helvetica-Bold", textColor=SELLER_FG, leading=10)
+    s_tot   = ParagraphStyle("stl",  fontSize=7.5, fontName="Helvetica-Bold", textColor=TEXT,      leading=10)
+    s_hdr   = ParagraphStyle("sh",   fontSize=8,   fontName="Helvetica-Bold", textColor=HDR_FG,    leading=10, alignment=TA_CENTER)
+    s_title = ParagraphStyle("stit", fontSize=15,  fontName="Helvetica-Bold", textColor=ACCENT,    leading=18)
+    s_sub   = ParagraphStyle("ssu",  fontSize=8,   fontName="Helvetica",      textColor=colors.HexColor("#555555"), leading=11)
+
+    doc = SimpleDocTemplate(output_path, pagesize=A4,
+        topMargin=1.2*cm, bottomMargin=1.2*cm, leftMargin=1.2*cm, rightMargin=1.2*cm)
+    story = []
+
+    # ── Estatísticas ──────────────────────────────────────────────────────────
+    from collections import defaultdict as _dd
+    seller_stats: dict = _dd(lambda: {"orders": 0, "volumes": 0})
+    for order in orders:
+        sname = order.seller.trade_name if order.seller else "—"
+        seller_stats[sname]["orders"]  += 1
+        seller_stats[sname]["volumes"] += sum(i.quantity for i in order.items)
+    total_orders  = len(orders)
+    total_volumes = sum(v["volumes"] for v in seller_stats.values())
+
+    # ════════════════════════════════
+    # PÁGINA 1 — RESUMO
+    # ════════════════════════════════
+    story.append(Paragraph("Relatório de Separação", s_title))
+    story.append(Paragraph(
+        f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
+        f"Total Pedidos: <b>{total_orders}</b>  ·  "
+        f"Total Produtos: <b>{total_volumes}</b>  ·  "
+        f"Gerado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        s_sub))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=10))
+    story.append(Paragraph("Resumo por Seller",
+        ParagraphStyle("sum_title", fontSize=11, fontName="Helvetica-Bold",
+                       textColor=SUM_HDR, leading=14, spaceBefore=4, spaceAfter=6)))
+
+    sum_hdr_row = [Paragraph(h, ParagraphStyle("sumh", fontSize=9, fontName="Helvetica-Bold",
+                    textColor=HDR_FG, alignment=TA_CENTER, leading=11))
+                   for h in ["Seller", "Pedidos", "Produtos"]]
+    sum_rows = [sum_hdr_row]
+    for sn in sorted(seller_stats.keys()):
+        st = seller_stats[sn]
+        sum_rows.append([
+            Paragraph(sn,  ParagraphStyle("snn", fontSize=9, fontName="Helvetica-Bold", textColor=SELLER_FG, leading=11)),
+            Paragraph(str(st["orders"]),  ParagraphStyle("sov", fontSize=9, fontName="Helvetica", textColor=TEXT, alignment=TA_CENTER, leading=11)),
+            Paragraph(str(st["volumes"]), ParagraphStyle("svv", fontSize=9, fontName="Helvetica", textColor=TEXT, alignment=TA_CENTER, leading=11)),
+        ])
+    ns = len(sum_rows)
+    sum_rows.append([
+        Paragraph("TOTAL", ParagraphStyle("tot",  fontSize=9, fontName="Helvetica-Bold", textColor=TEXT, leading=11)),
+        Paragraph(str(total_orders),  ParagraphStyle("tot2", fontSize=9, fontName="Helvetica-Bold", textColor=TEXT, alignment=TA_CENTER, leading=11)),
+        Paragraph(str(total_volumes), ParagraphStyle("tot3", fontSize=9, fontName="Helvetica-Bold", textColor=TEXT, alignment=TA_CENTER, leading=11)),
+    ])
+    ns_full = len(sum_rows)
+    sum_tbl = Table(sum_rows, colWidths=[9*cm, 3*cm, 3*cm])
+    sum_tbl.setStyle(TableStyle([
+        ("BACKGROUND",     (0, 0), (-1, 0),            HDR_BG),
+        ("ROWBACKGROUNDS", (0, 1), (-1, ns_full - 2),  [ROW_ODD, ROW_EVEN]),
+        ("BACKGROUND",     (0, ns_full-1), (-1, ns_full-1), TOTAL_BG),
+        ("LINEABOVE",      (0, ns_full-1), (-1, ns_full-1), 1.0, ACCENT),
+        ("VALIGN",         (0, 0), (-1, -1),            "MIDDLE"),
+        ("TOPPADDING",     (0, 0), (-1, -1),            4),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1),            4),
+        ("LEFTPADDING",    (0, 0), (-1, -1),            6),
+        ("RIGHTPADDING",   (0, 0), (-1, -1),            6),
+        ("GRID",           (0, 0), (-1, -1),            0.4, BORDER),
+        ("BOX",            (0, 0), (-1, -1),            1.0, ACCENT),
+    ]))
+    story.append(sum_tbl)
+    story.append(PageBreak())
+
+    # ════════════════════════════════
+    # PÁGINAS SEGUINTES — DETALHE
+    # ════════════════════════════════
+    story.append(Paragraph("Relatório de Separação — Detalhe", s_title))
+    story.append(Paragraph(
+        f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
+        f"Total Pedidos: <b>{total_orders}</b>  ·  "
+        f"Total Produtos: <b>{total_volumes}</b>",
+        s_sub))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=6))
+
+    # Colunas: seller | #NF | cliente | cod sku | nome produto | transportadora | qtd
+    C7  = [1.8*cm, 1.6*cm, 3.5*cm, 2.4*cm, 5.0*cm, 2.9*cm, 0.8*cm]
+    HDR7 = ["Seller", "# NF", "Cliente", "Cód SKU", "Nome Produto", "Transportadora", "Qtd"]
+
+    seller_orders_map: dict = _dd(list)
+    for order in orders:
+        sname = order.seller.trade_name if order.seller else "—"
+        seller_orders_map[sname].append(order)
+
+    for seller_idx, sname in enumerate(sorted(seller_orders_map.keys())):
+        s_orders = seller_orders_map[sname]
+        seller_qty = sum(item.quantity for o in s_orders for item in o.items)
+
+        if seller_idx > 0:
+            story.append(PageBreak())
+
+        rows  = []
+        spans = []
+        row_idx = 0
+        qty_hi_rows = []
+
+        for order in s_orders:
+            nf         = order.nf_number or "—"
+            cust       = order.customer_name or "—"
+            carrier    = order.carrier or "—"
+            items_list = order.items
+            if not items_list:
+                continue
+            n_items = len(items_list)
+
+            for i, item in enumerate(items_list):
+                qty   = item.quantity
+                is_hi = qty > 1
+                q_style = ParagraphStyle(
+                    "qhi" if is_hi else "qno",
+                    fontSize=7.5, fontName="Helvetica-Bold",
+                    textColor=QTY_FG if is_hi else TEXT, leading=10,
+                )
+                sku_p  = Paragraph(item.sku or "—",          s_bold if i == 0 else s_cell)
+                prod_p = Paragraph(item.product_name or "—", s_cell)
+                qty_p  = Paragraph(str(qty),                 q_style)
+                carr_p = Paragraph(carrier,                  s_cell)
+
+                tr = row_idx + 1  # offset for header row
+                if is_hi:
+                    qty_hi_rows.append(tr)
+
+                if i == 0:
+                    rows.append([
+                        Paragraph(sname, s_sell),
+                        Paragraph(nf,    s_bold),
+                        Paragraph(cust,  s_cell),
+                        sku_p, prod_p, carr_p, qty_p,
+                    ])
+                    if n_items > 1:
+                        spans.append(("SPAN",   (0, tr), (0, tr + n_items - 1)))
+                        spans.append(("SPAN",   (1, tr), (1, tr + n_items - 1)))
+                        spans.append(("SPAN",   (2, tr), (2, tr + n_items - 1)))
+                        spans.append(("SPAN",   (5, tr), (5, tr + n_items - 1)))
+                        spans.append(("VALIGN", (0, tr), (2, tr + n_items - 1), "MIDDLE"))
+                        spans.append(("VALIGN", (5, tr), (5, tr + n_items - 1), "MIDDLE"))
+                else:
+                    rows.append([
+                        Paragraph("", s_cell),
+                        Paragraph("", s_cell),
+                        Paragraph("", s_cell),
+                        sku_p, prod_p,
+                        Paragraph("", s_cell),
+                        qty_p,
+                    ])
+                row_idx += 1
+
+        total_row_idx = row_idx + 1
+        rows.append([
+            Paragraph("", s_tot),
+            Paragraph("", s_tot),
+            Paragraph("", s_tot),
+            Paragraph("", s_tot),
+            Paragraph(f"Total {sname}  ·  {len(s_orders)} pedido(s)", s_tot),
+            Paragraph("", s_tot),
+            Paragraph(str(seller_qty), s_tot),
+        ])
+
+        header_row = [Paragraph(h, s_hdr) for h in HDR7]
+        tdata = [header_row] + rows
+
+        ts = TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0),                    HDR_BG),
+            ("ROWBACKGROUNDS", (0, 1), (-1, total_row_idx - 1),    [ROW_ODD, ROW_EVEN]),
+            ("BACKGROUND",     (0, total_row_idx), (-1, total_row_idx), TOTAL_BG),
+            ("LINEABOVE",      (0, total_row_idx), (-1, total_row_idx), 0.8, ACCENT),
+            ("ALIGN",          (6, 0), (6, -1),                    "CENTER"),
+            ("ALIGN",          (1, 0), (1, -1),                    "CENTER"),
+            ("VALIGN",         (0, 0), (-1, -1),                   "TOP"),
+            ("TOPPADDING",     (0, 0), (-1, -1),                   3),
+            ("BOTTOMPADDING",  (0, 0), (-1, -1),                   3),
+            ("LEFTPADDING",    (0, 0), (-1, -1),                   3),
+            ("RIGHTPADDING",   (0, 0), (-1, -1),                   3),
+            ("GRID",           (0, 0), (-1, -1),                   0.4, BORDER),
+            ("BOX",            (0, 0), (-1, -1),                   1.0, ACCENT),
+        ])
+        for hi in qty_hi_rows:
+            ts.add("BACKGROUND", (6, hi), (6, hi), QTY_HI)
+        for sp in spans:
+            ts.add(*sp)
+
+        t = Table(tdata, colWidths=C7, repeatRows=1)
+        t.setStyle(ts)
+        story.append(t)
+        story.append(Spacer(1, 10))
+
+        # ── Romaneio por seller ──────────────────────────────────────────────
+
+        # ── Romaneio por seller ──────────────────────────────────────────────
+        # Agrupa por transportadora: conta NFs (volumes) e total de produtos
+        carrier_map: dict = _dd(lambda: {"nfs": set(), "produtos": 0})
+        for order in s_orders:
+            carrier_key = order.carrier or "Sem Transportadora"
+            carrier_map[carrier_key]["nfs"].add(order.nf_number or "ord{}".format(order.id))
+            carrier_map[carrier_key]["produtos"] += sum(i.quantity for i in order.items)
+
+        rom_title_style = ParagraphStyle(
+            "romtit", fontSize=9, fontName="Helvetica-Bold",
+            textColor=SUM_HDR, leading=12, spaceBefore=2, spaceAfter=4,
+        )
+        rom_hdr_style = ParagraphStyle(
+            "romh", fontSize=8, fontName="Helvetica-Bold",
+            textColor=HDR_FG, alignment=TA_CENTER, leading=10,
+        )
+        rom_cell_style = ParagraphStyle(
+            "romc", fontSize=8, fontName="Helvetica", textColor=TEXT, leading=10,
+        )
+        rom_bold_style = ParagraphStyle(
+            "romb", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT,
+            alignment=TA_CENTER, leading=10,
+        )
+        rom_tot_style = ParagraphStyle(
+            "romt", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT,
+            alignment=TA_CENTER, leading=10,
+        )
+        sign_style = ParagraphStyle(
+            "sign", fontSize=8, fontName="Helvetica",
+            textColor=colors.HexColor("#555555"), leading=12,
+        )
+
+        story.append(Paragraph("Romaneio de Expedicao — {}".format(sname), rom_title_style))
+
+        # Transportadora | Volumes | Assinatura (sem Total Produtos; assinatura por linha)
+        sign_col_style = ParagraphStyle(
+            "signcol", fontSize=7, fontName="Helvetica",
+            textColor=colors.HexColor("#888888"), leading=10,
+        )
+        rom_hdr_row = [Paragraph(h, rom_hdr_style)
+                       for h in ["Transportadora", "Volumes", "Assinatura"]]
+        rom_rows = [rom_hdr_row]
+        for carrier_name in sorted(carrier_map.keys()):
+            cd = carrier_map[carrier_name]
+            rom_rows.append([
+                Paragraph(carrier_name, rom_cell_style),
+                Paragraph(str(len(cd["nfs"])), rom_bold_style),
+                Paragraph("", sign_col_style),  # espaco em branco para assinar
+            ])
+        # Linha de total (apenas volumes, sem produtos)
+        tot_vols = sum(len(cd["nfs"]) for cd in carrier_map.values())
+        rom_rows.append([
+            Paragraph("TOTAL", ParagraphStyle("romtotl", fontSize=8,
+                fontName="Helvetica-Bold", textColor=TEXT, leading=10)),
+            Paragraph(str(tot_vols), rom_tot_style),
+            Paragraph("", sign_col_style),
+        ])
+
+        n_rom = len(rom_rows)
+        # Coluna assinatura larga para caber a rubrica
+        rom_tbl = Table(rom_rows, colWidths=[6.0*cm, 2.5*cm, 6.0*cm])
+        rom_tbl.setStyle(TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0),              HDR_BG),
+            ("ROWBACKGROUNDS", (0, 1), (-1, n_rom - 2),      [ROW_ODD, ROW_EVEN]),
+            ("BACKGROUND",     (0, n_rom-1), (-1, n_rom-1),  TOTAL_BG),
+            ("LINEABOVE",      (0, n_rom-1), (-1, n_rom-1),  0.8, ACCENT),
+            ("ALIGN",          (1, 0), (1, -1),               "CENTER"),
+            ("VALIGN",         (0, 0), (-1, -1),              "MIDDLE"),
+            ("TOPPADDING",     (0, 0), (-1, -1),              6),
+            ("BOTTOMPADDING",  (0, 0), (-1, -1),              6),
+            ("LEFTPADDING",    (0, 0), (-1, -1),              5),
+            ("RIGHTPADDING",   (0, 0), (-1, -1),              5),
+            ("GRID",           (0, 0), (-1, -1),              0.4, BORDER),
+            ("BOX",            (0, 0), (-1, -1),              1.0, ACCENT),
+        ]))
+        story.append(rom_tbl)
+        story.append(Spacer(1, 8))
+
+    story.append(HRFlowable(width="100%", thickness=1.0, color=ACCENT, spaceBefore=2))
+    story.append(Paragraph(
+        "<b>TOTAL GERAL:</b>  {} pedidos  ·  {} produtos".format(total_orders, total_volumes),
+        ParagraphStyle("sgt", fontSize=10, fontName="Helvetica-Bold",
+                       textColor=ACCENT, alignment=TA_RIGHT, leading=14)))
+
+    doc.build(story)
+    return output_path

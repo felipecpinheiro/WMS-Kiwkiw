@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+22;Unidade 1;AVA INTIMATES;2026-04-26;9674;n.a;ALCF COMERCIO DE VESTUARIO LTDA;2026-04-24;;CARRO PROPRIO;RETORNO REM PARA ARMAZENAGEM;35260453972916000170550020000096741000377313;26V5001ML00942;CALCA JEANS MILAO MARINHO 42;1;False;;pending;2026-04-26T15:54:13.601015

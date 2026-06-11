@@ -3,7 +3,7 @@
  * Cockpit gerencial com visão geral do dia: pedidos, unidades, sellers, checagens e auditoria.
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
-  ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X,
+  ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste,
 } from 'lucide-react';
 import { dashboardApi, ordersApi, DuplicateOrderInfo } from '../api';
 
@@ -62,35 +62,135 @@ function CheckItem({ label, ok }: { label: string; ok: boolean }) {
 
 // ─── Página principal ────────────────────────────────────────
 
-// ─── CarrierModal ────────────────────────────────────────────
+// ─── CarrierModal — grid estilo Excel com suporte a Ctrl+V ───
+function CarrierModal({ orders, onClose, onSave }: {
+  orders: any[];
+  onClose: () => void;
+  onSave: (updates: Record<number, string>) => void;
+}) {
+  // Inicializa com transportadoras já preenchidas (se houver)
+  const [carriers, setCarriers] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    orders.forEach((o: any) => { if (o.carrier) init[o.order_id] = o.carrier; });
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
 
-function CarrierModal({ orders, onClose, onSave }: { orders: any[]; onClose: () => void; onSave: (updates: Record<number, string>) => void }) {
-  const [carriers, setCarriers] = useState<Record<number, string>>({});
+  // Ctrl+V: aceita colar do Excel (tab-separated, uma linha por NF)
+  // Formato esperado: NF\tTransportadora  ou só Transportadora por linha
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData('text');
+    if (!text.trim()) return;
+    const lines = text.trim().split(/\r?\n/).filter(Boolean);
+    const newCarriers = { ...carriers };
+    lines.forEach(line => {
+      const parts = line.split('\t');
+      // Se duas colunas: NF | Transportadora → encontra a NF correspondente
+      if (parts.length >= 2) {
+        const nf       = parts[0].trim();
+        const carrier  = parts[1].trim();
+        const matched  = orders.find((o: any) => String(o.nf_number).trim() === nf);
+        if (matched && carrier) newCarriers[matched.order_id] = carrier;
+      } else if (parts.length === 1 && parts[0].trim()) {
+        // Uma coluna apenas: aplica na ordem sequencial das linhas sem transportadora
+        const carrier = parts[0].trim();
+        const missing = orders.find((o: any) => !newCarriers[o.order_id]);
+        if (missing) newCarriers[missing.order_id] = carrier;
+      }
+    });
+    setCarriers(newCarriers);
+    e.preventDefault();
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(carriers); }
+    finally { setSaving(false); }
+  };
+
+  const filled   = Object.values(carriers).filter(v => v.trim()).length;
+  const total    = orders.length;
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-white text-sm">Informar Transportadoras</h3>
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-2xl flex flex-col" style={{ maxHeight: '80vh' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+          <div>
+            <h3 className="font-semibold text-white text-sm">Informar Transportadoras</h3>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              Cole do Excel (NF · Tab · Transportadora) ou edite linha a linha · {filled}/{total} preenchidas
+            </p>
+          </div>
           <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
         </div>
-        <div className="space-y-2 max-h-80 overflow-y-auto">
-          {orders.map((o: any) => (
-            <div key={o.order_id} className="flex items-center gap-2">
-              <span className="text-xs font-mono text-white/60 w-28 flex-shrink-0">{o.nf_number}</span>
-              <span className="text-xs text-white/40 flex-shrink-0 w-20 truncate">{o.seller_name}</span>
-              <input
-                value={carriers[o.order_id] ?? ''}
-                onChange={e => setCarriers(prev => ({ ...prev, [o.order_id]: e.target.value }))}
-                placeholder="Ex: JADLOG"
-                className="flex-1 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-violet-500 text-white/80"
-                style={{ background: '#14122A' }}
-              />
-            </div>
-          ))}
+
+        {/* Instrução de paste */}
+        <div className="px-5 pt-3 pb-1 flex-shrink-0">
+          <div className="flex items-center gap-2 text-[11px] text-amber-400/80 bg-amber-900/15 border border-amber-500/20 rounded-lg px-3 py-2">
+            <ClipboardPaste size={13} className="flex-shrink-0" />
+            <span>Clique em qualquer célula da coluna Transportadora e cole (Ctrl+V) os dados copiados do Excel</span>
+          </div>
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">Cancelar</button>
-          <button onClick={() => onSave(carriers)} className="px-3 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition">Salvar Transportadoras</button>
+
+        {/* Grid */}
+        <div ref={gridRef} className="flex-1 overflow-y-auto px-5 py-3" onPaste={handlePaste}>
+          {/* Header row */}
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/30 mb-1 px-1"
+               style={{ gridTemplateColumns: '2rem 7rem 1fr 2fr' }}>
+            <span>#</span><span>NF</span><span>Seller</span><span>Transportadora</span>
+          </div>
+
+          <div className="space-y-0.5">
+            {orders.map((o: any, idx: number) => {
+              const val = carriers[o.order_id] ?? '';
+              const filled_row = val.trim().length > 0;
+              return (
+                <div
+                  key={o.order_id}
+                  className="grid items-center rounded"
+                  style={{ gridTemplateColumns: '2rem 7rem 1fr 2fr',
+                           background: filled_row ? 'rgba(109,89,222,0.08)' : 'transparent' }}
+                >
+                  <span className="text-[10px] text-white/25 px-1">{idx + 1}</span>
+                  <span className="text-xs font-mono text-white/60 truncate px-1">{o.nf_number}</span>
+                  <span className="text-xs text-white/40 truncate px-1">{o.seller_name}</span>
+                  <input
+                    value={val}
+                    onChange={e => setCarriers(prev => ({ ...prev, [o.order_id]: e.target.value }))}
+                    onPaste={handlePaste}
+                    placeholder="—"
+                    className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-white/80 placeholder-white/20 transition-colors"
+                    style={{
+                      background: 'transparent',
+                      borderBottomColor: filled_row ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)',
+                    }}
+                    onFocus={e => (e.currentTarget.style.borderBottomColor = '#7B63E8')}
+                    onBlur={e => (e.currentTarget.style.borderBottomColor = filled_row ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)')}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+          <button
+            onClick={() => setCarriers({})}
+            className="text-xs text-white/30 hover:text-white/60 transition"
+          >Limpar tudo</button>
+          <div className="flex gap-2">
+            <button onClick={onClose}
+              className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving || filled === 0}
+              className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+              {saving ? 'Salvando…' : `Salvar ${filled} transportadora(s)`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -125,8 +225,15 @@ export default function DashboardPage() {
 
   const { data, isLoading, refetch } = useQuery(
     ['dashboard', targetDate],
-    () => dashboardApi.master({ target_date: targetDate, unit_id: user.unit_id || undefined }).then(r => r.data),
+    () => dashboardApi.master({ target_date: targetDate, unit_id: (user.role === 'admin' ? undefined : user.unit_id || undefined) }).then(r => r.data),
     { refetchInterval: 60000 }, // atualiza a cada 1 minuto
+  );
+
+  // Warning: sellers ativos sem unidade associada — PDFs caem em SEM_UNIDADE
+  const { data: sellersWithoutUnit = [] } = useQuery(
+    'sellers-without-unit',
+    () => import('../api').then(m => m.cadastrosApi.sellersWithoutUnit().then(r => r.data)),
+    { staleTime: 5 * 60 * 1000 },
   );
 
   // Passo 1: usuário seleciona arquivo — abrimos modal de confirmação
@@ -225,18 +332,21 @@ export default function DashboardPage() {
   };
 
   const handleCarrierSave = async (updates: Record<number, string>) => {
-    const token = localStorage.getItem('wms_token');
-    const base = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+    const { ordersApi } = await import('../api');
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
-    await Promise.all(entries.map(([id, carrier]) =>
-      fetch(`${base}/orders/${id}/carrier`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ carrier }),
-      }).catch(() => {})
-    ));
+    if (!entries.length) { setCarrierModalOrders([]); return; }
+    try {
+      await Promise.all(
+        entries.map(([id, carrier]) =>
+          ordersApi.updateCarrier(Number(id), carrier)
+        )
+      );
+      toast.success(`${entries.length} transportadora(s) salva(s)`);
+    } catch {
+      toast.error('Erro ao salvar transportadoras');
+    }
     setCarrierModalOrders([]);
-    qc.invalidateQueries('dashboard-stats');
+    qc.invalidateQueries(['dashboard', targetDate]);
     refetch();
   };
 
@@ -256,6 +366,25 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 space-y-6 min-h-full text-white">
+
+      {/* ⚠️ Warning: sellers sem unidade associada */}
+      {(sellersWithoutUnit as any[]).length > 0 && (
+        <div className="flex items-start gap-3 bg-amber-900/25 border border-amber-500/30 rounded-xl px-4 py-3">
+          <span className="text-amber-400 mt-0.5 flex-shrink-0">⚠</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-300">Sellers sem unidade associada</p>
+            <p className="text-xs text-amber-400/80 mt-0.5">
+              PDFs desses sellers serão salvos em <span className="font-mono">SEM_UNIDADE/</span>.
+              Acesse <strong>Cadastros → Unidades</strong> para associar.
+            </p>
+            <p className="text-xs text-amber-400/60 mt-1">
+              {(sellersWithoutUnit as any[]).map((s: any) => s.trade_name).join(', ')}
+            </p>
+          </div>
+          <a href="/units" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -570,6 +699,55 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* ── Acompanhamento por Operador ─────────────────── */}
+          {stats.operators_summary && (stats.operators_summary.length > 0 || (stats.orders_no_operator ?? 0) > 0) && (
+            <div className="bg-gray-900 rounded-xl border border-white/8 p-4">
+              <h2 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
+                <ScanLine size={14} className="text-violet-400" />
+                Produtividade por Operador
+              </h2>
+              <div className="space-y-2">
+                {stats.operators_summary.map((op: any) => {
+                  const pct = op.orders_touched > 0 ? Math.round(op.orders_completed / op.orders_touched * 100) : 0;
+                  return (
+                    <div key={op.operator_id}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/6"
+                      style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg,#7B63E8,#3DD9A4)' }}>
+                        {op.operator_name?.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white/80 truncate">{op.operator_name}</p>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="text-[11px] text-white/40">{op.scans} scan(s)</span>
+                          <span className="text-[11px] text-white/40">{op.orders_touched} pedido(s) tocados</span>
+                          <span className="text-[11px] text-teal-400 font-medium">{op.orders_completed} concluído(s)</span>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        {op.scans > 0
+                          ? <span className={`text-sm font-bold ${pct === 100 ? 'text-teal-400' : pct > 50 ? 'text-violet-300' : 'text-amber-400'}`}>{pct}%</span>
+                          : <span className="text-xs text-white/25">Sem scans</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {(stats.orders_no_operator ?? 0) > 0 && (
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/6 border-dashed"
+                    style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white/25 flex-shrink-0 border border-white/12">?</div>
+                    <div className="flex-1">
+                      <p className="text-sm text-white/40">Sem operador associado</p>
+                      <p className="text-[11px] text-white/25 mt-0.5">Pedidos ainda não iniciados ou sem scan registrado</p>
+                    </div>
+                    <span className="text-sm font-bold text-white/35">{stats.orders_no_operator ?? 0}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ── Sellers sem pedidos hoje ─────────────────────── */}
           {stats.sellers_no_orders && stats.sellers_no_orders.length > 0 && (
             <div className="bg-amber-900/20 border border-amber-500/20 rounded-xl p-4">
@@ -750,21 +928,19 @@ export default function DashboardPage() {
               </label>
             </div>
 
-            {/* Ações */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/8">
+            {/* Botões */}
+            <div className="flex gap-2 pt-2">
               <button
-                type="button"
                 onClick={handleCancelUpload}
-                disabled={uploading}
-                className="px-4 py-2 text-sm text-white/60 hover:bg-white/8 rounded-lg transition disabled:opacity-50"
+                className="flex-1 px-4 py-2 text-sm text-white/60 border border-white/10 rounded-lg hover:bg-white/4 transition"
               >
                 Cancelar
               </button>
               <button
-                type="button"
-                onClick={handleConfirmUpload}
+                onClick={() => runImport(false)}
                 disabled={uploading}
-                className="px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition disabled:opacity-60"
+                className="flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 {uploading ? 'Importando...' : 'Importar agora'}
               </button>
@@ -827,36 +1003,24 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
-
-            <div className="rounded-lg bg-amber-900/25 border border-amber-500/20 p-3 mb-4">
-              <p className="text-xs text-amber-200">
-                <strong>Atenção:</strong> reimportar pode duplicar o estoque e a cobrança.
-                Use apenas se o arquivo corrigiu dados de pedidos já processados.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/8">
+            <div className="flex gap-2 justify-end mt-2">
               <button
-                type="button"
                 onClick={handleCancelDuplicates}
-                disabled={uploading}
-                           className="px-3 py-1.5 text-xs border border-white/12 rounded-lg text-white/60 hover:bg-white/4 disabled:opacity-40 transition"
+                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
               >
                 Cancelar
               </button>
               <button
-                type="button"
                 onClick={handleForceImport}
-                disabled={uploading}
-                className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-400 rounded-lg disabled:opacity-50 transition"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all"
+                style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
-                {uploading ? 'Importando...' : 'Reimportar mesmo assim'}
+                Reimportar mesmo assim
               </button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }

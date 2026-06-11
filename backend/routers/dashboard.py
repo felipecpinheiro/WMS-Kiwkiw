@@ -140,9 +140,15 @@ def master_dashboard(
         manager_seller_ids = [s.id for s in (current_user.sellers or [])]
 
     # ── Base: orders importados no dia alvo ─────────────────────
+    # Filtragem por unidade via seller.unit_id — não usa Order.unit_id
+    # (campo denormalizado que pode estar desatualizado em pedidos históricos)
     base_filter = [_imported_on(target)]
     if unit_id:
-        base_filter.append(models.Order.unit_id == unit_id)
+        sellers_in_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit_id,
+            models.Seller.active  == True,
+        ).subquery()
+        base_filter.append(models.Order.seller_id.in_(sellers_in_unit))
     if manager_seller_ids:
         base_filter.append(models.Order.seller_id.in_(manager_seller_ids))
 
@@ -174,6 +180,8 @@ def master_dashboard(
     ).scalar() or 0
 
     # ── Resumo por unidade ──────────────────────────────────────
+    # Deriva a unidade de cada pedido pelo seller (seller.unit_id),
+    # evitando depender do campo denormalizado order.unit_id.
     units = db.query(models.Unit).filter(models.Unit.active == True).all()
     units_summary = []
     for unit in units:
@@ -183,11 +191,22 @@ def master_dashboard(
                 "total": 0, "completed": 0, "pct": 0,
             })
             continue
-        unit_filter = [_imported_on(target), models.Order.unit_id == unit.id]
+
+        # Sellers que pertencem a esta unidade
+        sellers_of_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit.id,
+            models.Seller.active  == True,
+        ).subquery()
+
+        unit_filter = [
+            _imported_on(target),
+            models.Order.seller_id.in_(sellers_of_unit),
+        ]
         if manager_seller_ids:
             unit_filter.append(models.Order.seller_id.in_(manager_seller_ids))
+
         u_total = db.query(func.count(models.Order.id)).filter(*unit_filter).scalar() or 0
-        u_done = db.query(func.count(models.Order.id)).filter(
+        u_done  = db.query(func.count(models.Order.id)).filter(
             *unit_filter,
             models.Order.status == models.OrderStatus.COMPLETED,
         ).scalar() or 0
@@ -390,6 +409,59 @@ def master_dashboard(
             "expedition_pdf": exp_pdf,
         })
 
+    # ── Agrupamento por operador ────────────────────────────────────────
+    # Para cada operador que fez scans no dia, mostra total bipado e pedidos concluídos
+    operator_rows = db.query(
+        models.User.id,
+        models.User.name,
+        func.count(models.ScanningLog.id).label("scans"),
+        func.count(models.ScanningLog.order_id.distinct()).label("orders_touched"),
+    ).outerjoin(
+        models.ScanningLog,
+        (models.ScanningLog.operator_id == models.User.id) &
+        (func.date(models.ScanningLog.timestamp) == target),
+    ).filter(
+        models.User.role == "operator",
+        models.User.active == True,
+    ).group_by(models.User.id, models.User.name).all()
+
+    # Pedidos concluídos por operador (último scan é do operador que fechou)
+    completed_by_op = {}
+    logs_today = db.query(models.ScanningLog).join(
+        models.Order, models.Order.id == models.ScanningLog.order_id
+    ).filter(
+        func.date(models.ScanningLog.timestamp) == target,
+        *([models.Order.unit_id == unit_id] if unit_id else []),
+    ).all()
+    for log in logs_today:
+        if log.operator_id not in completed_by_op:
+            completed_by_op[log.operator_id] = set()
+        if log.order and log.order.status == models.OrderStatus.COMPLETED:
+            completed_by_op[log.operator_id].add(log.order_id)
+
+    operators_summary = []
+    for r in operator_rows:
+        ops = {
+            "operator_id":   r.id,
+            "operator_name": r.name,
+            "scans":         int(r.scans or 0),
+            "orders_touched": int(r.orders_touched or 0),
+            "orders_completed": len(completed_by_op.get(r.id, set())),
+        }
+        operators_summary.append(ops)
+
+    # Pedidos sem operador associado (nunca foram bipados)
+    orders_no_scan = db.query(func.count(models.Order.id)).filter(
+        *base_filter,
+        ~models.Order.id.in_(
+            db.query(models.ScanningLog.order_id).filter(
+                func.date(models.ScanningLog.timestamp) == target
+            )
+        ),
+    ).scalar() or 0
+
+    operators_summary.sort(key=lambda x: x["scans"], reverse=True)
+
     return schemas.DashboardStats(
         today=target,
         total_orders_today=total,
@@ -405,6 +477,8 @@ def master_dashboard(
         recent_scans=recent_scans,
         alerts=alerts,
         checks=checks,
+        operators_summary=operators_summary,
+        orders_no_operator=orders_no_scan,
     )
 
 

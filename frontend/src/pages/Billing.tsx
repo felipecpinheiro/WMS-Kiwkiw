@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
-import { DollarSign, Check, Save } from 'lucide-react';
+import { DollarSign, Check, Save, Download } from 'lucide-react';
 import { billingApi, cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
 
@@ -18,6 +18,36 @@ export default function BillingPage() {
     extra_order_price: 0, storage_fee_per_sku: 0,
   });
   const [saving, setSaving] = useState(false);
+  // Filtro de data para exportação
+  const [exportFrom, setExportFrom] = useState(() => {
+    const d = new Date(); d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [exportTo, setExportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const base = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+      const sellerParam = sellerId ? `&seller_id=${sellerId}` : '';
+      const token = localStorage.getItem('wms_token');
+      const res = await fetch(
+        `${base}/billing/export?date_from=${exportFrom}&date_to=${exportTo}${sellerParam}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) { toast.error('Erro ao exportar'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `faturamento_${exportFrom}_${exportTo}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Exportado com sucesso!');
+    } catch { toast.error('Erro na exportação'); }
+    finally { setExporting(false); }
+  };
 
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
 
@@ -57,6 +87,46 @@ export default function BillingPage() {
       </div>
 
       {/* Seleção de seller */}
+      {/* ── Exportar Excel ──────────────────────────────────────── */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-white/80">Exportar Relatório</h2>
+          <span className="text-[11px] text-white/35">Seller · NF · Data · SKU · Qtd · Entrada/Saída · Caixa</span>
+        </div>
+        <div className="flex gap-3 flex-wrap items-end">
+          <div>
+            <label className="block text-xs text-white/50 mb-1">Data inicial</label>
+            <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
+              className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              style={{ background: '#14122A', colorScheme: 'dark', color: '#fff' }} />
+          </div>
+          <div>
+            <label className="block text-xs text-white/50 mb-1">Data final</label>
+            <input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)}
+              className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              style={{ background: '#14122A', colorScheme: 'dark', color: '#fff' }} />
+          </div>
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs text-white/50 mb-1">Seller (opcional)</label>
+            <select value={sellerId} onChange={e => setSellerId(Number(e.target.value) || '')}
+              className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              style={{ background: '#14122A', color: '#fff' }}>
+              <option value="">Todos os sellers</option>
+              {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <button
+            onClick={handleExport}
+            disabled={exporting || !exportFrom || !exportTo}
+            className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white transition disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg,#7B63E8,#5B43C8)' }}
+          >
+            <Download size={15} />
+            {exporting ? 'Exportando...' : 'Exportar Excel'}
+          </button>
+        </div>
+      </div>
+
       <div className="flex gap-3 flex-wrap">
         <div className="flex-1 min-w-[200px]">
           <label className="block text-xs text-white/50 mb-1">Seller</label>

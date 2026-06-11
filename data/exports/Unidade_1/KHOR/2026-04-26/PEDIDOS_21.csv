@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+21;Unidade 1;KHOR;2026-04-26;16961;n.a;Amanda Alves Soares;2026-04-24;;EMPRESA BRASILEIRA DE CORREIOS E TELEGRAFOS;Venda de mercadoria;35260430957788000190550010000169611429649337;00000P2024008B1;Protetor Solar Facial Com Cor FPS35/PPD12,5 com Dosadora - 60g Cor:B1 - Claro;1;False;;pending;2026-04-26T14:54:11.771158

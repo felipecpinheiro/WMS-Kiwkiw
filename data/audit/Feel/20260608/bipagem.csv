@@ -1,0 +1,17 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-06-08 22:45:27,144412,Veruska Mara Sobral da Costa,LUBE-SEM-PER-F,7898996051785,1,False,,Administrador
+2026-06-08 22:46:06,144195,Carolina Miquelon Costa,LUBE-SEM-PER-F,7898996051785,1,False,,Administrador
+2026-06-08 22:46:12,144195,Carolina Miquelon Costa,LUBE-SEM-PER-F,7898996051785,1,False,,Administrador
+2026-06-08 22:46:28,144195,Carolina Miquelon Costa,OLEO-SENS,OLEO-SENS,1,False,,Administrador
+2026-06-08 22:46:38,144195,Carolina Miquelon Costa,OLEO-SENS,OLEO-SENS,1,False,,Administrador
+2026-06-08 22:49:24,144037,Celio Humberto Orlandelli,LUBE-HIALU,7898975475038,1,False,,Administrador
+2026-06-08 22:49:30,144037,Celio Humberto Orlandelli,LUBE-HIALU,7898975475038,1,False,,Administrador
+2026-06-08 22:49:43,144037,Celio Humberto Orlandelli,GEL-REF,040141171917,1,False,,Administrador
+2026-06-08 22:49:49,144037,Celio Humberto Orlandelli,GEL-REF,040141171917,1,False,,Administrador
+2026-06-08 22:49:59,144037,Celio Humberto Orlandelli,GFJABU-INT,7898975475045,1,False,,Administrador
+2026-06-08 22:50:02,144037,Celio Humberto Orlandelli,GFJABU-INT,7898975475045,1,False,,Administrador
+2026-06-08 23:12:50,144440,Damaris Maria Tamayo Puig,SABFRU,7898975475021,1,False,,Administrador
+2026-06-08 23:12:53,144440,Damaris Maria Tamayo Puig,SABFRU,7898975475021,1,False,,Administrador
+2026-06-08 23:13:36,144417,Renan Santos Vianna,LUBE-HIALU,7898975475038,1,False,,Administrador
+2026-06-08 23:13:45,144417,Renan Santos Vianna,GFJABU-INT,7898975475045,1,False,,Administrador
+2026-06-08 23:13:55,144417,Renan Santos Vianna,GEL-REF,040141171917,1,False,,Administrador

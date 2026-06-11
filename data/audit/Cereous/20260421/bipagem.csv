@@ -1,0 +1,7 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-21 13:23:14,000571,Ana Laura Iembo Hernandes,1000201,1000201,1,False,,Administrador
+2026-04-21 13:23:16,000571,Ana Laura Iembo Hernandes,1000201,1000201,1,False,,Administrador
+2026-04-21 13:23:34,000568,Flavio Igel,1000201,1000201,1,False,,Administrador
+2026-04-21 13:23:43,000568,Flavio Igel,2000200,2000200,1,False,,Administrador
+2026-04-21 13:24:59,000570,Helena Descovi Galelli,1000201,1000201,1,False,,Administrador
+2026-04-21 13:25:07,000570,Helena Descovi Galelli,2000202,2000202,1,False,,Administrador

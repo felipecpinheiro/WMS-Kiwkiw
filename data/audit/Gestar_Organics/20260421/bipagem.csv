@@ -1,0 +1,35 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-21 10:29:18,008774,Melina Cordás,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:48:25,008780,Luiza Gabriela Lopes Ferreira,ESS1,ESS1,1,False,,Administrador
+2026-04-21 10:48:33,008780,Luiza Gabriela Lopes Ferreira,OVN,OVN,1,False,,Administrador
+2026-04-21 10:48:42,008780,Luiza Gabriela Lopes Ferreira,SFIL1,SFIL1,1,False,,Administrador
+2026-04-21 10:48:58,008775,Patrícia Sheila Rodrigues Colling,OVN,OVN,1,False,,Administrador
+2026-04-21 10:49:11,008775,Patrícia Sheila Rodrigues Colling,CR1,CR1,1,False,,Administrador
+2026-04-21 10:49:36,008773,Fernanda Noschese,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:49:41,008773,Fernanda Noschese,SUH1,SUH1,1,False,,Administrador
+2026-04-21 10:49:57,008784,Larissa Bonequini,CR1,CR1,1,False,,Administrador
+2026-04-21 10:50:21,008783,Dayane Abraão,OVN,OVN,1,False,,Administrador
+2026-04-21 10:51:19,008782,Laura Dutra,EOC1,EOC1,1,False,,Administrador
+2026-04-21 10:51:33,008782,Laura Dutra,LTOC1,LTOC1,1,False,,Administrador
+2026-04-21 10:51:42,008782,Laura Dutra,SAA1,SAA1,1,False,,Administrador
+2026-04-21 10:51:53,008782,Laura Dutra,NCS1,NCS1,1,False,,Administrador
+2026-04-21 10:51:59,008782,Laura Dutra,BM04,BM04,1,False,,Administrador
+2026-04-21 10:52:04,008782,Laura Dutra,CRPRO1,CRPRO1,1,False,,Administrador
+2026-04-21 10:52:23,008781,Andrea Santos,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:52:32,008781,Andrea Santos,SUH1,SUH1,1,False,,Administrador
+2026-04-21 10:53:03,008779,Daniela Dal Ri Iracet,OVN,OVN,1,False,,Administrador
+2026-04-21 10:53:17,008778,Priscila Cruz,ESS1,ESS1,1,False,,Administrador
+2026-04-21 10:53:23,008778,Priscila Cruz,SFIL1,SFIL1,1,False,,Administrador
+2026-04-21 10:53:30,008778,Priscila Cruz,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:53:49,008777,Talita Leoni Giacomazzi,EOC1,EOC1,1,False,,Administrador
+2026-04-21 10:54:04,008776,Julia Bauerdick,CRPRO1,CRPRO1,1,False,,Administrador
+2026-04-21 10:54:09,008776,Julia Bauerdick,OVN,OVN,1,False,,Administrador
+2026-04-21 10:54:40,008772,Daniela Paulin Sanches,CRPRO1,CRPRO1,1,False,,Administrador
+2026-04-21 10:55:19,008771,Thaís Freire,LTOC1,LTOC1,1,False,,Administrador
+2026-04-21 10:55:27,008771,Thaís Freire,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:55:32,008771,Thaís Freire,SFIL1,SFIL1,1,False,,Administrador
+2026-04-21 10:55:54,008770,Tais Rocha,NCS1,NCS1,1,False,,Administrador
+2026-04-21 10:55:59,008770,Tais Rocha,OVN,OVN,1,False,,Administrador
+2026-04-21 10:56:05,008770,Tais Rocha,EOC1,EOC1,1,False,,Administrador
+2026-04-21 10:56:10,008770,Tais Rocha,SAO1,SAO1,1,False,,Administrador
+2026-04-21 10:56:15,008770,Tais Rocha,CR1,CR1,1,False,,Administrador

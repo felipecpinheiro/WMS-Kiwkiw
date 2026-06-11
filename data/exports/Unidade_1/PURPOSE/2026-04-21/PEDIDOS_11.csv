@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+11;Unidade 1;PURPOSE;2026-04-21;244350300;n.a;Mayara Oliveira;2026-04-08;;SEDEX;Venda para Pessoa Fisica;35260431476875000198550012443503001596132886;DEV-PM-SEP;Para Maes Sem Esperanca;1;False;;pending;2026-04-21T12:26:04.500331

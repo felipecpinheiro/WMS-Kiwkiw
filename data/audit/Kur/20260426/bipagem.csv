@@ -1,0 +1,8 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-26 12:24:13,002405,Luciani Melo,PA00453,7898450171264,1,False,,Administrador
+2026-04-26 12:24:22,002405,Luciani Melo,EM00231,EM00231,1,False,,Administrador
+2026-04-26 12:24:24,002405,Luciani Melo,EM00231,EM00231,1,False,,Administrador
+2026-04-26 12:24:34,002405,Luciani Melo,EM00964,EM00964,1,False,,Administrador
+2026-04-26 12:24:42,002405,Luciani Melo,PA00342,7898410939392,1,False,,Administrador
+2026-04-26 12:24:49,002405,Luciani Melo,MR04554,7898410932478,1,False,,Administrador
+2026-04-26 12:24:59,002405,Luciani Melo,PA00341,7898450170304,1,False,,Administrador

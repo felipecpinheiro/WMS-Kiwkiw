@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { scanningApi } from '../api';
+import { format } from 'date-fns';
 import type { SessionCard } from '../api';
 import {
   Package, Clock, CheckCircle2, PlayCircle, Circle,
@@ -361,7 +362,8 @@ export default function HandlingPage() {
   const user = userStr ? JSON.parse(userStr) : null;
   const isAdmin = user?.role === 'admin';
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Use local date to avoid UTC timezone shift (toISOString gives UTC, not local)
+  const today = format(new Date(), 'yyyy-MM-dd');
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo]     = useState(today);
   const [sellerFilter, setSellerFilter] = useState('');
@@ -373,11 +375,15 @@ export default function HandlingPage() {
 
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
-  const { data: cards = [], isLoading, refetch } = useQuery(
+  const { data: serverCards = [], isLoading, refetch } = useQuery(
     ['session-cards', dateFrom, dateTo],
     () => scanningApi.sessionCards({ date_from: dateFrom, date_to: dateTo }).then(r => r.data),
     { refetchInterval: 30000 }
   );
+  // localCards permite atualizações optimistas (cancelar remove imediatamente, force-complete atualiza status)
+  const [localCards, setLocalCards] = useState<SessionCard[]>([]);
+  useEffect(() => { setLocalCards(serverCards as SessionCard[]); }, [serverCards]);
+  const cards = localCards;
 
   // Seller list for filter dropdown (admin only)
   const allSellers = useMemo(() => {
@@ -428,15 +434,25 @@ export default function HandlingPage() {
     try {
       if (action === 'force_complete') {
         const res = await scanningApi.forceComplete(card.session_id, card.seller_id);
-        toast.success(res.data.message);
+        toast.success(res.data.message || 'Finalizado com sucesso');
+        // Atualização optimista: move o card para "completed" imediatamente
+        setLocalCards(prev => prev.map(c =>
+          c.card_id === card.card_id
+            ? { ...c, status: 'completed', completed_orders: c.total_orders, pending_orders: 0, in_progress_orders: 0 }
+            : c
+        ));
       } else {
+        // cancel_handling → remove da tela imediatamente
         const res = await scanningApi.cancelHandling(card.session_id, card.seller_id);
-        toast.success(res.data.message);
+        toast.success(res.data.message || 'Manuseio cancelado');
+        setLocalCards(prev => prev.filter(c => c.card_id !== card.card_id));
       }
-      refetch();
+      // Refetch em background para sincronizar com o servidor
+      setTimeout(() => refetch(), 1500);
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       toast.error(detail || 'Erro ao executar ação admin');
+      refetch(); // reverte estado local em caso de erro
     } finally {
       setActionLoading(false);
       setConfirmAction(null);

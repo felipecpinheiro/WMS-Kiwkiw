@@ -1,0 +1,3 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+23;Unidade 1;Ser Organics Saude e Tecnologia em Cosmeticos Ltda;2026-04-26;8840;n.a;Livia Oliveira;2026-04-22;;Olist Envios Loggi;Venda de mercadorias;35260441966696000192550010000088401517564844;SUH1;Serum facial Ultra Hidratante Hialu;1;False;;pending;2026-04-26T19:02:44.022959
+23;Unidade 1;Ser Organics Saude e Tecnologia em Cosmeticos Ltda;2026-04-26;8840;n.a;Livia Oliveira;2026-04-22;;Olist Envios Loggi;Venda de mercadorias;35260441966696000192550010000088401517564844;EOC1;Espuma de Limpeza Oil Control Gestar;2;False;;pending;2026-04-26T19:02:44.022959

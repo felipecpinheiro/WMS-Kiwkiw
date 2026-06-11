@@ -13,6 +13,7 @@ Endpoints:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -275,14 +276,19 @@ def reactivate_user(
 # POST /users/{id}/reset-password — admin redefine senha de qualquer usuário
 # ---------------------------------------------------------------------------
 
+class _ResetPasswordBody(BaseModel):
+    new_password: str
+
+
 @router.post("/{user_id}/reset-password", summary="Redefinir senha (admin)")
 def reset_password(
     user_id: int,
-    new_password: str,
+    body: _ResetPasswordBody,
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Redefine a senha de qualquer usuário. Somente administrador."""
+    new_password = body.new_password
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="Senha deve ter pelo menos 6 caracteres")
 

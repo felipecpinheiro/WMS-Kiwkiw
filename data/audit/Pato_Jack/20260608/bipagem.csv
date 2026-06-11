@@ -1,0 +1,6 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-06-08 23:32:02,000963,Lucia Buffara,PJG,6976238261589,1,False,,Administrador
+2026-06-08 23:32:12,000963,Lucia Buffara,BC2C,BC2C,1,False,,Administrador
+2026-06-08 23:32:20,000963,Lucia Buffara,BE2C,BE2C,1,False,,Administrador
+2026-06-08 23:32:28,000963,Lucia Buffara,BPPJ,BPPJ,1,False,,Administrador
+2026-06-08 23:32:37,000963,Lucia Buffara,BEPJ,BEPJ,1,False,,Administrador

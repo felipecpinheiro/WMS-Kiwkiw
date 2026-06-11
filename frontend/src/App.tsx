@@ -18,6 +18,7 @@ import KitsPage from './pages/Kits';
 import BoxAlgorithmPage from './pages/BoxAlgorithm';
 import UsersPage from './pages/Users';
 import SellersPage from './pages/Sellers';
+import UnitsPage from './pages/Units';
 import BillingPage from './pages/Billing';
 import AuditPage from './pages/Audit';
 import SettingsPage from './pages/Settings';
@@ -102,6 +103,7 @@ export default function App() {
             <Route path="box-algorithm" element={<BoxAlgorithmPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="sellers" element={<SellersPage />} />
+            <Route path="units" element={<UnitsPage />} />
             <Route path="billing" element={<BillingPage />} />
             <Route path="audit" element={<AuditPage />} />
             <Route path="settings" element={<SettingsPage />} />
@@ -109,7 +111,7 @@ export default function App() {
           </Route>
 
           {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

@@ -24,7 +24,7 @@ from . import models, schemas
 import bcrypt as _bcrypt
 if not hasattr(_bcrypt, '__about__'):
     _bcrypt.__about__ = type('_about', (), {'__version__': _bcrypt.__version__})()
-    
+
 # ---------------------------------------------------------------------------
 # Configurações de segurança
 # ---------------------------------------------------------------------------
@@ -33,7 +33,8 @@ SECRET_KEY = "wms-kiwkiw-secret-key-change-in-production-2024"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 12
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Fix: bcrypt__truncate_error=False evita erro com passlib 1.7.4 + bcrypt 4.x
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
 security = HTTPBearer()
 
 # ---------------------------------------------------------------------------

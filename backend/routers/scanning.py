@@ -210,6 +210,9 @@ def open_order_by_nfe(
     order_status = order.status.value if hasattr(order.status, 'value') else order.status
     if order_status == "completed":
         return {"success": False, "message": f"Pedido NF {order.nf_number} já está concluído"}
+    # B: pedido interrompido é uma finalização manual — não pode ser reaberto via bipagem
+    if order_status == "interrupted":
+        return {"success": False, "message": f"Pedido NF {order.nf_number} foi interrompido e não pode ser reaberto. Contate o supervisor."}
 
     # ── Lock por (sessão + seller): só 1 NF com atividade real por seller por sessão.
     # Um pedido só bloqueia se estiver em "scanning" E tiver ao menos 1 scan log
@@ -704,7 +707,7 @@ def force_complete_session(
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
-    # Busca pedidos não finalizados do seller nessa sessão
+    # Busca pedidos não concluídos (inclui INTERRUPTED — admin pode forçar conclusão de interrompidos)
     orders_q = db.query(models.Order).options(
         joinedload(models.Order.items).joinedload(models.OrderItem.product),
         joinedload(models.Order.seller),
@@ -713,7 +716,6 @@ def force_complete_session(
         models.Order.status.notin_([
             models.OrderStatus.COMPLETED,
             models.OrderStatus.CANCELLED,
-            models.OrderStatus.INTERRUPTED,
         ]),
     )
     if seller_id:
@@ -721,7 +723,7 @@ def force_complete_session(
     orders = orders_q.all()
 
     if not orders:
-        raise HTTPException(status_code=400, detail="Nenhum pedido pendente encontrado para este seller")
+        return {"success": True, "forced": 0, "message": "Todos os pedidos já estavam concluídos"}
 
     from ..services.stock_manager import update_stock_from_order
 
@@ -1201,19 +1203,29 @@ def session_cards(
         _jl(models.PickingSession.orders).joinedload(models.Order.seller)
     )
 
-    # Operador → restrito à própria unidade
-    if user_role == "operator" and current_user.unit_id:
-        q = q.filter(models.PickingSession.unit_id == current_user.unit_id)
-    elif unit_id:
-        q = q.filter(models.PickingSession.unit_id == unit_id)
+    # Filtra sessões:
+    # - Operador/Gerente com sellers vinculados → só sessões que contenham seus sellers
+    # - Admin com unit_id explícito → filtra por sellers da unidade
+    # NÃO usa PickingSession.unit_id pois pode estar desatualizado (importado pelo admin)
+    from sqlalchemy import exists as _exists
 
-    # Gerente → restringe as sessões que tenham pelo menos 1 pedido do seller vinculado
-    if user_role == "manager" and my_seller_ids:
-        from sqlalchemy import exists as _exists
+    if user_role in ("operator", "manager") and my_seller_ids:
         q = q.filter(
             _exists().where(
                 (models.Order.session_id == models.PickingSession.id) &
                 (models.Order.seller_id.in_(my_seller_ids))
+            )
+        )
+    elif unit_id:
+        # Admin filtrou por unidade explicitamente: restringe via sellers da unidade
+        sellers_in_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit_id,
+            models.Seller.active == True,
+        ).subquery()
+        q = q.filter(
+            _exists().where(
+                (models.Order.session_id == models.PickingSession.id) &
+                (models.Order.seller_id.in_(sellers_in_unit))
             )
         )
 
@@ -1252,9 +1264,21 @@ def session_cards(
             continue
 
         for sid, info in seller_orders.items():
-            orders = info["orders"]
+            all_orders = info["orders"]
+
+            # Exclui pedidos cancelados do total visível no kanban.
+            # Se TODOS estiverem cancelados → não exibe o card.
+            active_orders = [
+                o for o in all_orders
+                if (o.status.value if hasattr(o.status, "value") else o.status) != "cancelled"
+            ]
+            if not active_orders:
+                continue  # seller totalmente cancelado — remove o card
+
+            orders = active_orders
             total = len(orders)
-            # Pedidos interrompidos contam como "feitos" no kanban
+
+            # Concluído / interrompido contam como "feitos" no kanban
             completed = sum(
                 1 for o in orders
                 if (o.status.value if hasattr(o.status, "value") else o.status) in ("completed", "interrupted")
@@ -1271,6 +1295,18 @@ def session_cards(
             else:
                 status = "pending"
 
+            pending = total - completed - in_prog
+
+            # Derive unit from seller relationship
+            unit_id_val = None
+            unit_name_val = None
+            if info["orders"]:
+                first_order = info["orders"][0]
+                if first_order.seller and first_order.seller.unit_id:
+                    unit_id_val = first_order.seller.unit_id
+                if first_order.seller and first_order.seller.unit:
+                    unit_name_val = first_order.seller.unit.name
+
             cards.append({
                 "card_id": f"{session.id}_{sid}",
                 "session_id": session.id,
@@ -1278,12 +1314,111 @@ def session_cards(
                 "seller_name": info["seller_name"],
                 "session_date": str(session.session_date),
                 "created_at": session.created_at.isoformat() if session.created_at else None,
-                "unit_id": session.unit_id,
-                "source_file": session.source_file,
+                "unit_id": unit_id_val,
+                "unit_name": unit_name_val,
+                "status": status,
                 "total_orders": total,
                 "completed_orders": completed,
-                "status": status,
-                "all_checks_ok": session.all_checks_ok,
+                "in_progress_orders": in_prog,
+                "pending_orders": pending,
             })
 
     return cards
+
+
+
+
+# ============================================================
+# CAIXA SUGERIDA
+# ============================================================
+
+def _suggest_box_for_order(order, db) -> str | None:
+    """
+    Calcula a caixa sugerida para um pedido usando o algoritmo de caixa do seller.
+
+    Lógica:
+        num_products = soma das quantidades de todos os itens do pedido
+        score        = soma de (quantidade × box_type_do_produto) por item
+                       O box_type do produto (ex: "1", "2") representa o "peso" do produto
+                       Ex: 3 itens com box_type=1 → score=3
+                           2 itens box_type=1 + 1 item box_type=2 → score=4
+
+    Busca em BoxAlgorithm o registro onde (seller_id, num_products, score) coincide.
+    """
+    if not order.items:
+        return None
+
+    seller_id   = order.seller_id
+    total_qty   = sum(item.quantity for item in order.items)
+    total_score = 0
+
+    for item in order.items:
+        product = db.query(models.Product).filter(
+            models.Product.seller_id == seller_id,
+            models.Product.sku       == item.sku,
+        ).first()
+        if product and product.box_type:
+            try:
+                total_score += int(product.box_type) * item.quantity
+            except (ValueError, TypeError):
+                pass  # box_type não numérico — ignora
+
+    rule = db.query(models.BoxAlgorithm).filter(
+        models.BoxAlgorithm.seller_id    == seller_id,
+        models.BoxAlgorithm.num_products == total_qty,
+        models.BoxAlgorithm.score        == total_score,
+    ).first()
+
+    return rule.box_type if rule else None
+
+
+@router.get("/orders/{order_id}/suggested-box")
+def get_suggested_box(
+    order_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Retorna a caixa sugerida para um pedido (via algoritmo de caixa do seller)
+    e a caixa já salva pelo operador (box_used), se houver.
+    """
+    order = db.query(models.Order).options(
+        joinedload(models.Order.items),
+    ).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Pedido não encontrado")
+
+    suggested = _suggest_box_for_order(order, db)
+    return {
+        "order_id":  order_id,
+        "suggested": suggested,            # None → N.A
+        "box_used":  order.box_used,       # operador pode ter ajustado
+        "effective": order.box_used or suggested,  # valor a usar
+    }
+
+
+@router.patch("/orders/{order_id}/box")
+def save_order_box(
+    order_id: int,
+    body: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Salva a caixa escolhida pelo operador para o pedido.
+    Body: { "box_used": "c1" }
+    """
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Pedido não encontrado")
+
+    box = (body.get("box_used") or "").strip() or None
+    order.box_used = box
+
+    db.add(models.AuditLog(
+        entity_type="Order", entity_id=order_id, action="UPDATE_BOX",
+        user_id=current_user.id,
+        detail=f"Caixa definida: {box or 'removida'}",
+    ))
+    db.commit()
+    return {"order_id": order_id, "box_used": order.box_used}

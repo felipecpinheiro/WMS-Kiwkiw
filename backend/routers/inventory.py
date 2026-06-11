@@ -15,7 +15,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from ..database import get_db
 from ..auth import get_current_user, require_manager_or_above, require_admin
@@ -24,9 +24,12 @@ from ..services.stock_manager import (
     get_stock_report, update_stock_position, get_sku_history, calculate_stock_level,
 )
 
+import os as _os
+
 router = APIRouter(prefix="/inventory", tags=["Estoque"])
 
-EDIT_PASSPHRASE = "k&ksmt$"
+# Passphrase de edição de movimentações — configurável via variável de ambiente
+EDIT_PASSPHRASE = _os.environ.get("WMS_EDIT_PASSPHRASE", "k&ksmt$")
 
 
 # ─────────────────────────────────────────────────────────
@@ -72,7 +75,81 @@ def get_stock(
     if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    return get_stock_report(seller_id, db)
+    stock_positions = get_stock_report(seller_id, db)
+
+    # ── Pré-carrega catálogo de produtos cadastrados para este seller ─────────
+    # Fonte de verdade para product_name: tabela products (não o campo armazenado
+    # na posição, que pode estar desatualizado ou preenchido só com o código SKU).
+    products_catalog: dict[str, str] = {
+        p.sku: p.name
+        for p in db.query(models.Product).filter(
+            models.Product.seller_id == seller_id,
+            models.Product.active == True,
+        ).all()
+    }
+
+    # ── Enriquece cada posição com previsão de dias (média 60d) ──────────────
+    from datetime import datetime as _dt, timedelta as _td
+    cutoff_60d = (_dt.now() - _td(days=60)).date()
+
+    # Busca saídas dos últimos 60 dias — SQL raw para suportar valores legados
+    sales_60d = dict(
+        db.execute(
+            text("""
+                SELECT sku, SUM(quantity) FROM stock_movements
+                WHERE seller_id = :sid
+                  AND (movement_type = 'Saída' OR UPPER(movement_type) IN ('OUT','SAIDA','S'))
+                  AND movement_date >= :cutoff
+                GROUP BY sku
+            """),
+            {"sid": seller_id, "cutoff": str(cutoff_60d)},
+        ).fetchall()
+    )
+
+    today_d = _dt.now().date()
+    result = []
+    for pos in stock_positions:
+        sku = pos.get("sku") if isinstance(pos, dict) else getattr(pos, "sku", None)
+        if not sku:
+            result.append(pos)
+            continue
+
+        pos_dict = dict(pos) if isinstance(pos, dict) else pos.__dict__.copy()
+        pos_dict.pop("_sa_instance_state", None)
+
+        # ── Nome oficial vem do cadastro de Produtos (source of truth) ───────
+        if sku in products_catalog:
+            pos_dict["product_name"]       = products_catalog[sku]
+            pos_dict["product_registered"] = True
+        else:
+            # SKU existe em movimentações mas não está cadastrado em Produtos
+            pos_dict["product_registered"] = False
+            # Mantém o que estiver salvo na posição (pode ser o próprio código)
+
+        # ── Previsão de dias restantes ────────────────────────────────────────
+        current       = pos_dict.get("current_stock", 0) or 0
+        total_out_60d = sales_60d.get(sku) or 0
+
+        if current <= 0:
+            pos_dict["days_remaining"]  = 0
+            pos_dict["forecast_status"] = "Sem Produto"
+        elif total_out_60d == 0:
+            pos_dict["days_remaining"]  = None
+            pos_dict["forecast_status"] = "Sem Saídas 60d"
+        else:
+            avg_daily = total_out_60d / 60.0
+            days_rem  = round(current / avg_daily)
+            pos_dict["days_remaining"] = days_rem
+            if days_rem < 30:
+                pos_dict["forecast_status"] = "Baixo"
+            elif days_rem <= 60:
+                pos_dict["forecast_status"] = "Médio"
+            else:
+                pos_dict["forecast_status"] = "Alto"
+
+        result.append(pos_dict)
+
+    return result
 
 
 # ─────────────────────────────────────────────────────────
@@ -106,6 +183,18 @@ def sku_history(
 # MOVIMENTAÇÕES
 # ─────────────────────────────────────────────────────────
 
+# Mapa de normalização para valores legados ('IN'/'OUT') que podem estar no banco
+_MT_NORMALIZE = {
+    "IN":     "Entrada",
+    "OUT":    "Saída",
+    "E":      "Entrada",
+    "S":      "Saída",
+    "ENTRADA":"Entrada",
+    "SAÍDA":  "Saída",
+    "SAIDA":  "Saída",
+}
+
+
 @router.get("/movements/{seller_id}")
 def get_movements(
     seller_id: int,
@@ -118,6 +207,8 @@ def get_movements(
 ):
     """
     Retorna histórico de movimentações de estoque com filtros opcionais.
+    Usa SQL raw para evitar erros de conversão ORM quando o banco contém
+    valores legados ('IN'/'OUT') no campo movement_type.
     """
     user_role = (
         current_user.role.value
@@ -127,47 +218,58 @@ def get_movements(
     if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    q = db.query(models.StockMovement).filter(
-        models.StockMovement.seller_id == seller_id
-    )
+    # Monta query SQL diretamente — evita falha do ORM ao converter
+    # valores legados ('IN','OUT') para o enum MovementType
+    conditions = ["seller_id = :seller_id"]
+    params: dict = {"seller_id": seller_id}
 
     if date_from:
-        q = q.filter(models.StockMovement.movement_date >= date_from)
+        conditions.append("movement_date >= :date_from")
+        params["date_from"] = str(date_from)
     if date_to:
-        q = q.filter(models.StockMovement.movement_date <= date_to)
+        conditions.append("movement_date <= :date_to")
+        params["date_to"] = str(date_to)
     if sku:
-        q = q.filter(models.StockMovement.sku.ilike(f"%{sku}%"))
+        conditions.append("sku LIKE :sku")
+        params["sku"] = f"%{sku}%"
     if movement_type:
-        try:
-            mt_enum = models.MovementType(movement_type)
-            q = q.filter(models.StockMovement.movement_type == mt_enum)
-        except ValueError:
-            pass
+        # Normaliza o filtro também
+        mt_normalized = _MT_NORMALIZE.get(movement_type.upper(), movement_type)
+        conditions.append("movement_type = :movement_type")
+        params["movement_type"] = mt_normalized
 
-    movements = q.order_by(models.StockMovement.movement_date.desc()).all()
+    where_clause = " AND ".join(conditions)
+    sql = text(f"""
+        SELECT id, seller_id, sku, product_name, movement_date, movement_type,
+               quantity, adjusted_quantity, nf_number, nature,
+               order_id, session_id, observation, created_at
+        FROM stock_movements
+        WHERE {where_clause}
+        ORDER BY movement_date DESC, id DESC
+    """)
+
+    rows = db.execute(sql, params).fetchall()
 
     result = []
-    for m in movements:
-        mt = (
-            m.movement_type.value
-            if hasattr(m.movement_type, "value")
-            else m.movement_type
-        )
+    for r in rows:
+        raw_mt = r.movement_type or ""
+        # Normaliza valores legados para o formato canônico
+        mt_display = _MT_NORMALIZE.get(raw_mt.upper(), raw_mt)
         result.append({
-            "id": m.id,
-            "seller_id": m.seller_id,
-            "sku": m.sku,
-            "product_name": m.product_name,
-            "movement_date": str(m.movement_date),
-            "movement_type": mt,
-            "quantity": m.quantity,
-            "adjusted_quantity": m.adjusted_quantity,
-            "nf_number": m.nf_number,
-            "nature": m.nature,
-            "order_id": m.order_id,
-            "session_id": m.session_id,
-            "observation": m.observation,
-            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "id":                r.id,
+            "seller_id":         r.seller_id,
+            "sku":               r.sku,
+            "product_name":      r.product_name,
+            "movement_date":     str(r.movement_date) if r.movement_date else None,
+            "movement_type":     mt_display,
+            "quantity":          r.quantity,
+            "adjusted_quantity": r.adjusted_quantity,
+            "nf_number":         r.nf_number,
+            "nature":            r.nature,
+            "order_id":          r.order_id,
+            "session_id":        r.session_id,
+            "observation":       r.observation,
+            "created_at":        r.created_at if isinstance(r.created_at, str) else (r.created_at.isoformat() if r.created_at else None),
         })
 
     return result
@@ -475,7 +577,10 @@ def update_movement(
         ).first()
 
         if position:
-            if old_type == models.MovementType.IN:
+            # Normaliza old_type para comparação (suporta valores legados 'IN'/'OUT')
+            _old_type_str = (old_type.value if hasattr(old_type, "value") else str(old_type or ""))
+            _old_type_str = _MT_NORMALIZE.get(_old_type_str.upper(), _old_type_str)
+            if _old_type_str == models.MovementType.IN.value:
                 position.total_in = max(0, position.total_in - old_qty + new_qty)
             else:
                 position.total_out = max(0, position.total_out - old_qty + new_qty)
@@ -652,17 +757,30 @@ def export_movements_csv(
     if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    q = db.query(models.StockMovement).filter(
-        models.StockMovement.seller_id == seller_id
-    )
+    # Usa SQL raw para evitar falha do ORM com valores legados ('IN'/'OUT')
+    conds = ["seller_id = :seller_id"]
+    params: dict = {"seller_id": seller_id}
     if date_from:
-        q = q.filter(models.StockMovement.movement_date >= date_from)
+        conds.append("movement_date >= :date_from")
+        params["date_from"] = str(date_from)
     if date_to:
-        q = q.filter(models.StockMovement.movement_date <= date_to)
+        conds.append("movement_date <= :date_to")
+        params["date_to"] = str(date_to)
     if sku:
-        q = q.filter(models.StockMovement.sku.ilike(f"%{sku}%"))
+        conds.append("sku LIKE :sku")
+        params["sku"] = f"%{sku}%"
 
-    movements = q.order_by(models.StockMovement.movement_date.desc()).all()
+    movements = db.execute(
+        text(f"""
+            SELECT id, seller_id, sku, product_name, movement_date, movement_type,
+                   quantity, adjusted_quantity, nf_number, nature,
+                   observation, created_at
+            FROM stock_movements
+            WHERE {' AND '.join(conds)}
+            ORDER BY movement_date DESC, id DESC
+        """),
+        params,
+    ).fetchall()
 
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     seller_name = seller.name if seller else str(seller_id)
@@ -675,14 +793,18 @@ def export_movements_csv(
     ])
 
     for m in movements:
-        mt = (
-            m.movement_type.value
-            if hasattr(m.movement_type, "value")
-            else m.movement_type
-        )
+        raw_mt = m.movement_type or ""
+        mt = _MT_NORMALIZE.get(raw_mt.upper(), raw_mt)
+        ca = m.created_at
+        if ca and not isinstance(ca, str):
+            ca_str = ca.strftime("%d/%m/%Y %H:%M")
+        elif ca:
+            ca_str = ca[:16].replace("T", " ")
+        else:
+            ca_str = ""
         writer.writerow([
             m.id,
-            str(m.movement_date),
+            str(m.movement_date) if m.movement_date else "",
             m.sku,
             m.product_name or "",
             mt,
@@ -691,7 +813,7 @@ def export_movements_csv(
             m.nf_number or "",
             m.nature or "",
             m.observation or "",
-            m.created_at.strftime("%d/%m/%Y %H:%M") if m.created_at else "",
+            ca_str,
         ])
 
     output.seek(0)
@@ -955,3 +1077,269 @@ async def execute_history_import(
         "skipped": skipped_dup,
         "errors": errors[:10],  # primeiros 10 erros
     }
+
+
+
+# ============================================================
+# BULK CSV UPLOAD DE MOVIMENTAÇÕES DE ESTOQUE — ADMIN ONLY
+# ============================================================
+
+
+@router.post("/bulk-stock-upload")
+async def bulk_stock_upload(
+    file: UploadFile = File(..., description="CSV: seller;data;tipo;sku;quantity;nf;observ"),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Importação em massa multi-seller via CSV.
+
+    Comportamento:
+      - FASE 1 (validação): percorre TODAS as linhas sem tocar no banco.
+        Se qualquer linha tiver erro → retorna lista completa de erros e NADA é salvo.
+      - FASE 2 (gravação): só executa se fase 1 passou sem erros.
+        Insere movimentos em chunks + atualiza posições em memória,
+        tudo em uma única transação com rollback automático em caso de falha.
+
+    Colunas obrigatórias (delimitador vírgula ou ponto-e-vírgula):
+        seller   — trade_name do seller (ou apelido cadastrado)
+        data     — dd/mm/aaaa
+        tipo     — Entrada | Saída | E | S
+        sku      — código do produto
+        quantity — inteiro > 0
+        nf       — número NF (opcional)
+        observ   — observação (opcional)
+    """
+    import csv as _csv, io as _io, time as _time, re as _re
+    from datetime import datetime as _dt
+
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Apenas arquivos .csv são aceitos")
+
+    start = _time.perf_counter()
+    raw = await file.read()
+
+    try:
+        text_data = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text_data = raw.decode("latin-1")
+
+    # Auto-detecta delimitador
+    first_line = text_data.split("\n")[0] if text_data else ""
+    delim = ";" if first_line.count(";") >= first_line.count(",") else ","
+
+    reader = _csv.DictReader(_io.StringIO(text_data), delimiter=delim)
+    if not reader.fieldnames:
+        raise HTTPException(422, "CSV vazio ou sem cabeçalho")
+
+    # Normaliza nomes das colunas
+    reader.fieldnames = [f.strip().lower().lstrip("#") for f in reader.fieldnames]
+
+    required = {"seller", "data", "tipo", "sku", "quantity"}
+    present  = set(reader.fieldnames)
+    if not required.issubset(present):
+        missing = sorted(required - present)
+        raise HTTPException(
+            422,
+            f"Colunas obrigatórias ausentes: {missing}. "
+            f"Encontradas: {sorted(present)}. "
+            f"Delimitador detectado: \'{delim}\'",
+        )
+
+    # Cache de sellers (trade_name, name, apelidos)
+    seller_cache: dict[str, int] = {}
+    for s in db.query(models.Seller).filter(models.Seller.active == True).all():
+        seller_cache[s.trade_name.strip().lower()] = s.id
+        if s.name:
+            seller_cache[s.name.strip().lower()] = s.id
+        if s.other_aliases:
+            for alias in _re.split(r"[;,]", s.other_aliases):
+                a = alias.strip().lower()
+                if a:
+                    seller_cache[a] = s.id
+
+    rows_raw = list(reader)
+    total_rows = len(rows_raw)
+    if total_rows == 0:
+        return {"ok": True, "total_rows": 0, "created": 0, "errors": [], "duration_sec": 0.0}
+
+    tipo_map = {
+        "e": "E", "s": "S",
+        "entrada": "E", "saída": "S", "saida": "S",
+        "in": "E", "out": "S",
+    }
+
+    # ── FASE 1: Validação completa — zero gravações ───────────────────────────
+    valid_rows: list[dict] = []
+    errors: list[str] = []
+    now_ts = _dt.now()
+
+    for i, row in enumerate(rows_raw):
+        line = i + 2  # 1-based + cabeçalho
+        try:
+            seller_name = (row.get("seller") or "").strip()
+            date_str    = (row.get("data")   or "").strip()
+            tipo        = (row.get("tipo")   or "").strip()
+            sku         = (row.get("sku")    or "").strip()
+            qty_raw     = (row.get("quantity") or "0").strip().replace(",", ".")
+            nf          = (row.get("nf") or row.get("#nf") or "").strip() or None
+            observ      = (row.get("observ") or "").strip() or None
+
+            if not seller_name:
+                errors.append(f"Linha {line}: coluna \'seller\' vazia"); continue
+            if not sku:
+                errors.append(f"Linha {line}: coluna \'sku\' vazia"); continue
+
+            tipo_norm = tipo_map.get(tipo.lower(), "")
+            if tipo_norm not in ("E", "S"):
+                errors.append(
+                    f"Linha {line}: tipo inválido \'{tipo}\' (use Entrada, Saída, E ou S)"
+                ); continue
+
+            try:
+                qty = int(float(qty_raw))
+            except (ValueError, TypeError):
+                errors.append(f"Linha {line}: quantidade inválida \'{qty_raw}\'"); continue
+            if qty <= 0:
+                errors.append(
+                    f"Linha {line}: quantidade deve ser > 0 — SKU {sku}, valor recebido: {qty}"
+                ); continue
+
+            try:
+                mov_date = _dt.strptime(date_str, "%d/%m/%Y").date()
+            except ValueError:
+                errors.append(
+                    f"Linha {line}: data inválida \'{date_str}\' — use dd/mm/aaaa"
+                ); continue
+
+            seller_id = seller_cache.get(seller_name.lower())
+            if seller_id is None:
+                errors.append(
+                    f"Linha {line}: seller \'{seller_name}\' não encontrado "
+                    f"(verifique trade_name ou apelidos cadastrados)"
+                ); continue
+
+            mt = models.MovementType.IN if tipo_norm == "E" else models.MovementType.OUT
+            valid_rows.append({
+                "seller_id":     seller_id,
+                "sku":           sku,
+                "product_name":  None,
+                "quantity":      qty,
+                "movement_type": mt.value,
+                "movement_date": str(mov_date),
+                "nf_number":     nf,
+                "observation":   observ,
+                "operator_id":   current_user.id,
+                "created_at":    str(now_ts),
+            })
+
+        except Exception as exc:
+            errors.append(f"Linha {line}: erro inesperado — {exc}")
+
+    # Se há QUALQUER erro → devolve tudo sem salvar nada
+    if errors:
+        duration = round(_time.perf_counter() - start, 2)
+        return {
+            "ok":          False,
+            "total_rows":  total_rows,
+            "valid_rows":  len(valid_rows),
+            "created":     0,
+            "errors":      errors,
+            "duration_sec": duration,
+        }
+
+    # ── FASE 2: Gravação em transação única ───────────────────────────────────
+    try:
+        CHUNK = 5_000
+        raw_conn = db.connection()
+        for start_i in range(0, len(valid_rows), CHUNK):
+            chunk = valid_rows[start_i: start_i + CHUNK]
+            raw_conn.execute(
+                text("""
+                    INSERT INTO stock_movements
+                        (seller_id, sku, product_name, quantity, movement_type,
+                         movement_date, nf_number, observation, operator_id, created_at)
+                    VALUES
+                        (:seller_id, :sku, :product_name, :quantity, :movement_type,
+                         :movement_date, :nf_number, :observation, :operator_id, :created_at)
+                """),
+                chunk,
+            )
+
+        # Atualiza posições em memória (pré-carrega → atualiza → commit único)
+        from collections import defaultdict as _dd
+
+        affected = {(r["seller_id"], r["sku"]) for r in valid_rows}
+        all_seller_ids = list({s for s, _ in affected})
+        all_skus       = list({k for _, k in affected})
+
+        positions_map: dict = {
+            (p.seller_id, p.sku): p
+            for p in db.query(models.StockPosition).filter(
+                models.StockPosition.seller_id.in_(all_seller_ids),
+                models.StockPosition.sku.in_(all_skus),
+            ).all()
+        }
+
+        delta_in:  dict = _dd(int)
+        delta_out: dict = _dd(int)
+        for r in valid_rows:
+            k = (r["seller_id"], r["sku"])
+            if r["movement_type"] == models.MovementType.IN.value:
+                delta_in[k]  += r["quantity"]
+            else:
+                delta_out[k] += r["quantity"]
+
+        now_dt = _dt.now()
+        for (sid, sku) in affected:
+            k = (sid, sku)
+            if k not in positions_map:
+                pos = models.StockPosition(
+                    seller_id=sid, sku=sku, product_name=sku,
+                    initial_stock=0, total_in=0, total_out=0, current_stock=0,
+                )
+                db.add(pos)
+                positions_map[k] = pos
+            pos = positions_map[k]
+            pos.total_in    = (pos.total_in  or 0) + delta_in[k]
+            pos.total_out   = (pos.total_out or 0) + delta_out[k]
+            pos.current_stock = (pos.initial_stock or 0) + pos.total_in - pos.total_out
+            pos.level       = calculate_stock_level(pos.current_stock)
+            pos.updated_at  = now_dt
+
+        db.commit()
+
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, f"Erro ao gravar no banco — nenhum dado foi salvo: {exc}")
+
+    duration = round(_time.perf_counter() - start, 2)
+    return {
+        "ok":          True,
+        "total_rows":  total_rows,
+        "valid_rows":  len(valid_rows),
+        "created":     len(valid_rows),
+        "errors":      [],
+        "duration_sec": duration,
+    }
+
+
+# ── Template CSV para download ─────────────────────────────────────────────────
+@router.get("/bulk-stock-upload/template")
+def bulk_stock_upload_template():
+    """Retorna um CSV de exemplo para upload em massa de estoque."""
+    from fastapi.responses import Response
+    import csv, io
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["seller", "data", "tipo", "sku", "quantity", "nf", "observ"])
+    writer.writerow(["NOME_SELLER", "01/01/2025", "Entrada", "SKU001", "10", "123456", "Obs opcional"])
+    writer.writerow(["NOME_SELLER", "02/01/2025", "Saída",   "SKU001",  "3", "",       ""])
+    csv_content = output.getvalue()
+
+    return Response(
+        content=csv_content.encode("utf-8-sig"),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="template_estoque.csv"'},
+    )

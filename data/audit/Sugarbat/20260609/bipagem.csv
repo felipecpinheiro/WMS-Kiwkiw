@@ -1,0 +1,6 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-06-09 20:24:25,000315,Aline Soares,ADE-KAWAII,ADE-KAWAII,1,False,,Administrador
+2026-06-09 20:24:40,000315,Aline Soares,STIB-MOR,STIB-MOR,1,False,,Administrador
+2026-06-09 20:24:53,000315,Aline Soares,HQ-UNW,HQ-UNW,1,False,,Administrador
+2026-06-09 20:59:14,000314,Bruna Tenczna,STIB-MOR,STIB-MOR,1,False,,op2
+2026-06-09 20:59:22,000314,Bruna Tenczna,CART-KIT,CART-KIT,1,False,,op2

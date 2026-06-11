@@ -1,0 +1,5 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-20 22:16:00,000372,Maria Das Gracas Alves Pereira Hoffmann,BCH01,BCH01,1,False,,Administrador
+2026-04-20 22:19:22,000372,Maria Das Gracas Alves Pereira Hoffmann,BCS01,12315,1,False,,Administrador
+2026-04-20 22:19:56,000372,Maria Das Gracas Alves Pereira Hoffmann,BCH02,BCH02,1,False,,Administrador
+2026-04-20 22:20:03,000372,Maria Das Gracas Alves Pereira Hoffmann,BCH03,BCH03,1,False,,Administrador

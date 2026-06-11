@@ -1337,6 +1337,225 @@ function BulkCsvImportModal({
 
 // ── Página principal ──────────────────────────────────────────
 
+// ── Modal Bulk Upload Posição de Estoque (Admin) ─────────────────────────────
+function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  type Phase = 'idle' | 'uploading' | 'processing' | 'errors' | 'success';
+
+  const [file, setFile]           = useState<File | null>(null);
+  const [phase, setPhase]         = useState<Phase>('idle');
+  const [uploadPct, setUploadPct] = useState(0);          // % do arquivo enviado ao servidor
+  const [result, setResult]       = useState<any | null>(null);
+  const fileRef                   = useRef<HTMLInputElement>(null);
+
+  const downloadTemplate = () => {
+    const base = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+    window.open(`${base}/inventory/bulk-stock-upload/template`, '_blank');
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setPhase('uploading');
+    setUploadPct(0);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const { inventoryApi } = await import('../api');
+      const res = await inventoryApi.bulkStockUpload(form, (e) => {
+        // Progresso real do envio do arquivo (upload HTTP)
+        if (e.total > 0) setUploadPct(Math.round((e.loaded / e.total) * 100));
+        // Quando chega em 100% o servidor ainda está processando
+        if (e.loaded >= e.total) setPhase('processing');
+      });
+      setResult(res.data);
+      setPhase(res.data.ok ? 'success' : 'errors');
+      if (res.data.ok) {
+        toast.success(`${res.data.created.toLocaleString()} movimentos importados em ${res.data.duration_sec}s`);
+        onSuccess();
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Erro no upload. Verifique o arquivo e tente novamente.';
+      setResult({ ok: false, errors: [detail], total_rows: 0, created: 0, duration_sec: 0 });
+      setPhase('errors');
+    }
+  };
+
+  const isBusy = phase === 'uploading' || phase === 'processing';
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-xl flex flex-col" style={{ maxHeight: '90vh' }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-white/8 flex-shrink-0">
+          <div>
+            <h3 className="font-semibold text-white text-sm">Upload Estoque — Multi-Seller</h3>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              Importação em massa via CSV · All-or-nothing: qualquer erro bloqueia o import
+            </p>
+          </div>
+          <button onClick={onClose} disabled={isBusy} className="text-white/35 hover:text-white/60 disabled:opacity-30">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
+
+          {/* Formato do CSV */}
+          <div className="p-3 rounded-xl border border-white/8" style={{ background: 'rgba(255,255,255,0.03)' }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-white/70">Formato do CSV</p>
+                <p className="text-[11px] text-white/35 mt-0.5 font-mono">
+                  seller · data (dd/mm/aaaa) · tipo (Entrada/Saída) · sku · quantity · nf · observ
+                </p>
+              </div>
+              <button onClick={downloadTemplate}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-teal-300 border border-teal-500/30 hover:bg-teal-500/10 transition flex-shrink-0 ml-3">
+                <Download size={12} /> Baixar template
+              </button>
+            </div>
+          </div>
+
+          {/* Seleção de arquivo */}
+          {(phase === 'idle' || phase === 'errors') && (
+            <div
+              className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition"
+              style={{ borderColor: file ? 'rgba(123,99,232,0.5)' : 'rgba(255,255,255,0.10)' }}
+              onClick={() => fileRef.current?.click()}
+            >
+              {file ? (
+                <div>
+                  <p className="text-sm text-violet-300 font-medium">{file.name}</p>
+                  <p className="text-[11px] text-white/40 mt-1">
+                    {(file.size / 1024).toFixed(1)} KB · clique para trocar
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <FileUp size={28} className="text-white/20 mx-auto mb-2" />
+                  <p className="text-xs text-white/40">Clique para selecionar o arquivo CSV</p>
+                </div>
+              )}
+              <input ref={fileRef} type="file" accept=".csv" className="sr-only"
+                onChange={e => { setFile(e.target.files?.[0] ?? null); setPhase('idle'); setResult(null); }} />
+            </div>
+          )}
+
+          {/* Progresso de envio */}
+          {(phase === 'uploading' || phase === 'processing') && (
+            <div className="rounded-xl border border-white/8 p-5" style={{ background: 'rgba(123,99,232,0.06)' }}>
+              <div className="flex items-center gap-3 mb-4">
+                <span className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {phase === 'uploading' ? 'Enviando arquivo…' : 'Processando no servidor…'}
+                  </p>
+                  <p className="text-[11px] text-white/40 mt-0.5">
+                    {phase === 'uploading'
+                      ? 'Aguarde o envio completo antes de fechar'
+                      : 'Validando linhas e atualizando posições de estoque'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Barra de progresso do upload */}
+              <div className="w-full bg-white/8 rounded-full h-2 overflow-hidden">
+                {phase === 'uploading' ? (
+                  <div
+                    className="h-2 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${uploadPct}%`,
+                      background: 'linear-gradient(90deg, #7B63E8, #3DD9A4)',
+                    }}
+                  />
+                ) : (
+                  /* Indeterminate quando servidor processa */
+                  <div
+                    className="h-2 rounded-full animate-pulse"
+                    style={{ width: '100%', background: 'linear-gradient(90deg, #7B63E8, #3DD9A4)' }}
+                  />
+                )}
+              </div>
+              {phase === 'uploading' && (
+                <p className="text-[10px] text-white/30 mt-1.5 text-right font-mono">{uploadPct}%</p>
+              )}
+            </div>
+          )}
+
+          {/* ── ERROS ── */}
+          {phase === 'errors' && result && (
+            <div className="rounded-xl border border-red-500/30 overflow-hidden" style={{ background: 'rgba(239,68,68,0.06)' }}>
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-red-500/20">
+                <span className="text-red-400 font-bold text-lg">✕</span>
+                <div>
+                  <p className="text-sm font-semibold text-red-300">Importação bloqueada — nenhum dado foi salvo</p>
+                  <p className="text-[11px] text-red-400/70 mt-0.5">
+                    {result.errors?.length ?? 0} erro(s) encontrado(s) em {result.total_rows?.toLocaleString()} linhas
+                    · Corrija o CSV e faça upload novamente
+                  </p>
+                </div>
+              </div>
+              {/* Lista de erros — scroll */}
+              <div className="overflow-y-auto p-3 space-y-0.5" style={{ maxHeight: '220px' }}>
+                {(result.errors ?? []).map((e: string, i: number) => (
+                  <p key={i} className="text-[11px] text-red-300/80 font-mono py-0.5 border-b border-red-500/10 last:border-0">
+                    {e}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── SUCESSO ── */}
+          {phase === 'success' && result && (
+            <div className="rounded-xl border border-teal-500/30 p-4" style={{ background: 'rgba(61,217,164,0.07)' }}>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-teal-400 font-bold text-xl">✓</span>
+                <p className="text-sm font-semibold text-teal-300">Importação concluída com sucesso</p>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                <span className="text-white/50">Linhas no arquivo:</span>
+                <span className="text-white/80 font-mono">{result.total_rows?.toLocaleString()}</span>
+                <span className="text-white/50">Movimentos criados:</span>
+                <span className="text-teal-300 font-mono font-bold">{result.created?.toLocaleString()}</span>
+                <span className="text-white/50">Duração:</span>
+                <span className="text-white/80 font-mono">{result.duration_sec}s</span>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 p-4 border-t border-white/8 flex-shrink-0">
+          <button
+            onClick={phase === 'success' ? () => { onSuccess(); onClose(); } : onClose}
+            disabled={isBusy}
+            className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition disabled:opacity-40">
+            {phase === 'success' ? 'Fechar' : 'Cancelar'}
+          </button>
+          {phase !== 'success' && (
+            <button
+              onClick={handleUpload}
+              disabled={!file || isBusy}
+              className="px-4 py-1.5 text-xs font-semibold text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2"
+              style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}>
+              {isBusy
+                ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Aguarde...</>
+                : phase === 'errors'
+                ? 'Tentar novamente'
+                : 'Iniciar Upload'}
+            </button>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+
 export default function InventoryPage() {
   const qc = useQueryClient();
   const userStr = localStorage.getItem('wms_user');
@@ -1346,11 +1565,15 @@ export default function InventoryPage() {
   const [tab, setTab] = useState<'stock' | 'movements'>('stock');
   const [search, setSearch] = useState('');
   const [movSearch, setMovSearch] = useState('');
+  const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
+  const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
   const [stockSort, setStockSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'sku', dir: 'asc'});
   const [showManual, setShowManual] = useState(false);
   const [detailSku, setDetailSku] = useState<string | null>(null);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showBulkStockUpload, setShowBulkStockUpload] = useState(false);
+  const isAdmin = user?.role === 'admin';
   const [editMovement, setEditMovement] = useState<any | null>(null);
 
   // Datas para filtro de movimentações (últimos 30 dias por padrão)
@@ -1423,13 +1646,31 @@ export default function InventoryPage() {
     return Math.round(item.current_stock / dailyAvg);
   }
 
-  // Filtro de busca nas movimentações
-  const filteredMovements = movSearch
-    ? (movements as any[]).filter(m =>
-        m.sku?.toLowerCase().includes(movSearch.toLowerCase()) ||
-        m.product_name?.toLowerCase().includes(movSearch.toLowerCase())
-      )
-    : (movements as any[]);
+  // Filtro + sort das movimentações
+  const filteredMovements = (() => {
+    let list = movements as any[];
+    if (movSearch) {
+      const q = movSearch.toLowerCase();
+      list = list.filter(m =>
+        m.sku?.toLowerCase().includes(q) ||
+        (m.product_name || '').toLowerCase().includes(q) ||
+        (m.nf_number || '').toLowerCase().includes(q)
+      );
+    }
+    if (movTypeFilter) {
+      list = list.filter(m => m.movement_type === movTypeFilter);
+    }
+    // Sort
+    list = [...list].sort((a, b) => {
+      const dir = movSort.dir === 'asc' ? 1 : -1;
+      const col = movSort.col;
+      const va = a[col] ?? '';
+      const vb = b[col] ?? '';
+      if (col === 'quantity') return (Number(va) - Number(vb)) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+    return list;
+  })();
 
   // Ordenação da tabela de estoque (inclui Projeção)
   const sortedStock = [...filteredStock].sort((a, b) => {
@@ -1438,7 +1679,7 @@ export default function InventoryPage() {
       'SKU': 'sku',
       'Produto': 'product_name',
       'Atual': 'current_stock',
-      'Projeção': 'days_projection',
+      'Projeção': 'days_remaining',
     };
     const field = colToField[stockSort.col];
     if (!field) return 0;
@@ -1447,7 +1688,7 @@ export default function InventoryPage() {
     let vb = b[field];
 
     // Projeção nula (estoque sem saída) = "∞" → vai para o fim quando asc, início quando desc
-    if (field === 'days_projection') {
+    if (field === 'days_remaining') {
       const nullVal = dir === 1 ? Infinity : -Infinity;
       va = va ?? nullVal;
       vb = vb ?? nullVal;
@@ -1525,6 +1766,19 @@ export default function InventoryPage() {
             <FileUp size={13} />
             Importar CSV
           </button>
+
+          {/* Bulk upload de posição de estoque (multi-seller) — admin only */}
+          {isAdmin && (
+            <button
+              onClick={() => setShowBulkStockUpload(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition"
+              style={{ background: 'linear-gradient(135deg,#C2410C,#9A3412)' }}
+              title="Upload CSV com posição de estoque de múltiplos sellers"
+            >
+              <FileUp size={13} />
+              Upload Estoque (Admin)
+            </button>
+          )}
         </div>
       </div>
 
@@ -1559,6 +1813,31 @@ export default function InventoryPage() {
                 style={{ background: '#14122A' }}
               />
             </div>
+
+            {/* Banner de alerta: SKUs sem cadastro em Produtos */}
+            {(() => {
+              const unregistered = (stock as any[]).filter((s: any) => s.product_registered === false);
+              if (unregistered.length === 0) return null;
+              return (
+                <div className="mb-4 flex items-start gap-3 p-3 rounded-xl border border-red-500/30 text-xs"
+                  style={{ background: 'rgba(239,68,68,0.07)' }}>
+                  <span className="text-red-400 font-bold text-base leading-none mt-0.5">⚠</span>
+                  <div>
+                    <p className="font-semibold text-red-300">
+                      {unregistered.length} SKU{unregistered.length > 1 ? 's' : ''} sem cadastro em Produtos
+                    </p>
+                    <p className="text-red-400/70 mt-0.5">
+                      Estes SKUs têm movimentações mas não estão registrados no catálogo.
+                      Cadastre-os em <strong>Produtos</strong> para exibir o nome correto e habilitar todos os recursos.
+                    </p>
+                    <p className="text-red-400/50 mt-1 font-mono">
+                      {unregistered.slice(0, 10).map((s: any) => s.sku).join(', ')}
+                      {unregistered.length > 10 ? ` +${unregistered.length - 10} mais` : ''}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {loadingStock ? (
               <div className="flex items-center justify-center py-16">
@@ -1597,7 +1876,7 @@ export default function InventoryPage() {
                     {sortedStock.map((item: any) => {
                       const level    = item.level || 'ALTO';
                       const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['ALTO'];
-                      const days     = item.days_projection;
+                      const days     = item.days_remaining;
                       return (
                         <tr
                           key={item.sku}
@@ -1606,7 +1885,18 @@ export default function InventoryPage() {
                           title="Clique para ver histórico do SKU"
                         >
                           <td className="px-4 py-3 text-xs font-mono text-violet-300 group-hover:text-violet-200 transition">{item.sku}</td>
-                          <td className="px-4 py-3 text-xs text-white/70 max-w-[180px] truncate" title={item.product_name}>{item.product_name}</td>
+                          <td className="px-4 py-3 text-xs max-w-[180px]">
+                            {item.product_registered === false ? (
+                              <span className="flex items-center gap-1.5" title="SKU não encontrado no cadastro de Produtos">
+                                <span className="text-red-400 font-semibold truncate">{item.product_name || item.sku}</span>
+                                <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 whitespace-nowrap">
+                                  SEM CADASTRO
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-white/70 truncate block" title={item.product_name}>{item.product_name}</span>
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <span className={`text-[10px] px-2 py-0.5 rounded-full ${levelCfg.color}`}>
                               {levelCfg.label}
@@ -1643,6 +1933,7 @@ export default function InventoryPage() {
           <>
             {/* Barra de filtros */}
             <div className="flex flex-wrap items-center gap-3 mb-4">
+              {/* Date range */}
               <div className="flex items-center gap-1.5">
                 <Calendar size={13} className="text-white/40" />
                 <input
@@ -1662,16 +1953,34 @@ export default function InventoryPage() {
                 />
               </div>
 
+              {/* Tipo filter */}
+              <select
+                value={movTypeFilter}
+                onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
+                className="border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-violet-500/40"
+                style={{ background: '#14122A' }}
+              >
+                <option value="">Todos os tipos</option>
+                <option value="Entrada">Entrada</option>
+                <option value="Saída">Saída</option>
+              </select>
+
+              {/* Text search */}
               <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
                 <input
                   value={movSearch}
                   onChange={e => setMovSearch(e.target.value)}
-                  placeholder="Buscar SKU ou produto..."
+                  placeholder="Buscar SKU, produto ou NF..."
                   className="pl-7 pr-3 py-1.5 text-xs rounded-lg border border-white/10 text-white placeholder-white/25 outline-none focus:ring-2 focus:ring-violet-500/40"
                   style={{ background: '#14122A', minWidth: 200 }}
                 />
               </div>
+
+              {/* Contagem */}
+              <span className="text-xs text-white/30 ml-auto">
+                {filteredMovements.length} registros
+              </span>
 
               <button
                 onClick={() => setShowPasteModal(true)}
@@ -1692,13 +2001,34 @@ export default function InventoryPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">Data</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">Tipo</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">SKU</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">Produto</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">Qtd</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">NF</th>
-                      <th className="px-4 py-3 text-left text-xs text-white/50 font-semibold">Observação</th>
+                      {([
+                        { label: 'Data',       col: 'movement_date' },
+                        { label: 'Tipo',       col: 'movement_type' },
+                        { label: 'SKU',        col: 'sku' },
+                        { label: 'Produto',    col: 'product_name' },
+                        { label: 'Qtd',        col: 'quantity' },
+                        { label: 'NF',         col: 'nf_number' },
+                        { label: 'Observação', col: null },
+                      ] as { label: string; col: string | null }[]).map(({ label, col }) => (
+                        <th
+                          key={label}
+                          className={`px-4 py-3 text-left text-xs text-white/50 font-semibold select-none ${col ? 'cursor-pointer hover:text-white/80 transition' : ''}`}
+                          onClick={() => {
+                            if (!col) return;
+                            setMovSort(s => s.col === col
+                              ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+                              : { col, dir: col === 'movement_date' ? 'desc' : 'asc' }
+                            );
+                          }}
+                        >
+                          <span className="flex items-center gap-1">
+                            {label}
+                            {col && movSort.col === col && (
+                              <span className="text-violet-400">{movSort.dir === 'asc' ? '↑' : '↓'}</span>
+                            )}
+                          </span>
+                        </th>
+                      ))}
                       <th className="px-4 py-3 w-8" />
                     </tr>
                   </thead>
@@ -1735,7 +2065,7 @@ export default function InventoryPage() {
                     ))}
                     {filteredMovements.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-12 text-center text-white/30 text-sm">
+                        <td colSpan={9} className="px-4 py-12 text-center text-white/30 text-sm">
                           Nenhuma movimentação no período selecionado
                         </td>
                       </tr>
@@ -1766,6 +2096,15 @@ export default function InventoryPage() {
         />
       )}
 
+      {/* Modal de importação CSV em lote */}
+      {showBulkImport && sellerId && (
+        <BulkCsvImportModal
+          sellerId={sellerId}
+          onClose={() => setShowBulkImport(false)}
+          onSuccess={() => { setShowBulkImport(false); invalidate(); }}
+        />
+      )}
+
       {/* Modal de lançamento manual */}
       {showManual && sellerId && (
         <ManualMovementModal
@@ -1775,7 +2114,7 @@ export default function InventoryPage() {
         />
       )}
 
-      {/* Modal de análise do SKU */}
+      {/* Modal de detalhe/histórico do SKU */}
       {detailSku && sellerId && (
         <SkuDetailModal
           sellerId={sellerId}
@@ -1784,12 +2123,11 @@ export default function InventoryPage() {
         />
       )}
 
-      {/* Modal de importação CSV em lote */}
-      {showBulkImport && sellerId && (
-        <BulkCsvImportModal
-          sellerId={sellerId}
-          onClose={() => setShowBulkImport(false)}
-          onSuccess={() => { setShowBulkImport(false); invalidate(); }}
+      {/* Bulk upload de estoque (admin) */}
+      {showBulkStockUpload && (
+        <BulkStockUploadModal
+          onClose={() => setShowBulkStockUpload(false)}
+          onSuccess={() => { setShowBulkStockUpload(false); invalidate(); }}
         />
       )}
     </div>

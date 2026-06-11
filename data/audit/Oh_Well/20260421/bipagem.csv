@@ -1,0 +1,3 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-21 10:29:44,013731,Queila Paiva,mosq2,mosq2,1,False,,Administrador
+2026-04-21 10:29:54,013731,Queila Paiva,oleoalecrim,oleoalecrim,1,False,,Administrador

@@ -34,7 +34,16 @@ const EMPTY_FORM: ProductForm = {
 // Colunas da tabela de colagem: SKU · Seller · Nome · Val. Unit. · Caixa · Cód. Barras Seller
 const PASTE_HEADERS = ['SKU *', 'Seller *', 'Nome *', 'Val. Unit.', 'Caixa', 'Cód. Barras'];
 const MAX_ROWS = 200;
-const EMPTY_GRID = (): string[][] => Array(10).fill(null).map(() => Array(6).fill(''));
+// Inicia com 100 linhas em branco (mais fácil de navegar como Excel)
+const EMPTY_GRID = (): string[][] => Array(100).fill(null).map(() => Array(6).fill(''));
+
+/** Retorna o rect normalizado {r1 ≤ r2, c1 ≤ c2} de uma seleção. */
+function normalizeRect(r1: number, c1: number, r2: number, c2: number) {
+  return {
+    r1: Math.min(r1, r2), c1: Math.min(c1, c2),
+    r2: Math.max(r1, r2), c2: Math.max(c1, c2),
+  };
+}
 
 export default function ProductsPage() {
   const qc = useQueryClient();
@@ -62,9 +71,9 @@ export default function ProductsPage() {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [grid, setGrid] = useState<string[][]>(EMPTY_GRID());
   const [saving, setSaving] = useState(false);
-  // Paste grid: célula âncora (onde começa a colagem) + histórico de undo
-  const [anchorCell, setAnchorCell] = useState<[number, number]>([0, 0]);
-  const [selectedCol, setSelectedCol] = useState<number | null>(null);
+  // Seleção Excel: âncora (fixo) + cursor (se move com shift+click/teclado)
+  const [anchor, setAnchor] = useState<[number, number]>([0, 0]);
+  const [cursor, setCursor] = useState<[number, number]>([0, 0]);
   const [gridHistory, setGridHistory] = useState<string[][][]>([]);
 
   const [page, setPage] = useState(1);
@@ -258,22 +267,43 @@ export default function ProductsPage() {
   };
 
 
-  // Ctrl+C quando uma coluna está selecionada: copia os valores para o clipboard
-  const handleCopyColumn = (ci: number) => {
-    const values = grid.map(r => r[ci] ?? '').join('\n');
-    navigator.clipboard.writeText(values).then(() => {
-      toast.success(`Coluna "${PASTE_HEADERS[ci].replace(' *','')}" copiada (${grid.filter(r => r[ci]).length} valores)`);
+  // ── Seleção de célula: clique simples = nova âncora, shift+clique = extende ──
+  const handleCellMouseDown = (e: React.MouseEvent, ri: number, ci: number) => {
+    if (e.shiftKey) {
+      // Shift+clique: mantém âncora, move cursor
+      setCursor([ri, ci]);
+    } else {
+      setAnchor([ri, ci]);
+      setCursor([ri, ci]);
+    }
+  };
+
+  // Retorna true se a célula (ri, ci) está dentro da seleção atual
+  const isCellSelected = (ri: number, ci: number) => {
+    const { r1, c1, r2, c2 } = normalizeRect(anchor[0], anchor[1], cursor[0], cursor[1]);
+    return ri >= r1 && ri <= r2 && ci >= c1 && ci <= c2;
+  };
+
+  // ── Copiar seleção como texto tab-separado (Ctrl+C) ──
+  const handleCopySelection = () => {
+    const { r1, c1, r2, c2 } = normalizeRect(anchor[0], anchor[1], cursor[0], cursor[1]);
+    const lines = [];
+    for (let ri = r1; ri <= r2; ri++) {
+      lines.push(grid[ri].slice(c1, c2 + 1).join('\t'));
+    }
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      const cells = (r2 - r1 + 1) * (c2 - c1 + 1);
+      toast.success(`${cells} célula(s) copiada(s)`);
     }).catch(() => toast.error('Erro ao copiar'));
   };
 
-  // ── Paste grid (Excel-like: cola a partir da célula âncora, Ctrl+Z desfaz) ──
+  // ── Paste grid (Excel-like: cola a partir da âncora, Ctrl+Z desfaz) ──
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const text = e.clipboardData.getData('text');
     if (!text.trim()) return;
     const pastedRows = text.trim().split('\n').map(r => r.split('\t'));
-    const [ar, ac] = anchorCell;
-    // Salva estado atual no histórico de undo
+    const [ar, ac] = anchor;
     setGridHistory(h => [...h.slice(-20), grid.map(r => [...r])]);
     const newGrid = grid.map(r => [...r]);
     pastedRows.slice(0, MAX_ROWS - ar).forEach((row, ri) => {
@@ -283,15 +313,18 @@ export default function ProductsPage() {
         newGrid[targetRow][ac + ci] = cell.trim();
       });
     });
-    while (newGrid.length < 10) newGrid.push(Array(6).fill(''));
+    // Move cursor para cobrir a área colada
+    const pasteR2 = Math.min(ar + pastedRows.length - 1, MAX_ROWS - 1);
+    const pasteC2 = Math.min(ac + Math.max(...pastedRows.map(r => r.length)) - 1, 5);
+    setCursor([pasteR2, pasteC2]);
     setGrid([...newGrid]);
   };
 
-  // Ctrl+Z: desfaz último paste
+  // ── Teclado: Ctrl+C copia seleção, Ctrl+Z desfaz ──
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedCol !== null) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       e.preventDefault();
-      handleCopyColumn(selectedCol);
+      handleCopySelection();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -560,70 +593,115 @@ export default function ProductsPage() {
 
       {/* ── Modal Colar Produtos em Massa ─────────────────── */}
       {showPasteModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-auto">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-5xl my-8 p-6">
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/60 flex items-start justify-center z-50 p-4 overflow-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <div>
-                <h3 className="font-bold text-white text-lg">Colar Produtos em Massa</h3>
-                <p className="text-xs text-white/50 mt-0.5">
-                  Cole direto do Excel (Ctrl+V). Colunas: SKU · Seller · Nome · Val.Unit · Caixa · Cód.Barras
+                <h3 className="font-bold text-gray-900 text-lg">Colar Produtos em Massa</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Cole direto do Excel (Ctrl+V) · Selecione células com clique / Shift+clique · Ctrl+C copia seleção · Ctrl+Z desfaz
                 </p>
               </div>
-              <button onClick={() => { setShowPasteModal(false); setGrid(EMPTY_GRID()); }}
-                className="text-white/35 hover:text-white/60"><X size={20} /></button>
+              <button onClick={() => { setShowPasteModal(false); setGrid(EMPTY_GRID()); setAnchor([0,0]); setCursor([0,0]); }}
+                className="text-gray-400 hover:text-gray-700 transition"><X size={20} /></button>
             </div>
 
-            <div className="overflow-auto border border-white/12 rounded-xl max-h-[55vh]" onPaste={handlePaste} onKeyDown={handleKeyDown}>
-              <table className="w-full text-xs border-collapse">
+            {/* Grid */}
+            <div
+              className="overflow-auto max-h-[60vh] select-none"
+              onPaste={handlePaste}
+              onKeyDown={handleKeyDown}
+              tabIndex={0}
+              style={{ outline: 'none' }}
+            >
+              <table className="w-full text-sm border-collapse" style={{ tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: 36 }} />
+                  {PASTE_HEADERS.map((_, i) => <col key={i} style={{ width: i === 2 ? 220 : 140 }} />)}
+                </colgroup>
                 <thead>
-                  <tr className="bg-white/4 sticky top-0 z-10">
-                    <th className="py-2 px-1 text-center border-b border-white/12 text-white/35 w-8">#</th>
-                    {PASTE_HEADERS.map((h, ci) => (
-                      <th key={ci}
-                        onClick={() => { setSelectedCol(ci === selectedCol ? null : ci); }}
-                        title={ci === selectedCol ? 'Ctrl+C para copiar coluna' : 'Clique para selecionar coluna'}
-                        className={`py-2 px-2 text-left border-b border-white/12 font-semibold min-w-[130px] cursor-pointer select-none transition ${ci === selectedCol ? 'text-violet-300 bg-violet-900/30' : 'text-white/60 hover:text-white/80'}`}>
-                        {h}{ci === selectedCol ? ' ✓' : ''}
-                      </th>
-                    ))}
+                  <tr className="bg-gray-100 sticky top-0 z-10">
+                    <th className="py-2 px-1 text-center border border-gray-300 text-gray-400 text-xs font-normal">#</th>
+                    {PASTE_HEADERS.map((h, ci) => {
+                      const { c1, c2 } = normalizeRect(anchor[0], anchor[1], cursor[0], cursor[1]);
+                      const colSelected = ci >= c1 && ci <= c2;
+                      return (
+                        <th key={ci}
+                          onMouseDown={(e) => { e.preventDefault(); if (e.shiftKey) { setCursor([cursor[0], ci]); } else { setAnchor([0, ci]); setCursor([grid.length - 1, ci]); } }}
+                          className={`py-2 px-2 text-left border border-gray-300 font-semibold text-xs cursor-pointer select-none transition ${colSelected ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-200'}`}>
+                          {h}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
-                  {grid.map((row, ri) => (
-                    <tr key={ri} className={row[0]?.trim() ? 'bg-violet-900/30' : 'hover:bg-white/4'}>
-                      <td className="py-1 px-1 text-center text-white/25 border-b border-white/8 text-[10px]">{ri + 1}</td>
-                      {row.map((cell, ci) => (
-                        <td key={ci} className="border-b border-r border-white/8 p-0">
-                          <input type="text" value={cell}
-                            onChange={e => handleCellChange(ri, ci, e.target.value)}
-                            onFocus={() => setAnchorCell([ri, ci])}
-                            className={`w-full px-2 py-1.5 text-xs border-0 outline-none focus:bg-violet-900/30 rounded ${ci === selectedCol ? 'bg-violet-900/20' : ''}`}
-                            placeholder={PASTE_HEADERS[ci].replace(' *', '')} />
+                  {grid.map((row, ri) => {
+                    const hasData = row[0]?.trim() || row[2]?.trim();
+                    return (
+                      <tr key={ri} className={hasData ? 'bg-green-50' : 'bg-white hover:bg-gray-50'}>
+                        <td className="py-1 px-1 text-center border border-gray-200 text-gray-400 text-[11px] font-mono bg-gray-50 select-none">
+                          {ri + 1}
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+                        {row.map((cell, ci) => {
+                          const selected = isCellSelected(ri, ci);
+                          const isAnchor = ri === anchor[0] && ci === anchor[1];
+                          return (
+                            <td key={ci}
+                              className={`border p-0 ${selected ? 'border-blue-400' : 'border-gray-200'}`}
+                              style={{ background: selected ? '#DBEAFE' : undefined }}
+                              onMouseDown={(e) => handleCellMouseDown(e, ri, ci)}
+                            >
+                              <input
+                                type="text"
+                                value={cell}
+                                onChange={e => handleCellChange(ri, ci, e.target.value)}
+                                onFocus={() => { setAnchor([ri, ci]); setCursor([ri, ci]); }}
+                                className="w-full px-2 py-1.5 text-xs text-gray-900 bg-transparent outline-none"
+                                style={isAnchor ? { boxShadow: 'inset 0 0 0 2px #2563EB' } : undefined}
+                                placeholder={!cell ? PASTE_HEADERS[ci].replace(' *', '') : ''}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
-            <div className="flex items-center justify-between mt-4 flex-wrap gap-3">
+            {/* Footer */}
+            <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 bg-gray-50 rounded-b-2xl flex-wrap gap-3">
               <div className="flex items-center gap-4">
-                <button onClick={() => setGrid(prev => [...prev, ...Array(5).fill(null).map(() => Array(6).fill(''))])}
-                  className="text-xs text-violet-400 hover:underline">+ 5 linhas</button>
-                <button onClick={() => setGrid(EMPTY_GRID())} className="text-xs text-white/35 hover:underline">Limpar tudo</button>
-                <span className="text-xs text-white/35">{validRows} linha(s) válida(s)</span>
+                <button
+                  onClick={() => setGrid(prev => [...prev, ...Array(20).fill(null).map(() => Array(6).fill(''))])}
+                  className="text-xs text-violet-600 hover:text-violet-800 hover:underline font-medium">
+                  + 20 linhas
+                </button>
+                <button
+                  onClick={() => { setGrid(EMPTY_GRID()); setAnchor([0,0]); setCursor([0,0]); setGridHistory([]); }}
+                  className="text-xs text-gray-400 hover:text-gray-700 hover:underline">
+                  Limpar tudo
+                </button>
+                <span className="text-xs text-gray-500">
+                  {validRows} linha(s) válida(s) · {grid.length} linhas totais
+                </span>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => { setShowPasteModal(false); setGrid(EMPTY_GRID()); }}
-                  className="px-4 py-2 text-sm text-white/60 hover:text-white/90 transition">
+                <button
+                  onClick={() => { setShowPasteModal(false); setGrid(EMPTY_GRID()); setAnchor([0,0]); setCursor([0,0]); }}
+                  className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition">
                   Cancelar
                 </button>
                 <button
                   onClick={handlePasteSave}
                   disabled={saving || validRows === 0}
-                  className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition disabled:opacity-40"
+                  className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition disabled:opacity-40 flex items-center gap-1.5"
                 >
+                  {saving && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {saving ? 'Salvando...' : `Salvar ${validRows} produto(s)`}
                 </button>
               </div>
@@ -665,7 +743,7 @@ export default function ProductsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Cod. Barras Seller</label>
+                  <label className="block text-xs text-white/50 mb-1">Cód. Barras Seller</label>
                   <input value={form.barcode_seller} onChange={e => setForm(f => ({...f, barcode_seller: e.target.value}))}
                     className="w-full px-3 py-2 border border-white/12 rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
@@ -677,14 +755,14 @@ export default function ProductsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Valor Unitario (R$)</label>
+                  <label className="block text-xs text-white/50 mb-1">Valor Unitário (R$)</label>
                   <input type="number" step="0.01" value={form.unit_value} onChange={e => setForm(f => ({...f, unit_value: Number(e.target.value)}))}
                     className="w-full px-3 py-2 border border-white/12 rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
                 <div className="flex items-center gap-2 pt-5">
                   <input type="checkbox" id="is_input" checked={form.is_input} onChange={e => setForm(f => ({...f, is_input: e.target.checked}))}
                     className="rounded" />
-                  <label htmlFor="is_input" className="text-sm text-white/70">E produto de entrada</label>
+                  <label htmlFor="is_input" className="text-sm text-white/70">É produto de entrada</label>
                 </div>
               </div>
               <div>
@@ -698,7 +776,7 @@ export default function ProductsPage() {
                     className="px-3 py-1.5 text-xs text-white/70 border border-white/12 rounded-lg hover:bg-white/5 transition">
                     {photoPreview ? 'Trocar foto' : 'Adicionar foto'}
                   </button>
-                  <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+                  <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
                 </div>
               </div>
             </div>
@@ -706,7 +784,7 @@ export default function ProductsPage() {
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-white/60 hover:text-white/90">Cancelar</button>
               <button onClick={handleSave}
                 className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
-                {editId ? 'Salvar alteracoes' : 'Criar produto'}
+                {editId ? 'Salvar alterações' : 'Criar produto'}
               </button>
             </div>
           </div>

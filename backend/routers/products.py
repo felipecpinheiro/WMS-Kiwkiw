@@ -7,7 +7,7 @@ import os, shutil
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..auth import get_current_user, require_manager_or_above, require_admin
@@ -38,8 +38,6 @@ def list_products(
     Retorna { items, total, page, page_size, pages }.
     page_size máximo: 500. Para buscas sem paginação use page_size=0 (retorna tudo — use com filtros).
     """
-    from sqlalchemy.orm import joinedload
-
     page_size = max(1, min(page_size, 500)) if page_size > 0 else 0
     page = max(1, page)
 
@@ -165,6 +163,33 @@ def update_product(
         unit_value=product.unit_value or 0.0, box_type=product.box_type,
         is_input=bool(product.is_input), photo_url=product.photo_url, active=product.active,
     )
+
+
+@router.delete("/products/{product_id}", status_code=204)
+def delete_product(
+    product_id: int,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """Remove um produto do cadastro (soft-delete: seta active=False)."""
+    product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    seller = db.query(models.Seller).filter(models.Seller.id == product.seller_id).first()
+    product.active = False
+
+    db.add(models.AuditLog(
+        entity_type="Product",
+        entity_id=product_id,
+        action="DELETE",
+        detail=(
+            f"Produto desativado: SKU={product.sku} | "
+            f"Seller={seller.trade_name if seller else product.seller_id}"
+        ),
+        user_id=current_user.id,
+    ))
+    db.commit()
 
 
 @router.post("/products/{product_id}/photo")
@@ -715,10 +740,69 @@ def list_sellers(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(models.Seller)
+    from sqlalchemy import func as _func
+
+    sellers = db.query(models.Seller)
     if active_only:
-        query = query.filter(models.Seller.active == True)
-    return query.order_by(models.Seller.trade_name).all()
+        sellers = sellers.filter(models.Seller.active == True)
+    sellers = sellers.order_by(models.Seller.trade_name).all()
+
+    # Enriquece com contagem de SKUs e SKUs com estoque (queries otimizadas com GROUP BY)
+    sku_totals = dict(
+        db.query(models.Product.seller_id, _func.count(models.Product.id))
+        .filter(models.Product.active == True)
+        .group_by(models.Product.seller_id)
+        .all()
+    )
+    sku_with_stock = dict(
+        db.query(models.StockPosition.seller_id, _func.count(models.StockPosition.id))
+        .filter(models.StockPosition.current_stock > 0)
+        .group_by(models.StockPosition.seller_id)
+        .all()
+    )
+
+    result = []
+    for s in sellers:
+        d = {c.key: getattr(s, c.key) for c in s.__table__.columns}
+        d["unit_display_name"] = s.unit_display_name
+        d["total_skus"]      = sku_totals.get(s.id, 0)
+        d["skus_with_stock"] = sku_with_stock.get(s.id, 0)
+        result.append(d)
+    return result
+
+
+@router.get("/sellers/{seller_id}/stats")
+def seller_stats(
+    seller_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retorna estatísticas resumidas do seller: total SKUs, SKUs com estoque, valor total."""
+    from sqlalchemy import func as _func
+    total_skus = db.query(_func.count(models.Product.id)).filter(
+        models.Product.seller_id == seller_id,
+        models.Product.active == True,
+    ).scalar() or 0
+
+    skus_with_stock = db.query(_func.count(models.StockPosition.id)).filter(
+        models.StockPosition.seller_id == seller_id,
+        models.StockPosition.current_stock > 0,
+    ).scalar() or 0
+
+    total_stock_value = db.query(
+        _func.sum(models.StockPosition.current_stock * models.StockPosition.unit_value)
+    ).filter(
+        models.StockPosition.seller_id == seller_id,
+        models.StockPosition.current_stock > 0,
+    ).scalar() or 0.0
+
+    return {
+        "seller_id":       seller_id,
+        "total_skus":      total_skus,
+        "skus_with_stock": skus_with_stock,
+        "skus_zero_stock": total_skus - skus_with_stock,
+        "total_stock_value": round(float(total_stock_value), 2),
+    }
 
 
 @router.post("/sellers", response_model=schemas.SellerResponse)
@@ -792,18 +876,55 @@ def delete_seller(
 
 
 # ============================================================
-# UNIDADES
+# SELLERS SEM UNIDADE — para warning no Dashboard
 # ============================================================
 
-@router.get("/units", response_model=List[schemas.UnitResponse])
-def list_units(
+@router.get("/sellers/without-unit")
+def sellers_without_unit(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.query(models.Unit).filter(models.Unit.active == True).all()
+    """Retorna sellers ativos sem unidade associada (unit_id nulo)."""
+    sellers = db.query(models.Seller).filter(
+        models.Seller.active == True,
+        models.Seller.unit_id == None,  # noqa: E711
+    ).all()
+    return [{"id": s.id, "trade_name": s.trade_name} for s in sellers]
 
 
-@router.post("/units", response_model=schemas.UnitResponse)
+# ============================================================
+# UNIDADES
+# ============================================================
+
+def _unit_to_response(u: models.Unit) -> schemas.UnitResponse:
+    """Serializa Unit → UnitResponse incluindo seller_ids."""
+    return schemas.UnitResponse(
+        id=u.id,
+        name=u.name,
+        code=u.code,
+        location=u.location,
+        city=u.city,
+        state=u.state,
+        responsible=u.responsible,
+        phone=u.phone,
+        active=u.active,
+        seller_ids=[s.id for s in (u.sellers or [])],
+    )
+
+
+@router.get("/units", response_model=List[schemas.UnitResponse])
+def list_units(
+    include_inactive: bool = False,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.Unit).options(joinedload(models.Unit.sellers))
+    if not include_inactive:
+        query = query.filter(models.Unit.active == True)
+    return [_unit_to_response(u) for u in query.order_by(models.Unit.name).all()]
+
+
+@router.post("/units", response_model=schemas.UnitResponse, status_code=201)
 def create_unit(
     unit: schemas.UnitCreate,
     current_user: models.User = Depends(require_admin),
@@ -813,7 +934,93 @@ def create_unit(
     db.add(u)
     db.commit()
     db.refresh(u)
-    return u
+    db.refresh(u, attribute_names=['sellers'])
+    db.add(models.AuditLog(
+        entity_type="Unit", entity_id=u.id, action="CREATE",
+        detail=f"Unidade criada: {u.name}", user_id=current_user.id,
+    ))
+    db.commit()
+    return _unit_to_response(u)
+
+
+@router.put("/units/{unit_id}", response_model=schemas.UnitResponse)
+def update_unit(
+    unit_id: int,
+    data: schemas.UnitUpdate,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    u = db.query(models.Unit).options(joinedload(models.Unit.sellers)).filter(
+        models.Unit.id == unit_id
+    ).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Unidade não encontrada")
+
+    changed = {f: v for f, v in data.model_dump(exclude_none=True).items()}
+    for field, value in changed.items():
+        setattr(u, field, value)
+
+    db.add(models.AuditLog(
+        entity_type="Unit", entity_id=unit_id, action="UPDATE",
+        detail=f"Unidade atualizada: {u.name} | Campos: {', '.join(changed.keys())}",
+        user_id=current_user.id,
+    ))
+    db.commit()
+    db.refresh(u)
+    return _unit_to_response(u)
+
+
+@router.delete("/units/{unit_id}", status_code=204)
+def delete_unit(
+    unit_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    u = db.query(models.Unit).filter(models.Unit.id == unit_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Unidade não encontrada")
+    # Desassocia os sellers antes de desativar
+    db.query(models.Seller).filter(models.Seller.unit_id == unit_id).update(
+        {"unit_id": None}, synchronize_session="fetch"
+    )
+    u.active = False
+    db.add(models.AuditLog(
+        entity_type="Unit", entity_id=unit_id, action="DELETE",
+        detail=f"Unidade desativada: {u.name}", user_id=current_user.id,
+    ))
+    db.commit()
+
+
+@router.patch("/units/{unit_id}/sellers")
+def assign_sellers_to_unit(
+    unit_id: int,
+    payload: dict,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Associa/desassocia sellers a uma unidade.
+    Body: { "seller_ids": [1, 2, 3] }
+    Substitui completamente a lista de sellers da unidade.
+    """
+    u = db.query(models.Unit).filter(models.Unit.id == unit_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Unidade não encontrada")
+
+    seller_ids: List[int] = payload.get("seller_ids", [])
+
+    # Remove todos os sellers desta unidade
+    db.query(models.Seller).filter(models.Seller.unit_id == unit_id).update(
+        {"unit_id": None}, synchronize_session="fetch"
+    )
+    # Atribui os novos sellers
+    if seller_ids:
+        db.query(models.Seller).filter(models.Seller.id.in_(seller_ids)).update(
+            {"unit_id": unit_id}, synchronize_session="fetch"
+        )
+
+    db.commit()
+    return {"unit_id": unit_id, "seller_ids": seller_ids}
 
 
 # ============================================================

@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+20;Unidade 1;Espaco Aereo;2026-04-26;11309;n.a;Aero Time Escola de Aviacao Civil;2026-04-24;;JADLOG LOGISTICA S.A - JADLOG;Venda de mercadorias - PJ sem IE;35260418184985000118550010000113091440591533;7891234000071;Apostila de Comissario de Voo - Curso Completo;1;False;;pending;2026-04-26T14:53:35.733136

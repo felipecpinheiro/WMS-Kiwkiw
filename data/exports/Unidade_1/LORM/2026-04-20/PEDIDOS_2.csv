@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+2;Unidade 1;LORM;2026-04-20;025555;882492109;Renata Canazarro;2026-04-19;2026-04-20;Mandaê;Venda de mercadorias;35260440981033000184550020000255551824921093;618341419261;SHAMPOO LORM 250ml;2;False;;pending;2026-04-20T19:09:44.095029

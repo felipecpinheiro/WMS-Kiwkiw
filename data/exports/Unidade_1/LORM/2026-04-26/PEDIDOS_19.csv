@@ -1,0 +1,2 @@
+sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
+19;Unidade 1;LORM;2026-04-26;025563;882562466;Beatriz Bianchim;2026-04-23;2026-04-24;Mandaê;Venda de mercadorias;35260440981033000184550020000255631825624663;618341419261;SHAMPOO LORM 250ml;1;False;;pending;2026-04-26T11:44:24.050076

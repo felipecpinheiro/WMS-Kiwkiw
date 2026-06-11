@@ -1,0 +1,4 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-20 22:40:19,17122,Clara Carvalho,BR-CART-S,BR-CART-S,1,False,,Administrador
+2026-04-20 22:40:39,17122,Clara Carvalho,P-FL-26,P-FL-26,1,False,,Administrador
+2026-04-20 22:40:58,17122,Clara Carvalho,BR-MP-P,BR-MP-P,1,False,,Administrador

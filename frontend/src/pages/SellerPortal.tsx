@@ -32,31 +32,37 @@ interface SortState { col: string; dir: SortDir }
 // ─── Configurações ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  pending:     { label: 'Pendente',      cls: 'bg-gray-700/60 text-white/50' },
-  validated:   { label: 'Validado',      cls: 'bg-teal-900/40 text-teal-300' },
-  separating:  { label: 'Em Separação',  cls: 'bg-blue-900/40 text-blue-300' },
-  scanning:    { label: 'Em Bipagem',    cls: 'bg-violet-900/40 text-violet-300' },
-  completed:   { label: 'Concluído',     cls: 'bg-green-900/40 text-green-300' },
-  interrupted: { label: 'Interrompido',  cls: 'bg-orange-900/40 text-orange-300' },
-  cancelled:   { label: 'Cancelado',     cls: 'bg-red-900/40 text-red-400' },
+  pending:     { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
+  validated:   { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
+  separating:  { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
+  scanning:    { label: 'Em Preparação',        cls: 'bg-violet-900/40 text-violet-300' },
+  completed:   { label: 'Concluído',            cls: 'bg-green-900/40 text-green-300' },
+  interrupted: { label: 'Interrompido',         cls: 'bg-orange-900/40 text-orange-300' },
+  cancelled:   { label: 'Cancelado',            cls: 'bg-red-900/40 text-red-400' },
 };
 
 // ─── Header de coluna com sort ────────────────────────────────────────────────
 
 function SortTh({
-  label, col, sort, onSort, className = '',
+  label, col, sort, onSort, align = 'left', width,
 }: {
   label: string; col: string; sort: SortState;
-  onSort: (col: string) => void; className?: string;
+  onSort: (col: string) => void;
+  align?: 'left' | 'right' | 'center';
+  width?: string;
 }) {
   const active = sort.col === col;
+  const justifyMap = { left: 'justify-start', right: 'justify-end', center: 'justify-center' };
+  const textMap    = { left: 'text-left',      right: 'text-right',  center: 'text-center' };
   return (
     <th
-      className={`text-left text-[11px] font-semibold uppercase tracking-wide py-2.5 px-3 cursor-pointer select-none
-        hover:text-white/80 transition ${active ? 'text-violet-300' : 'text-white/45'} ${className}`}
+      className={`text-[11px] font-semibold uppercase tracking-wide py-2.5 px-3 cursor-pointer select-none
+        hover:text-white/80 transition whitespace-nowrap ${textMap[align]}
+        ${active ? 'text-violet-300' : 'text-white/45'}`}
+      style={width ? { width } : undefined}
       onClick={() => onSort(col)}
     >
-      <span className="flex items-center gap-1">
+      <span className={`flex items-center gap-1 ${justifyMap[align]}`}>
         {label}
         {active
           ? sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
@@ -181,6 +187,12 @@ export default function SellerPortalPage() {
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo]     = useState(today);
   const [sort, setSort] = useState<SortState>({ col: '', dir: null });
+  // Filtro de datas para movimentações
+  const oneYearAgo = (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 1); return d.toISOString().slice(0,10); })();
+  const [movDateFrom, setMovDateFrom] = useState(oneYearAgo);
+  const [movDateTo,   setMovDateTo]   = useState(today);
+  const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
+  const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
 
   // ── Dados ──────────────────────────────────────────────────────────────────
@@ -198,8 +210,8 @@ export default function SellerPortalPage() {
   );
 
   const { data: movements = [] } = useQuery(
-    ['seller-movements', sellerId],
-    () => sellerId ? inventoryApi.movements(sellerId).then(r => r.data) : [],
+    ['seller-movements', sellerId, movDateFrom, movDateTo],
+    () => sellerId ? inventoryApi.movements(sellerId, movDateFrom, movDateTo).then(r => r.data) : [],
     { enabled: !!sellerId && tab === 'movements' },
   );
 
@@ -245,13 +257,28 @@ export default function SellerPortalPage() {
   // ── Movimentações filtradas ────────────────────────────────────────────────
 
   const filteredMovements: any[] = useMemo(() => {
-    if (!search) return movements as any[];
-    return (movements as any[]).filter(m =>
-      m.sku?.toLowerCase().includes(search.toLowerCase()) ||
-      (m.product_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
-      (m.nf_number ?? '').includes(search),
-    );
-  }, [movements, search]);
+    let list = movements as any[];
+    // filtro texto
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(m =>
+        m.sku?.toLowerCase().includes(q) ||
+        (m.product_name ?? '').toLowerCase().includes(q) ||
+        (m.nf_number ?? '').includes(q),
+      );
+    }
+    // filtro tipo
+    if (movTypeFilter) list = list.filter(m => m.movement_type === movTypeFilter);
+    // sort
+    list = [...list].sort((a, b) => {
+      const dir = movSort.dir === 'asc' ? 1 : -1;
+      const va = a[movSort.col] ?? '';
+      const vb = b[movSort.col] ?? '';
+      if (movSort.col === 'quantity') return (Number(va) - Number(vb)) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+    return list;
+  }, [movements, search, movTypeFilter, movSort]);
 
   const completionPct  = dashboard?.completion_rate ?? 0;
   const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
@@ -439,7 +466,7 @@ export default function SellerPortalPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="bg-white/4 border-b border-white/8">
-                      {['NF', 'Cliente Final', 'Transportadora', 'Data', 'Status'].map(h => (
+                      {['NF', 'Cliente Final', 'Transportadora', 'Data Upload', 'Status'].map(h => (
                         <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
                       ))}
                     </tr>
@@ -453,7 +480,7 @@ export default function SellerPortalPage() {
                           <td className="py-2.5 px-3 text-sm text-white/90">{o.customer_name}</td>
                           <td className="py-2.5 px-3 text-sm text-white/50">{o.carrier || '—'}</td>
                           <td className="py-2.5 px-3 text-sm text-white/50">
-                            {o.order_date ? format(new Date(o.order_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                            {o.imported_at ? format(new Date(o.imported_at), 'dd/MM/yy') : o.order_date ? format(new Date(o.order_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                           </td>
                           <td className="py-2.5 px-3">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>{st.label}</span>
@@ -487,56 +514,73 @@ export default function SellerPortalPage() {
               </div>
 
               <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
-                <table className="w-full">
+                <table className="w-full table-fixed">
                   <thead>
                     <tr className="bg-white/4 border-b border-white/8">
-                      <SortTh label="SKU"      col="sku"           sort={sort} onSort={handleSort} />
-                      <SortTh label="Produto"  col="product_name"  sort={sort} onSort={handleSort} />
-                      <SortTh label="Entradas" col="total_in"      sort={sort} onSort={handleSort} className="text-right" />
-                      <SortTh label="Saídas"   col="total_out"     sort={sort} onSort={handleSort} className="text-right" />
-                      <SortTh label="Saldo"    col="current_stock" sort={sort} onSort={handleSort} className="text-right" />
-                      <SortTh label="Nível"    col="level"         sort={sort} onSort={handleSort} />
+                      <SortTh label="SKU"       col="sku"              sort={sort} onSort={handleSort} align="left"   width="120px" />
+                      <SortTh label="Produto"   col="product_name"    sort={sort} onSort={handleSort} align="left"   width="auto" />
+                      <SortTh label="Entradas"  col="total_in"        sort={sort} onSort={handleSort} align="right"  width="90px" />
+                      <SortTh label="Saídas"    col="total_out"       sort={sort} onSort={handleSort} align="right"  width="90px" />
+                      <SortTh label="Saldo"     col="current_stock"   sort={sort} onSort={handleSort} align="right"  width="80px" />
+                      <SortTh label="Previsão"  col="days_remaining"  sort={sort} onSort={handleSort} align="right"  width="90px" />
+                      <SortTh label="Status"    col="forecast_status" sort={sort} onSort={handleSort} align="center" width="140px" />
                     </tr>
                   </thead>
                   <tbody>
                     {filteredStock.length > 0 ? filteredStock.map((s: any) => {
                       const stockVal = s.current_stock ?? s.final_stock ?? 0;
+                      const fs       = s.forecast_status ?? '';
+                      const noStock  = stockVal <= 0;
+                      const isLow    = fs === 'Baixo';
+                      const rowBg    = noStock ? 'bg-red-950/30' : isLow ? 'bg-orange-950/20' : '';
                       const levelCls =
                         s.level === 'ALTO'  ? 'bg-violet-900/40 text-violet-300' :
                         s.level === 'MÉDIO' ? 'bg-yellow-900/40 text-yellow-300' :
                                               'bg-red-900/40 text-red-400';
+                      const forecastCls =
+                        fs === 'Sem Produto'            ? 'bg-red-900/60 text-red-300 font-bold' :
+                        fs === 'Sem Dados Suficientes'  ? 'bg-gray-700/50 text-white/35' :
+                        fs === 'Baixo'                  ? 'bg-red-900/50 text-red-300 font-semibold' :
+                        fs === 'Médio'                  ? 'bg-yellow-900/40 text-yellow-300' :
+                        fs === 'Alto'                   ? 'bg-green-900/40 text-green-300' : 'bg-gray-700/40 text-white/40';
                       return (
                         <tr
                           key={s.sku}
                           onClick={() => setSelectedSku(s.sku)}
-                          className={`border-b border-white/5 cursor-pointer transition
-                            hover:bg-violet-900/15 ${s.level === 'BAIXO' ? 'bg-red-950/20' : ''}`}
+                          className={`border-b border-white/5 cursor-pointer transition hover:bg-violet-900/15 ${rowBg}`}
                           title="Clique para ver gráfico deste SKU"
                         >
-                          <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80">{s.sku}</td>
-                          <td className="py-2.5 px-3 text-sm text-white/90 max-w-xs truncate">{s.product_name}</td>
-                          <td className="py-2.5 px-3 text-sm text-teal-400 font-medium text-right">
+                          <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80 align-middle">{s.sku}</td>
+                          <td className="py-2.5 px-3 text-sm text-white/90 truncate align-middle" style={{maxWidth:'220px'}}>{s.product_name}</td>
+                          <td className="py-2.5 px-3 text-sm text-teal-400 font-medium text-right tabular-nums align-middle">
                             +{s.total_in ?? s.entries ?? 0}
                           </td>
-                          <td className="py-2.5 px-3 text-sm text-red-400 font-medium text-right">
+                          <td className="py-2.5 px-3 text-sm text-red-400 font-medium text-right tabular-nums align-middle">
                             -{s.total_out ?? s.exits ?? 0}
                           </td>
-                          <td className="py-2.5 px-3 text-sm font-bold text-white text-right">{stockVal}</td>
-                          <td className="py-2.5 px-3">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${levelCls}`}>
-                              {s.level}
+                          <td className={`py-2.5 px-3 text-sm font-bold text-right tabular-nums align-middle ${noStock ? 'text-red-400' : 'text-white'}`}>
+                            {stockVal}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums align-middle">
+                            {s.days_remaining != null
+                              ? <span className="text-sm text-white/70">{s.days_remaining}d</span>
+                              : <span className="text-xs text-white/25">—</span>}
+                          </td>
+                          <td className="py-2.5 px-3 text-center align-middle">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs ${forecastCls}`}>
+                              {fs || s.level || '—'}
                             </span>
                           </td>
                         </tr>
                       );
                     }) : (
-                      <tr><td colSpan={6} className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</td></tr>
+                      <tr><td colSpan={7} className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</td></tr>
                     )}
                   </tbody>
                 </table>
                 <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35 flex items-center gap-2">
                   <BarChart2 size={11} className="text-violet-400" />
-                  {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar
+                  {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar · Previsão baseada na média dos últimos 60 dias
                 </div>
               </div>
             </>
@@ -545,6 +589,7 @@ export default function SellerPortalPage() {
           {/* ── MOVIMENTAÇÕES ─────────────────────────────────────────────── */}
           {tab === 'movements' && (
             <>
+              {/* Barra de busca + tipo + exportar */}
               <div className="flex gap-3 items-center flex-wrap">
                 <div className="relative flex-1 min-w-[200px]">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
@@ -552,6 +597,16 @@ export default function SellerPortalPage() {
                     placeholder="Buscar SKU, produto ou NF..."
                     className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
+                {/* Filtro tipo */}
+                <select
+                  value={movTypeFilter}
+                  onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
+                  className="px-3 py-2 rounded-lg text-sm border border-white/12 bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                >
+                  <option value="">Todos os tipos</option>
+                  <option value="Entrada">Entrada</option>
+                  <option value="Saída">Saída</option>
+                </select>
                 {sellerId && (
                   <button
                     onClick={() => { inventoryApi.exportStockCsv(sellerId); toast.success('Export iniciado'); }}
@@ -561,14 +616,51 @@ export default function SellerPortalPage() {
                     Exportar CSV
                   </button>
                 )}
+                <span className="text-xs text-white/30 ml-auto">{filteredMovements.length} registros</span>
+              </div>
+
+              {/* Filtro de datas das movimentações */}
+              <div className="flex gap-3 flex-wrap items-center bg-gray-900/60 border border-white/8 rounded-xl px-4 py-3">
+                <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
+                <span className="text-xs text-white/40">De</span>
+                <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
+                  className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
+                  style={{ background: '#14122A', colorScheme: 'dark' }} />
+                <span className="text-xs text-white/40">até</span>
+                <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
+                  className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
+                  style={{ background: '#14122A', colorScheme: 'dark' }} />
               </div>
 
               <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-white/4 border-b border-white/8">
-                      {['Data', 'SKU', 'Produto', 'Tipo', 'Qtd', 'NF'].map(h => (
-                        <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                      {([
+                        { label: 'Data',    col: 'movement_date' },
+                        { label: 'SKU',     col: 'sku' },
+                        { label: 'Produto', col: 'product_name' },
+                        { label: 'Tipo',    col: 'movement_type' },
+                        { label: 'Qtd',     col: 'quantity' },
+                        { label: 'NF',      col: null },
+                      ] as { label: string; col: string | null }[]).map(({ label, col }) => (
+                        <th
+                          key={label}
+                          className={`text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3 ${col ? 'cursor-pointer hover:text-white/80 select-none' : ''}`}
+                          onClick={() => {
+                            if (!col) return;
+                            setMovSort(s => s.col === col
+                              ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+                              : { col, dir: col === 'movement_date' ? 'desc' : 'asc' });
+                          }}
+                        >
+                          <span className="flex items-center gap-1">
+                            {label}
+                            {col && movSort.col === col && (
+                              <span className="text-violet-400">{movSort.dir === 'asc' ? '↑' : '↓'}</span>
+                            )}
+                          </span>
+                        </th>
                       ))}
                     </tr>
                   </thead>

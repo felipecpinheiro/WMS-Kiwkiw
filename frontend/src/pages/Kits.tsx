@@ -38,7 +38,15 @@ export default function KitsPage() {
     { enabled: activeTab === 'log' }
   );
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
-  const { data: products = [] } = useQuery('products', () => cadastrosApi.products().then(r => r.data));
+  // Busca produtos do seller selecionado (page_size=0 = todos, sem paginação)
+  const { data: productsResp } = useQuery(
+    ['products-for-kit', sellerId],
+    () => sellerId
+      ? cadastrosApi.products({ seller_id: Number(sellerId), page_size: 0 }).then(r => r.data)
+      : Promise.resolve({ items: [], total: 0, page: 1, page_size: 0, pages: 0 }),
+    { enabled: true, keepPreviousData: true }
+  );
+  const products: any[] = (productsResp as any)?.items ?? (Array.isArray(productsResp) ? productsResp : []);
 
   const openCreate = () => {
     setEditId(null); setKitSku(''); setKitName(''); setSellerId('');

@@ -11,9 +11,28 @@ from typing import List, Optional, Dict
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from .. import models
+
+# Mapa de normalização para valores legados ('IN'/'OUT') no campo movement_type
+_MT_NORM = {
+    "IN":     models.MovementType.IN,
+    "OUT":    models.MovementType.OUT,
+    "E":      models.MovementType.IN,
+    "S":      models.MovementType.OUT,
+    "ENTRADA":models.MovementType.IN,
+    "SAÍDA":  models.MovementType.OUT,
+    "SAIDA":  models.MovementType.OUT,
+}
+
+
+def _normalize_movement_type(raw) -> models.MovementType:
+    """Converte valor de movement_type (incluindo legados 'IN'/'OUT') para enum."""
+    if isinstance(raw, models.MovementType):
+        return raw
+    s = str(raw or "").strip().upper()
+    return _MT_NORM.get(s, models.MovementType.OUT)
 
 
 def calculate_stock_level(current_stock: int) -> str:
@@ -102,12 +121,13 @@ def update_stock_from_order(order, db: Session) -> None:
     Chamado em tempo real, no momento que o último item é bipado.
     Evita duplicata: não cria movimento se já existe um para esta order_id.
     """
-    # Evita dupla contagem
+    # Evita dupla contagem — usa SQL raw para não crashar com enum legado
     from .. import models as _m
-    existing = db.query(_m.StockMovement).filter(
-        _m.StockMovement.order_id == order.id
-    ).first()
-    if existing:
+    existing_count = db.execute(
+        text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid"),
+        {"oid": order.id},
+    ).scalar()
+    if existing_count:
         return
 
     from .order_import import NATURE_TYPE_MAP
@@ -200,15 +220,24 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
     from datetime import timedelta
     sixty_days_ago = date.today() - timedelta(days=60)
 
+    # Pré-carrega saídas dos últimos 60 dias via SQL raw (suporta valores legados 'OUT'/'Saída')
+    out_rows = db.execute(
+        text("""
+            SELECT sku, SUM(quantity) as total
+            FROM stock_movements
+            WHERE seller_id = :sid
+              AND (movement_type = 'Saída' OR UPPER(movement_type) IN ('OUT','SAIDA','S'))
+              AND movement_date >= :cutoff
+            GROUP BY sku
+        """),
+        {"sid": seller_id, "cutoff": str(sixty_days_ago)},
+    ).fetchall()
+    out_60d_map = {r.sku: (r.total or 0) for r in out_rows}
+
     result = []
     for p in positions:
         # Média de saídas nos últimos 60 dias
-        out_60d = db.query(func.sum(models.StockMovement.quantity)).filter(
-            models.StockMovement.seller_id == seller_id,
-            models.StockMovement.sku == p.sku,
-            models.StockMovement.movement_type == models.MovementType.OUT,
-            models.StockMovement.movement_date >= sixty_days_ago,
-        ).scalar() or 0
+        out_60d = out_60d_map.get(p.sku, 0)
         avg_daily = round(out_60d / 60, 2)
         days_projection = round(p.current_stock / avg_daily) if avg_daily > 0 else None
 
@@ -239,11 +268,28 @@ def get_sku_history(seller_id: int, sku: str, db: Session, days: int = 90) -> di
     sixty_days_ago = date.today() - timedelta(days=60)
 
 
-    movements = db.query(models.StockMovement).filter(
-        models.StockMovement.seller_id == seller_id,
-        models.StockMovement.sku == sku,
-        models.StockMovement.movement_date >= start_date,
-    ).order_by(models.StockMovement.movement_date).all()
+    # Raw SQL para evitar falha do ORM com valores legados ('IN'/'OUT')
+    rows = db.execute(
+        text("""
+            SELECT movement_date, movement_type, quantity
+            FROM stock_movements
+            WHERE seller_id = :seller_id
+              AND sku = :sku
+              AND movement_date >= :start_date
+            ORDER BY movement_date
+        """),
+        {"seller_id": seller_id, "sku": sku, "start_date": str(start_date)},
+    ).fetchall()
+
+    # Converte rows para objetos simples com movement_type normalizado
+    movements = [
+        {
+            "movement_date": date.fromisoformat(r.movement_date) if isinstance(r.movement_date, str) else r.movement_date,
+            "movement_type": _normalize_movement_type(r.movement_type),
+            "quantity": r.quantity,
+        }
+        for r in rows
+    ]
 
     # Posição atual
     position = db.query(models.StockPosition).filter(
@@ -256,28 +302,28 @@ def get_sku_history(seller_id: int, sku: str, db: Session, days: int = 90) -> di
     # Agrega por dia
     daily_agg: Dict[str, dict] = {}
     for m in movements:
-        d = m.movement_date.strftime("%d/%m") if m.movement_date else "?"
+        d = m["movement_date"].strftime("%d/%m") if m["movement_date"] else "?"
         if d not in daily_agg:
             daily_agg[d] = {"date": d, "saidas": 0, "entradas": 0}
-        if m.movement_type == models.MovementType.OUT:
-            daily_agg[d]["saidas"] += m.quantity
+        if m["movement_type"] == models.MovementType.OUT:
+            daily_agg[d]["saidas"] += m["quantity"]
         else:
-            daily_agg[d]["entradas"] += m.quantity
+            daily_agg[d]["entradas"] += m["quantity"]
 
     chart_data = list(daily_agg.values())
 
     # Métricas
     total_out_60d = sum(
-        m.quantity for m in movements
-        if m.movement_type == models.MovementType.OUT
-        and m.movement_date and m.movement_date >= sixty_days_ago
+        m["quantity"] for m in movements
+        if m["movement_type"] == models.MovementType.OUT
+        and m["movement_date"] and m["movement_date"] >= sixty_days_ago
     )
     total_in_60d = sum(
-        m.quantity for m in movements
-        if m.movement_type == models.MovementType.IN
-        and m.movement_date and m.movement_date >= sixty_days_ago
+        m["quantity"] for m in movements
+        if m["movement_type"] == models.MovementType.IN
+        and m["movement_date"] and m["movement_date"] >= sixty_days_ago
     )
-    total_sales = sum(m.quantity for m in movements if m.movement_type == models.MovementType.OUT)
+    total_sales = sum(m["quantity"] for m in movements if m["movement_type"] == models.MovementType.OUT)
     avg_daily = round(total_out_60d / 60, 2)
     days_remaining = round(current_stock / avg_daily) if avg_daily > 0 else None
 
@@ -336,18 +382,27 @@ def export_movements_to_csv(
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     seller_name = seller.trade_name if seller else f"seller_{seller_id}"
 
-    query = db.query(models.StockMovement).filter(
-        models.StockMovement.seller_id == seller_id
-    )
+    # Raw SQL para evitar falha do ORM com valores legados ('IN'/'OUT')
+    conds = ["seller_id = :seller_id"]
+    params: dict = {"seller_id": seller_id}
     if start_date:
-        query = query.filter(models.StockMovement.movement_date >= start_date)
+        conds.append("movement_date >= :start_date")
+        params["start_date"] = str(start_date)
     if end_date:
-        query = query.filter(models.StockMovement.movement_date <= end_date)
+        conds.append("movement_date <= :end_date")
+        params["end_date"] = str(end_date)
 
-    movements = query.order_by(
-        models.StockMovement.movement_date,
-        models.StockMovement.sku
-    ).all()
+    where_clause = " AND ".join(conds)
+    movements = db.execute(
+        text(
+            "SELECT movement_date, movement_type, sku, product_name, quantity,"
+            " nf_number, nature, observation, created_at"
+            " FROM stock_movements"
+            " WHERE " + where_clause +
+            " ORDER BY movement_date, sku"
+        ),
+        params,
+    ).fetchall()
 
     today = date.today()
     output_subdir = os.path.join(
@@ -365,17 +420,18 @@ def export_movements_to_csv(
             "NF", "Natureza", "Observacao", "Criado em"
         ])
         for m in movements:
-            mt = m.movement_type.value if hasattr(m.movement_type, "value") else str(m.movement_type)
-            writer.writerow([
-                m.movement_date.strftime("%d/%m/%Y") if m.movement_date else "",
-                mt,
-                m.sku,
-                m.product_name or "",
-                m.quantity,
-                m.nf_number or "",
-                m.nature or "",
-                m.observation or "",
-                m.created_at.strftime("%d/%m/%Y %H:%M:%S") if m.created_at else "",
-            ])
-
-    return output_path
+            raw_mt = m.movement_type or ""
+            mt = _MT_NORM.get(raw_mt.upper(), models.MovementType.OUT).value
+            # movement_date é string YYYY-MM-DD vindo do SQL raw
+            md = m.movement_date or ""
+            if md and not isinstance(md, str):
+                md = md.strftime("%d/%m/%Y")
+            elif md:
+                try:
+                    md = date.fromisoformat(md).strftime("%d/%m/%Y")
+                except ValueError:
+                    pass
+            ca = m.created_at or ""
+            if ca and not isinstance(ca, str):
+                ca = ca.strftime("%d/%m/%Y %H:%M:%S")
+           

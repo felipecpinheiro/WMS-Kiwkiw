@@ -1,0 +1,6 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-05-21 13:48:12,000399,luciana@calfertilizantes.com.br,BCH02,7908924400025,1,False,,Administrador
+2026-05-21 13:53:23,000400,Hospital Unimed Sorocaba,BCH01,7908924400001,1,False,,Administrador
+2026-05-21 13:53:32,000400,Hospital Unimed Sorocaba,BCS01,7908924400049,1,False,,Administrador
+2026-05-21 13:53:55,000400,Hospital Unimed Sorocaba,BCH01,7908924400001,1,False,,Administrador
+2026-05-21 13:54:05,000400,Hospital Unimed Sorocaba,BCN01,BCN01,1,False,,Administrador

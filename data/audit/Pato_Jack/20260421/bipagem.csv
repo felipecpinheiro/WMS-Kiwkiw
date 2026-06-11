@@ -1,0 +1,9 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-04-21 12:34:22,000183,Flavio Izar,PJM,PJM,1,False,,Administrador
+2026-04-21 12:34:24,000183,Flavio Izar,PJM,PJM,1,False,,Administrador
+2026-04-21 12:34:53,000182,Giovanna Mader Ducci,PJG,PJG,1,False,,Administrador
+2026-04-21 12:35:12,000180,Monica Camargo,PJP,PJP,1,False,,Administrador
+2026-04-21 12:35:31,000172,Charlotte Caron,PJP,PJP,1,False,,Administrador
+2026-04-21 12:35:34,000172,Charlotte Caron,PJP,PJP,1,False,,Administrador
+2026-04-21 12:35:45,000172,Charlotte Caron,PJRN,PJRN,1,False,,Administrador
+2026-04-21 12:35:47,000172,Charlotte Caron,PJRN,PJRN,1,False,,Administrador

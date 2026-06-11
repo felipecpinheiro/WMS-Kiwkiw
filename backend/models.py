@@ -68,14 +68,19 @@ class Unit(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)               # Ex: "Unidade 1 - SP"
-    location = Column(String(200))                           # Endereço
+    code = Column(String(20), nullable=True)                 # Código curto, ex: "UN1"
+    location = Column(String(200))                           # Endereço completo (legado)
+    city = Column(String(100), nullable=True)                # Cidade
+    state = Column(String(2), nullable=True)                 # UF (ex: SP, RJ)
     responsible = Column(String(100))                        # Responsável
+    phone = Column(String(30), nullable=True)                # Telefone
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
     # Relacionamentos
     users = relationship("User", back_populates="unit")
     picking_sessions = relationship("PickingSession", back_populates="unit")
+    sellers = relationship("Seller", back_populates="unit", foreign_keys="Seller.unit_id")
 
 
 class User(Base):
@@ -151,11 +156,22 @@ class Seller(Base):
     contact_phone = Column(String(50), nullable=True)
     contact_email = Column(String(150), nullable=True)   # adicionado via migrate_sellers_v2
     code = Column(String(50), nullable=True)             # código / trade name curto
+    # Outros apelidos/strings do seller usados para match automático na importação.
+    # Formato: strings separadas por ponto-e-vírgula, ex: "MERU SERVICOS EMPRESARIAIS;EDITORA LTDA"
+    other_aliases = Column(Text, nullable=True)
 
     # Propriedade auxiliar: Pydantic from_attributes procura `is_active` no modelo
     @property
     def is_active(self):
         return self.active
+
+    @property
+    def unit_display_name(self) -> str | None:
+        """Nome da unidade via FK — exposto ao Pydantic como campo virtual."""
+        try:
+            return self.unit.name if self.unit else None
+        except Exception:
+            return None
 
     # Relacionamentos
     users = relationship("User", back_populates="seller")
@@ -165,6 +181,7 @@ class Seller(Base):
     billing_configs = relationship("BillingConfig", back_populates="seller")
     stock_movements = relationship("StockMovement", back_populates="seller")
     picking_sessions = relationship("PickingSession", back_populates="seller")
+    unit = relationship("Unit", back_populates="sellers", foreign_keys=[unit_id])
 
 
 class Product(Base):
@@ -179,6 +196,7 @@ class Product(Base):
     barcode_kiwkiw = Column(String(50), nullable=True)     # Cód barras interno Kiwkiw
     unit_value = Column(Float, default=0.0)                # Valor unitário
     box_type = Column(String(50), nullable=True)           # Caixa padrão usada
+    score    = Column(Integer, default=0, nullable=False)     # Score para algoritmo de caixa
     photo_url = Column(String(300), nullable=True)         # Foto do produto (para bipagem visual)
     is_input = Column(Boolean, default=False)              # É insumo (embalagem)
     active = Column(Boolean, default=True)
@@ -259,7 +277,8 @@ class Order(Base):
     order_date = Column(Date, nullable=False)               # data
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)
-    carrier = Column(String(100), nullable=True)            # transportadora
+    carrier  = Column(String(100), nullable=True)           # transportadora
+    box_used = Column(String(50), nullable=True)              # Caixa utilizada (calculada ou ajustada pelo operador)
     status = Column(Enum(OrderStatus), default=OrderStatus.PENDING)
     expedition_date = Column(Date, nullable=True)           # data expedicao
     nature = Column(String(200), nullable=True)             # natureza da operação

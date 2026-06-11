@@ -16,7 +16,10 @@ from ..database import get_db
 from ..auth import get_current_user, require_admin, require_manager_or_above
 from .. import models, schemas
 from ..services.order_import import import_excel_orders
-from ..services.pdf_generator import generate_separation_report, generate_expedition_report
+from ..services.pdf_generator import (
+    generate_separation_report, generate_expedition_report,
+    generate_pdfs_for_session,
+)
 from ..services.audit_export import export_session_to_csv, organize_pdfs_by_session
 
 router = APIRouter(prefix="/orders", tags=["Pedidos"])
@@ -55,8 +58,9 @@ async def import_orders(
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    # Salva arquivo temporário
-    file_path = os.path.join(UPLOAD_DIR, f"{date.today().strftime('%Y%m%d')}_{file.filename}")
+    # Salva arquivo temporário — sanitizar nome para evitar path traversal
+    safe_name = os.path.basename(file.filename or "upload.xlsx").replace("..", "")
+    file_path = os.path.join(UPLOAD_DIR, f"{date.today().strftime('%Y%m%d')}_{safe_name}")
     async with aiofiles.open(file_path, "wb") as f:
         content = await file.read()
         await f.write(content)
@@ -77,7 +81,6 @@ async def import_orders(
         return result
 
     # Gera PDFs + CSV de auditoria automaticamente se importação bem-sucedida.
-    # Estrutura final em data/exports/<unidade>/<seller>/<data>/
     if result.success and result.session_id:
         session = db.query(models.PickingSession).options(
             joinedload(models.PickingSession.unit)
@@ -85,24 +88,41 @@ async def import_orders(
         if session:
             try:
                 os.makedirs(EXPORT_DIR, exist_ok=True)
-                # Gera PDFs em pasta temporária "flat" (nome padrão do gerador)
-                sep_tmp = generate_separation_report(session, db, EXPORT_DIR)
-                exp_tmp = generate_expedition_report(session, db, EXPORT_DIR)
-                # Move PDFs para <unidade>/ALL_SELLERS/<data>/
-                sep_path, exp_path = organize_pdfs_by_session(
-                    session, db, EXPORT_DIR, sep_tmp, exp_tmp
-                )
-                session.separation_pdf = sep_path
-                session.expedition_pdf = exp_path
+
+                # ── Lê pasta base configurada ──────────────────────────────────
+                def _setting(key: str) -> str:
+                    obj = db.query(models.AppSetting).filter(
+                        models.AppSetting.key == key
+                    ).first()
+                    return (obj.value or "").strip() if obj else ""
+
+                base_folder_cfg = _setting("pdf_base_folder")
+
+                # Se não configurado, usa EXPORT_DIR como base
+                base_folder = base_folder_cfg if base_folder_cfg else EXPORT_DIR
+                try:
+                    os.makedirs(base_folder, exist_ok=True)
+                except OSError:
+                    base_folder = EXPORT_DIR
+
+                # ── Gera PDFs (1 par por unidade se sellers de múltiplas unidades) ──
+                pdf_pairs = generate_pdfs_for_session(session, db, base_folder)
+
+                # Armazena o primeiro par na sessão (referência para o cockpit)
+                if pdf_pairs:
+                    session.separation_pdf = pdf_pairs[0][0]
+                    session.expedition_pdf = pdf_pairs[0][1]
                 session.check_separation = True
                 session.check_planning = True
 
-                # CSV por seller em <unidade>/<seller>/<data>/
-                csv_paths = export_session_to_csv(session, db, EXPORT_DIR)
+                # CSV por seller em <base>/<unidade>/<seller>/<data>/
+                csv_paths = export_session_to_csv(session, db, base_folder)
                 db.commit()
 
+                n_pdfs = len(pdf_pairs)
                 result.warnings.append(
-                    f"PDFs + {len(csv_paths)} CSV(s) de auditoria gerados em {os.path.relpath(os.path.dirname(sep_path or ''), BASE_DIR) if sep_path else 'data/exports'}"
+                    f"PDFs gerados: {n_pdfs} par(es) por unidade "
+                    f"| {len(csv_paths)} CSV(s) de auditoria"
                 )
             except Exception as e:
                 db.rollback()
@@ -269,13 +289,16 @@ def update_order_carrier(
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
-    """Atualiza a transportadora de um pedido (usado no Dashboard quando falta transportadora)."""
+    """Atualiza transportadora de um pedido."""
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Pedido nao encontrado")
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
     carrier = data.get("carrier", "").strip()
-    if not carrier:
-        raise HTTPException(status_code=400, detail="Transportadora nao pode ser vazia")
-    order.carrier = carrier
+    order.carrier = carrier or None
+    db.add(models.AuditLog(
+        entity_type="Order", entity_id=order_id, action="UPDATE_CARRIER",
+        user_id=current_user.id,
+        detail=f"Transportadora: {carrier or 'removida'}",
+    ))
     db.commit()
-    return {"success": True, "order_id": order_id, "carrier": carrier}
+    return {"message": "Transportadora atualizada", "carrier": order.carrier}

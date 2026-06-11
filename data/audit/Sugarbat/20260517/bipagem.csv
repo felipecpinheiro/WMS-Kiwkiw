@@ -1,0 +1,4 @@
+timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
+2026-05-17 17:17:51,000232,Mariana Gusmão,ADE-BLOOM,123,1,False,,op2
+2026-05-17 17:18:05,000232,Mariana Gusmão,SKE-MOR,SKE-MOR,1,False,,op2
+2026-05-17 17:18:11,000232,Mariana Gusmão,CART-KIT,CART-KIT,1,False,,op2

@@ -159,10 +159,12 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Dev hint */}
-        <p className="text-center text-xs mt-4" style={{ color: 'rgba(255,255,255,0.18)' }}>
-          Admin padrão: admin@kiwkiw.com.br / kiwkiw2024
-        </p>
+        {/* Dev hint — remover em produção */}
+        {import.meta.env.DEV && (
+          <p className="text-center text-xs mt-4" style={{ color: 'rgba(255,255,255,0.18)' }}>
+            Dev: admin@kiwkiw.com.br / kiwkiw2024
+          </p>
+        )}
       </div>
     </div>
   );

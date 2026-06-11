@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Settings, FolderOpen, Bot, Play, Square, RefreshCw,
   CheckCircle2, XCircle, Clock, FileSpreadsheet, AlertTriangle,
-  ToggleLeft, ToggleRight, Save, ShieldCheck,
+  ToggleLeft, ToggleRight, Save, ShieldCheck, FileText,
 } from 'lucide-react';
 
 const inputCls = "w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white/80 placeholder-white/25";
@@ -121,7 +121,7 @@ function WatcherPanel() {
                 </tr>
               </thead>
               <tbody>
-                {[...status.last_files].reverse().map((f, i) => (
+                {[...status.last_files].reverse().map((f: any, i: number) => (
                   <>
                     <tr key={`row-${i}`} className={`border-b transition ${
                       f.success ? 'border-white/5 hover:bg-white/2' : 'border-red-900/30 bg-red-950/10'
@@ -371,6 +371,33 @@ export default function SettingsPage() {
             <option value="Saida">Saida</option>
             <option value="Entrada">Entrada</option>
           </select>
+        </FieldRow>
+      </SectionCard>
+
+      {/* ── Pasta Base dos PDFs ─────────────────────────────────────── */}
+      <SectionCard title="Destino dos PDFs Gerados" icon={<FileText size={16} />}>
+        <p className="text-xs text-white/35 mb-4 leading-relaxed">
+          Defina a pasta raiz onde os PDFs serão salvos. A estrutura de subpastas é criada automaticamente:
+          <span className="font-mono text-violet-400/70"> Pasta Base / Unidade / mês-AAAA / dia / arquivo.pdf</span>
+          <br />
+          Se houver sellers de unidades diferentes no mesmo upload, serão gerados PDFs separados por unidade.
+          Se deixado em branco, usa a pasta padrão <span className="font-mono">data/exports</span>.
+        </p>
+
+        <FieldRow
+          label="Pasta Base dos PDFs"
+          description="Caminho raiz. Subpastas por Unidade/mês/dia são criadas automaticamente."
+        >
+          <input
+            value={form['pdf_base_folder'] ?? ''}
+            onChange={e => set('pdf_base_folder', e.target.value)}
+            placeholder="Ex: C:\WMS\pdfs"
+            className={inputCls}
+            style={inputStyle}
+          />
+          <p className="text-[10px] text-white/25 mt-1">
+            Resultado: <span className="font-mono">Pasta Base\Unidade 1\05-2026\24\SEPARACAO_20260524_YUGEN_42.pdf</span>
+          </p>
         </FieldRow>
       </SectionCard>
 

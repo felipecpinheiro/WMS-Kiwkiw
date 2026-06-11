@@ -33,21 +33,20 @@ from backend.auth import hash_password
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Executa na inicialização e encerramento da API."""
-    # Inicializa banco de dados
     init_db()
-    # Migração leve: adiciona colunas novas em bancos pré-existentes.
     run_light_migrations()
-    # Cria usuário admin padrão se não existir
     create_default_admin()
     yield
-    # Cleanup ao encerrar (se necessário)
 
 
 def run_light_migrations():
+    """
+    Migração compatível com SQLite (dev) e PostgreSQL (produção).
+    Idempotente — roda toda vez e só aplica o que falta.
+    """
     from sqlalchemy import text
     db = SessionLocal()
     try:
-        # Detecta se está usando PostgreSQL ou SQLite
         db_url = os.environ.get("DATABASE_URL", "")
         is_postgres = db_url.startswith("postgres")
 
@@ -122,7 +121,6 @@ def create_default_admin():
     db = SessionLocal()
     try:
         if db.query(models.User).count() == 0:
-            # Cria unidade padrão
             unit = models.Unit(
                 name="Unidade 1",
                 location="São Paulo, SP",
@@ -131,7 +129,6 @@ def create_default_admin():
             db.add(unit)
             db.flush()
 
-            # Cria usuário admin
             admin = models.User(
                 name="Administrador",
                 email="admin@kiwkiw.com.br",
@@ -177,8 +174,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — lê origens permitidas da variável de ambiente ALLOWED_ORIGINS
-# Ex: ALLOWED_ORIGINS=https://wms.kiwkiw.com.br,https://wms-kiwkiw.vercel.app
+# CORS
 _origins_env = os.environ.get("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",")] if _origins_env != "*" else ["*"]
 
@@ -190,7 +186,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Arquivos estáticos (fotos de produtos, PDFs gerados)
+# Arquivos estáticos
 MEDIA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
@@ -263,8 +259,3 @@ def root():
 @app.get("/health", tags=["Health"])
 def health():
     return {"status": "healthy"}
-
-
-# ============================================================
-# INICIALIZAÇÃO DIRETA
-# =======================================

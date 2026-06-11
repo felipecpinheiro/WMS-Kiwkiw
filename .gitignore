@@ -9,10 +9,9 @@ __pycache__/
 *.pyd
 .Python
 # teste
-# Banco de dados
-*.db
-*.sqlite3
-data/wms_kiwkiw.db
+
+node_modules/
+dist/
 
 # Variáveis de ambiente
 .env
@@ -38,12 +37,5 @@ Thumbs.db
 .idea/ 
 
 # Arquivos de dados da raiz
-*.xlsx
-*.xlsm
-*.pdf
-*.jpg
-*.png
-*.jpeg
-*.docx
 importador.xlsm
 Scan Manuseio.xlsm

@@ -39,3 +39,9 @@ Thumbs.db
 # Arquivos de dados da raiz
 importador.xlsm
 Scan Manuseio.xlsm
+
+# Contexto interno de desenvolvimento
+CLAUDE.md
+
+# Arquivos gerados pelo sistema
+data/

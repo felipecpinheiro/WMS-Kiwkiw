@@ -1195,6 +1195,31 @@ def delete_user(
     return {"message": f"Usuário {user.name} inativado com sucesso"}
 
 
+@router.post("/users/{user_id}/reactivate")
+def reactivate_user(
+    user_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Reativa um usuário inativo."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    user.active = True
+
+    db.add(models.AuditLog(
+        entity_type="User",
+        entity_id=user_id,
+        action="REACTIVATE",
+        detail=f"Usuário reativado: {user.name} | email={user.email}",
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+    return {"message": f"Usuário {user.name} reativado com sucesso"}
+
+
 # ============================================================
 # EXPERIENCE FILE — upload e servir roteiro de unboxing do seller
 # ============================================================

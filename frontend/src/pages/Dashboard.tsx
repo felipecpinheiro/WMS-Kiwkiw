@@ -3,7 +3,7 @@
  * Cockpit gerencial com visão geral do dia: pedidos, unidades, sellers, checagens e auditoria.
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -223,9 +223,26 @@ export default function DashboardPage() {
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { unit_id: null };
 
+  // Preferência de unidade ativa — salva por usuário no localStorage
+  const unitPrefKey = `wms_active_unit_${user.id ?? 'anon'}`;
+  const [activeUnitId, setActiveUnitId] = useState<number | undefined>(() => {
+    const saved = localStorage.getItem(unitPrefKey);
+    return saved ? Number(saved) : (user.unit_id ?? undefined);
+  });
+
+  const handleUnitChange = (uid: number | undefined) => {
+    setActiveUnitId(uid);
+    if (uid) localStorage.setItem(unitPrefKey, String(uid));
+    else localStorage.removeItem(unitPrefKey);
+  };
+
+  const { data: units = [] } = useQuery('units', () =>
+    import('../api').then(m => m.cadastrosApi.units().then(r => r.data))
+  );
+
   const { data, isLoading, refetch } = useQuery(
-    ['dashboard', targetDate],
-    () => dashboardApi.master({ target_date: targetDate, unit_id: (user.role === 'admin' ? undefined : user.unit_id || undefined) }).then(r => r.data),
+    ['dashboard', targetDate, activeUnitId],
+    () => dashboardApi.master({ target_date: targetDate, unit_id: activeUnitId }).then(r => r.data),
     { refetchInterval: 60000 }, // atualiza a cada 1 minuto
   );
 
@@ -395,6 +412,23 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Seletor de unidade — admin e manager */}
+          {(user.role === 'admin' || user.role === 'manager') && (units as any[]).length > 1 && (
+            <div className="flex items-center gap-1.5 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg">
+              <span className="text-xs text-white/40">Unidade:</span>
+              <select
+                value={activeUnitId ?? ''}
+                onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
+                className="bg-transparent text-sm text-white/80 outline-none"
+              >
+                {user.role === 'admin' && <option value="">Todas</option>}
+                {(units as any[]).map((u: any) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Seletor de data */}
           <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg">
             <input

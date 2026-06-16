@@ -72,43 +72,84 @@ function SellerMultiSelect({
   sellers,
   selected,
   onChange,
+  unitId,
 }: {
   sellers: any[];
   selected: number[];
   onChange: (ids: number[]) => void;
+  unitId: number | '';
 }) {
+  // Mostra apenas os sellers da unidade selecionada (ou todos se sem unidade)
+  const visible = unitId
+    ? sellers.filter((s: any) => s.unit_id === unitId)
+    : sellers;
+
+  const visibleIds = visible.map((s: any) => s.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every(id => selected.includes(id));
+
+  const toggleAll = () => {
+    if (allVisibleSelected) {
+      // Desmarca os visíveis, mantém selecionados de outras unidades
+      onChange(selected.filter(id => !visibleIds.includes(id)));
+    } else {
+      const toAdd = visibleIds.filter(id => !selected.includes(id));
+      onChange([...selected, ...toAdd]);
+    }
+  };
+
   const toggle = (id: number) => {
     onChange(selected.includes(id) ? selected.filter(s => s !== id) : [...selected, id]);
   };
 
   return (
-    <div className="border border-white/12 rounded-lg overflow-hidden max-h-44 overflow-y-auto">
-      {sellers.length === 0 && (
-        <p className="text-xs text-white/35 p-3">Nenhum seller cadastrado</p>
-      )}
-      {sellers.map((s: any) => {
-        const checked = selected.includes(s.id);
-        return (
-          <label
-            key={s.id}
-            className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition select-none
-              ${checked ? 'bg-violet-900/30' : 'hover:bg-white/4'}`}
+    <div className="border border-white/12 rounded-lg overflow-hidden">
+      {/* Botão selecionar/desmarcar todos da unidade */}
+      {visible.length > 0 && (
+        <button
+          type="button"
+          onClick={toggleAll}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-violet-400 hover:bg-white/4 border-b border-white/8 transition"
+        >
+          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
+            ${allVisibleSelected ? 'bg-violet-500 border-violet-500' : 'border-white/25 bg-transparent'}`}
           >
-            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
-              ${checked ? 'bg-violet-500 border-violet-500' : 'border-white/25 bg-transparent'}`}
+            {allVisibleSelected && <Check size={10} className="text-white" />}
+          </div>
+          {allVisibleSelected ? 'Desmarcar todos desta unidade' : 'Selecionar todos desta unidade'}
+        </button>
+      )}
+
+      <div className="max-h-44 overflow-y-auto">
+        {visible.length === 0 && (
+          <p className="text-xs text-white/35 p-3">
+            {unitId ? 'Nenhum seller nesta unidade' : 'Nenhum seller cadastrado'}
+          </p>
+        )}
+        {visible.map((s: any) => {
+          const checked = selected.includes(s.id);
+          return (
+            <label
+              key={s.id}
+              className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition select-none
+                ${checked ? 'bg-violet-900/30' : 'hover:bg-white/4'}`}
             >
-              {checked && <Check size={10} className="text-white" />}
-            </div>
-            <span className="text-sm text-white/80">{s.trade_name || s.name}</span>
-            <input
-              type="checkbox"
-              className="hidden"
-              checked={checked}
-              onChange={() => toggle(s.id)}
-            />
-          </label>
-        );
-      })}
+              <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
+                ${checked ? 'bg-violet-500 border-violet-500' : 'border-white/25 bg-transparent'}`}
+              >
+                {checked && <Check size={10} className="text-white" />}
+              </div>
+              <span className="text-sm text-white/80">{s.trade_name || s.name}</span>
+              <input
+                type="checkbox"
+                className="hidden"
+                checked={checked}
+                onChange={() => toggle(s.id)}
+              />
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -447,6 +488,7 @@ export default function UsersPage() {
                     sellers={sellers}
                     selected={form.seller_ids}
                     onChange={ids => f('seller_ids', ids)}
+                    unitId={form.unit_id}
                   />
                   {form.seller_ids.length === 0 && (
                     <p className="text-xs text-amber-400/70 mt-1 ml-1">

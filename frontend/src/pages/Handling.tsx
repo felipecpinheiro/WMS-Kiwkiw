@@ -361,12 +361,30 @@ export default function HandlingPage() {
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : null;
   const isAdmin = user?.role === 'admin';
+  const isManager = user?.role === 'manager';
 
   // Use local date to avoid UTC timezone shift (toISOString gives UTC, not local)
   const today = format(new Date(), 'yyyy-MM-dd');
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo]     = useState(today);
   const [sellerFilter, setSellerFilter] = useState('');
+
+  // Preferência de unidade ativa — compartilhada com o Dashboard via localStorage
+  const unitPrefKey = `wms_active_unit_${user?.id ?? 'anon'}`;
+  const [activeUnitId, setActiveUnitId] = useState<number | undefined>(() => {
+    const saved = localStorage.getItem(unitPrefKey);
+    return saved ? Number(saved) : (user?.unit_id ?? undefined);
+  });
+
+  const handleUnitChange = (uid: number | undefined) => {
+    setActiveUnitId(uid);
+    if (uid) localStorage.setItem(unitPrefKey, String(uid));
+    else localStorage.removeItem(unitPrefKey);
+  };
+
+  const { data: units = [] } = useQuery('units', () =>
+    import('../api').then(m => m.cadastrosApi.units().then(r => r.data))
+  );
 
   // ── Admin: context menu + confirm modal ────────────────────────────────────
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
@@ -376,8 +394,8 @@ export default function HandlingPage() {
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
   const { data: serverCards = [], isLoading, refetch } = useQuery(
-    ['session-cards', dateFrom, dateTo],
-    () => scanningApi.sessionCards({ date_from: dateFrom, date_to: dateTo }).then(r => r.data),
+    ['session-cards', dateFrom, dateTo, activeUnitId],
+    () => scanningApi.sessionCards({ date_from: dateFrom, date_to: dateTo, unit_id: activeUnitId }).then(r => r.data),
     { refetchInterval: 30000 }
   );
   // localCards permite atualizações optimistas (cancelar remove imediatamente, force-complete atualiza status)
@@ -492,6 +510,20 @@ export default function HandlingPage() {
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             className={inputCls} style={inputStyle} />
         </div>
+
+        {/* Seletor de unidade — admin e manager */}
+        {(isAdmin || isManager) && (units as any[]).length > 1 && (
+          <select
+            value={activeUnitId ?? ''}
+            onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
+            className={inputCls} style={inputStyle}
+          >
+            {isAdmin && <option value="">Todas as unidades</option>}
+            {(units as any[]).map((u: any) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+        )}
 
         {isAdmin && allSellers.length > 1 && (
           <select value={sellerFilter} onChange={e => setSellerFilter(e.target.value)}

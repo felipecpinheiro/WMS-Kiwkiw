@@ -1,4 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-04-26 11:58:02,000230,Eduardo Soares,PJG,6976238261589,1,False,,Administrador
-2026-04-26 11:58:05,000230,Eduardo Soares,PJG,6976238261589,1,False,,Administrador
-2026-04-26 12:20:03,000231,Lucas m manso,PJG,6976238261589,1,False,,Administrador

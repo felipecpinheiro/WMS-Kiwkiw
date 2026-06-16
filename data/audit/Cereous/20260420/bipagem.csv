@@ -1,4 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-04-20 19:28:49,000572,Beatriz Amaral Prilip,2000202,2000202,1,False,,Administrador
-2026-04-20 19:28:56,000572,Beatriz Amaral Prilip,2000201,2000201,1,False,,Administrador
-2026-04-20 19:29:04,000572,Beatriz Amaral Prilip,2000200,2000200,1,False,,Administrador

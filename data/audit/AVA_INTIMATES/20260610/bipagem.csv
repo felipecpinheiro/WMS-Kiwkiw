@@ -1,4 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-06-10 22:19:21,18,CAROLINA ALMEIDA,26I3004FA009P,1000010202,1,False,,Administrador
-2026-06-10 22:19:29,18,CAROLINA ALMEIDA,26I3201RA006P,1000010521,1,False,,Administrador
-2026-06-10 22:19:38,18,CAROLINA ALMEIDA,NECBRINDEP011U,1000008391,1,False,,Administrador

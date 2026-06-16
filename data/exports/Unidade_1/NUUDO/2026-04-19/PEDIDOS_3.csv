@@ -1,7 +1,0 @@
-sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NCASAPI01B;Case Aparador Brinde;1;False;;pending;2026-04-19T23:34:21.436452
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NAPICBC01;Aparador;1;False;;pending;2026-04-19T23:34:21.436452
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NDEOINT60;Desodorante Íntimo NUUDO;1;False;;pending;2026-04-19T23:34:21.436452
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NBALREP30;Balm Reparador NUUDO;1;False;;pending;2026-04-19T23:34:21.436452
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NASPP1400;Aspirador de Pelos NUUDO;1;False;;pending;2026-04-19T23:34:21.436452
-3;Unidade 1;NUUDO;2026-04-19;778;n.a;Mauro De paula;2026-04-17;;JADLOG LOGISTICA S.A;Venda de mercadoria;35260455718180998061482726739597170829164544;NLCSAPI01;Lâmina de Cerâmica Substituível;1;False;;pending;2026-04-19T23:34:21.436452

@@ -17,6 +17,7 @@ dist/
 .env
 .env.production
 .env.local
+.venv
 
 # Frontend
 frontend/node_modules/

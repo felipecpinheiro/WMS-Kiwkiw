@@ -1,7 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-06-09 20:25:30,040571,Manuela Torrente,20260420,20260420,1,False,,Administrador
-2026-06-09 20:25:41,040571,Manuela Torrente,202604026,123456,1,False,,Administrador
-2026-06-09 20:26:04,040573,Evelyn Teixeira,69696969696901,69696969696901,1,False,,Administrador
-2026-06-09 20:26:28,040572,Gika Corbane,0000000001,0000000001,1,False,,Administrador
-2026-06-09 20:26:37,040572,Gika Corbane,202604005,202604005,1,False,,Administrador
-2026-06-09 20:26:45,040572,Gika Corbane,202604004,202604004,1,False,,Administrador

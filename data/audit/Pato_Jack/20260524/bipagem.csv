@@ -1,8 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-05-24 15:32:02,000589,Marcela Antunes,C1C,C1C,1,False,,Administrador
-2026-05-24 15:37:18,000582,Mariana O'Donnell,C1C,C1C,1,False,,Administrador
-2026-05-24 15:37:38,000582,Mariana O'Donnell,PJG,6976238261589,1,False,,Administrador
-2026-05-24 15:46:31,000588,Tabata Kadur de Souza,C1C,C1C,1,False,,Administrador
-2026-05-24 15:46:40,000588,Tabata Kadur de Souza,PJM,6976238261572,1,False,,Administrador
-2026-05-24 15:48:53,000584,Tairine Ristow de Marco,C1C,C1C,1,False,,Administrador
-2026-05-24 15:49:02,000584,Tairine Ristow de Marco,PJG,6976238261589,1,False,,Administrador

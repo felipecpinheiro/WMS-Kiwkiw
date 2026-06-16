@@ -1,4 +1,0 @@
-sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
-29;Unidade 1;NOWDAYS;2026-05-24;2849;n.a;Laura Lorenz Ferreira;2026-05-22;;jadlog;Venda de mercadoria a nao contribuinte;35260549153355000100550010000028491785082760;PBECK;PORTA-BECK;1;False;;pending;2026-05-24T16:24:02.711066
-29;Unidade 1;NOWDAYS;2026-05-24;2850;n.a;Felipe Castanho;2026-05-22;;jadlog;Venda de mercadoria a nao contribuinte;35260549153355000100550010000028501785092375;GREENHAT;Bone Verde;1;False;;pending;2026-05-24T16:24:02.711066
-29;Unidade 1;NOWDAYS;2026-05-24;2851;n.a;Juliana Amadio;2026-05-22;;jadlog;Venda de mercadoria a nao contribuinte;35260549153355000100550010000028511785099997;CORSET P;SALE CORSET NOWDAYS X WORKING TITLE Tamanho:P;1;False;;pending;2026-05-24T16:24:02.711066

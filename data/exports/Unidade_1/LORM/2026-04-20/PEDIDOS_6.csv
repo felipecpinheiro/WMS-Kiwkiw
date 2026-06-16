@@ -1,4 +1,0 @@
-sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
-6;Unidade 1;LORM;2026-04-20;025515;882388178;Marisa Cristina;2026-04-14;2026-04-15;Correios;Venda de mercadorias;35260440981033000184550020000255151823881785;618341419278;CONDICIONADOR LORM 250ml;2;False;;pending;2026-04-20T09:40:45.100401
-6;Unidade 1;LORM;2026-04-20;025515;882388178;Marisa Cristina;2026-04-14;2026-04-15;Correios;Venda de mercadorias;35260440981033000184550020000255151823881785;618341419292;MÁSCARA HIDRATAÇÃO LORM;2;False;;pending;2026-04-20T09:40:45.100401
-6;Unidade 1;LORM;2026-04-20;025515;882388178;Marisa Cristina;2026-04-14;2026-04-15;Correios;Venda de mercadorias;35260440981033000184550020000255151823881785;618341419261;SHAMPOO LORM 250ml;2;False;;pending;2026-04-20T09:40:45.100401

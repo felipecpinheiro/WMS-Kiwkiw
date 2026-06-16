@@ -1,3 +1,0 @@
-timestamp,nf_number,customer_name,sku,barcode_scanned,quantity,is_error,error_message,operator
-2026-04-21 12:32:32,025536,Hadassa  Schnorr,bodysplash,bodysplash,1,False,,Administrador
-2026-04-21 14:05:20,025552,Angela  Ghizzi,bodysplash,bodysplash,1,False,,Administrador

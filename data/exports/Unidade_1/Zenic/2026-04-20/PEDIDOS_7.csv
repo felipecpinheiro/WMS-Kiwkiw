@@ -1,2 +1,0 @@
-sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
-7;Unidade 1;Zenic;2026-04-20;000066;927420430;Luana Junges;2026-04-15;2026-04-20;Correios;Venda de produção própria para consumidor final;35260461472869000123550010000000661274204308;ZEN-CRE-300G-PURA;Creatina monohidratada 100 pura zenic - 300g;1;False;;pending;2026-04-20T09:47:54.345156

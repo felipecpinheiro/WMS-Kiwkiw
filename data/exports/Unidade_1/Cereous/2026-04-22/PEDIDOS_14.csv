@@ -1,3 +1,0 @@
-sessao_id;unidade;seller;data_sessao;nf_number;erp_code;cliente;data_nota;data_expedicao;transportadora;natureza;chave_danfe;sku;produto;quantidade;is_kit_component;kit_original_sku;status;importado_em
-14;Unidade 1;Cereous;2026-04-22;000574;928646221;Anna Luisa Azevedo;2026-04-21;2026-04-22;Jadlog;Venda de mercadorias de terceiros para consumidor final;35260457925731000165550010000005741286462212;1000200;CEREOUS CRUNCH CINNAMOM ROLL 200G;1;False;;pending;2026-04-22T21:28:27.886072
-14;Unidade 1;Cereous;2026-04-22;000573;928621899;Bruna Meyer Mari;2026-04-21;2026-04-22;Motoboy KiwKiw;Venda de mercadorias de terceiros para consumidor final;35260457925731000165550010000005731286218993;1000202;CEREOUS PUFF COOKIES AND CREAM 200G;4;False;;pending;2026-04-22T21:28:27.886072

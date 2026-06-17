@@ -9,6 +9,8 @@ from datetime import date, datetime
 from typing import List, Dict, Optional
 from collections import defaultdict
 
+from ..timezone_utils import now_brasilia
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm, mm
@@ -172,7 +174,7 @@ def generate_expedition_report(
         f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
         f"Total Pedidos: <b>{len(orders)}</b>  ·  "
         f"Total Volumes: <b>{total_vol}</b>  ·  "
-        f"Gerado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Gerado: {now_brasilia().strftime('%d/%m/%Y %H:%M')}",
         s_sub))
     story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=6))
 
@@ -337,7 +339,7 @@ def generate_separation_report(
         f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
         f"Total Pedidos: <b>{total_orders}</b>  ·  "
         f"Total Produtos: <b>{total_volumes}</b>  ·  "
-        f"Gerado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Gerado: {now_brasilia().strftime('%d/%m/%Y %H:%M')}",
         s_sub))
     story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=10))
     story.append(Paragraph("Resumo por Seller",

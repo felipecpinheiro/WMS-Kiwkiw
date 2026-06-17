@@ -3,7 +3,7 @@ WMS Kiwkiw - Schemas Pydantic
 Define os contratos de entrada/saída da API (validação e serialização).
 """
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, computed_field
 from typing import Optional, List, Any
 from datetime import date, datetime
 from enum import Enum
@@ -238,14 +238,24 @@ class SellerResponse(BaseModel):
     code: Optional[str] = None
     # Outros apelidos para match automático na importação (separados por ";")
     other_aliases: Optional[str] = None
-    # `is_active` exposto ao frontend; mapeado manualmente a partir do campo `active` do modelo
-    is_active: Optional[bool] = True
     # Estatísticas de SKU (enriquecidas pelo list_sellers)
     total_skus: Optional[int] = 0
     skus_with_stock: Optional[int] = 0
 
     class Config:
         from_attributes = True
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_active(self) -> bool:
+        """
+        Alias de `active` exposto ao frontend.
+        Antes era `is_active: Optional[bool] = True` — campo solto que sempre
+        retornava True porque o ORM não possui o atributo `is_active`. Resultado:
+        botões Inativar/Excluir de seller pareciam não funcionar (status nunca
+        mudava na tela). @computed_field garante que reflete o valor real de `active`.
+        """
+        return self.active
 
 
 # ============================================================

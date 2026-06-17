@@ -17,6 +17,7 @@ import {
 import { inventoryApi, cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+import { todayBrasiliaStr } from '../timezone';
 
 const LEVEL_CONFIG: Record<string, { label: string; color: string }> = {
   ALTO:  { label: 'Alto',  color: 'bg-violet-900/40 text-violet-300' },
@@ -329,7 +330,7 @@ function ManualMovementModal({
 }) {
   const { register, handleSubmit, watch, formState: { isSubmitting } } = useForm<MovementForm>({
     defaultValues: {
-      movement_date: format(new Date(), 'yyyy-MM-dd'),
+      movement_date: todayBrasiliaStr(),
       movement_type: 'Entrada',
       quantity: 1,
       nf_number: '',
@@ -738,8 +739,8 @@ function PasteMovementsModal({
   onClose,
   onSuccess,
 }: { sellerId: number; onClose: () => void; onSuccess: () => void }) {
-  const today = format(new Date(), 'dd/MM/yyyy');        // Formato visual DD/MM/AAAA
-  const todayIso = format(new Date(), 'yyyy-MM-dd');     // ISO para envio ao backend
+  const todayIso = todayBrasiliaStr();
+  const today = todayIso.split('-').reverse().join('/');  // DD/MM/YYYY para exibição
 
   /**
    * Converte DD/MM/AAAA → AAAA-MM-DD para envio ao backend.
@@ -1027,7 +1028,7 @@ function BulkCsvImportModal({
   onClose,
   onSuccess,
 }: { sellerId: number; onClose: () => void; onSuccess: () => void }) {
-  const today = format(new Date(), 'dd/MM/yyyy');
+  const today = todayBrasiliaStr().split('-').reverse().join('/');
 
   /** Converte DD/MM/AAAA → AAAA-MM-DD */
   const toIso = (s: string): string => {
@@ -1576,8 +1577,8 @@ export default function InventoryPage() {
   const isAdmin = user?.role === 'admin';
   const [editMovement, setEditMovement] = useState<any | null>(null);
 
-  // Datas para filtro de movimentações (últimos 30 dias por padrão)
-  const today = format(new Date(), 'yyyy-MM-dd');
+  // Datas para filtro de movimentações (últimos 30 dias por padrão, em Brasília)
+  const today = todayBrasiliaStr();
   const thirtyDaysAgo = format(new Date(Date.now() - 30 * 86400000), 'yyyy-MM-dd');
   const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
   const [dateTo, setDateTo] = useState(today);

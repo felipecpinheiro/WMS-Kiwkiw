@@ -1195,7 +1195,7 @@ def delete_user(
     return {"message": f"Usuário {user.name} inativado com sucesso"}
 
 
-@router.post("/users/{user_id}/reactivate")
+@router.post("/users/{user_id}/reactivate", response_model=schemas.UserResponse)
 def reactivate_user(
     user_id: int,
     current_user: models.User = Depends(require_admin),
@@ -1205,6 +1205,8 @@ def reactivate_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if user.active:
+        raise HTTPException(status_code=400, detail="Usuário já está ativo")
 
     user.active = True
 
@@ -1217,7 +1219,8 @@ def reactivate_user(
     ))
 
     db.commit()
-    return {"message": f"Usuário {user.name} reativado com sucesso"}
+    db.refresh(user)
+    return _user_to_response(user)
 
 
 # ============================================================

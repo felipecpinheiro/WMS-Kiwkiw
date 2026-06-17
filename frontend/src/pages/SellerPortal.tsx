@@ -21,6 +21,7 @@ import { dashboardApi, inventoryApi } from '../api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
+import { todayBrasiliaStr } from '../timezone';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -179,7 +180,7 @@ export default function SellerPortalPage() {
   const user = userStr ? JSON.parse(userStr) : {};
   const sellerId = user.seller_id;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBrasiliaStr();
 
   const [tab, setTab] = useState<Tab>('orders');
   const [search, setSearch] = useState('');
@@ -456,7 +457,7 @@ export default function SellerPortalPage() {
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
                   className="border border-white/12 rounded-lg px-3 py-1.5 text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500">
                   <option value="">Todos os status</option>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+                  {Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
                 </select>
@@ -609,7 +610,7 @@ export default function SellerPortalPage() {
                 </select>
                 {sellerId && (
                   <button
-                    onClick={() => { inventoryApi.exportStockCsv(sellerId); toast.success('Export iniciado'); }}
+                    onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); }}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-white/12 text-white/60 hover:text-white hover:bg-white/5 hover:border-white/20"
                   >
                     <Download size={14} />

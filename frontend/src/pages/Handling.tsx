@@ -3,6 +3,7 @@ import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { scanningApi } from '../api';
 import { format } from 'date-fns';
+import { todayBrasiliaStr } from '../timezone';
 import type { SessionCard } from '../api';
 import {
   Package, Clock, CheckCircle2, PlayCircle, Circle,
@@ -363,10 +364,8 @@ export default function HandlingPage() {
   const isAdmin = user?.role === 'admin';
   const isManager = user?.role === 'manager';
 
-  // Use local date to avoid UTC timezone shift (toISOString gives UTC, not local)
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const [dateFrom, setDateFrom] = useState(today);
-  const [dateTo, setDateTo]     = useState(today);
+  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr);
+  const [dateTo, setDateTo]     = useState(todayBrasiliaStr);
   const [sellerFilter, setSellerFilter] = useState('');
 
   // Preferência de unidade ativa — compartilhada com o Dashboard via localStorage

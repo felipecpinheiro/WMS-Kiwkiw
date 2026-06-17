@@ -14,6 +14,7 @@ import re
 from sqlalchemy.orm import Session
 from .. import models, schemas
 from .kit_handler import process_order_items
+from ..timezone_utils import now_brasilia, today_brasilia
 
 
 # Mapeamento de naturezas de operação para tipo (Entrada/Saída)
@@ -594,7 +595,7 @@ async def import_excel_orders(
                     "erp_code": erp_code,
                     "nf_number": nf_number,
                     "customer_name": customer or "N/A",
-                    "order_date": order_date or date.today(),
+                    "order_date": order_date or today_brasilia(),
                     "seller_name": seller_name,
                     "carrier": carrier,
                     "expedition_date": expedition_date,
@@ -671,10 +672,7 @@ async def import_excel_orders(
         # Cria a sessão de picking para este lote de importação.
         # file_type e for_billing são configurações de NÍVEL DE ARQUIVO —
         # herdadas por todos os pedidos desta sessão.
-        # ATENÇÃO: usamos datetime.now() (horário local) explicitamente. Nunca
-        # dependa de func.now()/CURRENT_TIMESTAMP com SQLite, pois retorna UTC
-        # e causaria descasamento com date.today() do Python em timezones != UTC.
-        now_local = datetime.now()
+        now_local = now_brasilia()
         today = now_local.date()
         session_file_type = file_type if file_type is not None else models.FileType.EXPORT
         session = models.PickingSession(

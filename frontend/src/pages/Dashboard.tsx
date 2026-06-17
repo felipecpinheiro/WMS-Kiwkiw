@@ -19,6 +19,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
+import { todayBrasiliaStr } from '../timezone';
 
 // ─── Componentes auxiliares ─────────────────────────────────
 
@@ -200,10 +201,10 @@ function CarrierModal({ orders, onClose, onSave }: {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  // Data alvo do cockpit — default hoje, mas usuário pode escolher dias anteriores
-  const [targetDate, setTargetDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  // Data alvo do cockpit — default hoje (Brasília), mas usuário pode escolher dias anteriores
+  const [targetDate, setTargetDate] = useState(todayBrasiliaStr);
   const [uploading, setUploading] = useState(false);
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const todayStr = todayBrasiliaStr();
   const isToday = targetDate === todayStr;
 
   // Modal de upload com opções de nível de arquivo (entrada/saída, faturamento)
@@ -854,25 +855,25 @@ export default function DashboardPage() {
                         )}
                       </div>
                     </div>
-                    {/* PDFs — sempre disponíveis via geração sob demanda */}
+                    {/* PDFs — geração sob demanda; indicador se já salvo em disco */}
                     <div className="flex flex-col gap-1.5 flex-shrink-0">
                       <button
                         onClick={() =>
                           ordersApi.downloadSessionPdf(sess.session_id, 'separation')
                             .catch(() => toast.error('Erro ao baixar PDF de Separação'))
                         }
-                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 rounded-lg hover:bg-emerald-900/35 transition"
+                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 hover:bg-emerald-900/35' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Separação
+                        <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
                       </button>
                       <button
                         onClick={() =>
                           ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
                             .catch(() => toast.error('Erro ao baixar PDF de Expedição'))
                         }
-                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-blue-300 bg-blue-900/25 border border-blue-500/20 rounded-lg hover:bg-blue-900/40 transition"
+                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-blue-300 bg-blue-900/25 border border-blue-500/20 hover:bg-blue-900/40' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Expedição
+                        <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
                       </button>
                     </div>
                   </div>

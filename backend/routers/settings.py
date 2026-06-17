@@ -7,11 +7,11 @@ Também fornece status e controle do Watcher de pasta de inbox.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
 
 from ..database import get_db
 from .. import models
 from ..auth import get_current_user, require_admin
+from ..timezone_utils import now_brasilia
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -28,6 +28,10 @@ DEFAULT_SETTINGS = {
     "check_transportadora":        {"value": "true",  "description": "Verifica se todos os pedidos têm transportadora definida"},
     "check_nf_unicas":             {"value": "true",  "description": "Verifica se as chaves DANFE são únicas (sem NFs duplicadas)"},
     "check_produtos_cadastrados":  {"value": "true",  "description": "Verifica se todos os SKUs dos pedidos estão cadastrados como produtos"},
+    # ── PDFs locais (SQLite) ─────────────────────────────────────────────────
+    "pdf_base_folder":        {"value": "", "description": "Pasta base para salvar PDFs em modo local"},
+    "pdf_separation_folder":  {"value": "", "description": "Subpasta para PDFs de separação (dentro da pasta base)"},
+    "pdf_expedition_folder":  {"value": "", "description": "Subpasta para PDFs de expedição (dentro da pasta base)"},
 }
 
 
@@ -84,7 +88,7 @@ def update_settings(
         obj = db.query(models.AppSetting).filter(models.AppSetting.key == key).first()
         if obj:
             obj.value = str(value)
-            obj.updated_at = datetime.now()
+            obj.updated_at = now_brasilia()
             obj.updated_by = current_user.id
         else:
             meta = DEFAULT_SETTINGS.get(key, {})

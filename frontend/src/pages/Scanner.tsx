@@ -263,6 +263,15 @@ export default function ScannerPage() {
   // Auto-focus input
   useEffect(() => { inputRef.current?.focus(); }, [activeOrderId]);
 
+  // Re-foca o input quando perde foco (exceto se outro input/button ganhou foco)
+  const handleScanInputBlur = () => {
+    setTimeout(() => {
+      if (document.activeElement === document.body || document.activeElement === null) {
+        inputRef.current?.focus();
+      }
+    }, 100);
+  };
+
   // 1b: Persiste NF ativa no sessionStorage (sobrevive a F5)
   useEffect(() => {
     if (sessionId) {
@@ -857,6 +866,7 @@ export default function ScannerPage() {
                 value={barcodeInput}
                 onChange={e => setBarcodeInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onBlur={handleScanInputBlur}
                 disabled={scanning}
                 placeholder={
                   scanPhase === 'nfe'

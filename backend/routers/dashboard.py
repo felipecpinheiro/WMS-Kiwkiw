@@ -22,6 +22,7 @@ from sqlalchemy import func, case
 from ..database import get_db
 from ..auth import get_current_user
 from .. import models, schemas
+from ..timezone_utils import now_brasilia, today_brasilia
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -78,7 +79,7 @@ def debug_state(
     Abrir em http://localhost:8000/dashboard/debug com token válido
     (o próprio frontend envia o token, então basta navegar por lá).
     """
-    today = date.today()
+    today = today_brasilia()
     orders_total = db.query(func.count(models.Order.id)).scalar() or 0
     sessions_total = db.query(func.count(models.PickingSession.id)).scalar() or 0
 
@@ -131,7 +132,7 @@ def master_dashboard(
     (default = hoje). Pode filtrar por unidade.
     Manager: restrito automaticamente aos sellers vinculados.
     """
-    target = target_date or date.today()
+    target = target_date or today_brasilia()
     user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
 
     # ── Sellers do gerente (filtra automaticamente se role=manager) ─
@@ -247,7 +248,7 @@ def master_dashboard(
     ]
 
     # ── Scans recentes (últimas 2 horas, independente do target_date) ──
-    two_hours_ago = datetime.now() - timedelta(hours=2)
+    two_hours_ago = now_brasilia() - timedelta(hours=2)
     recent_logs = db.query(models.ScanningLog).filter(
         models.ScanningLog.timestamp >= two_hours_ago,
         models.ScanningLog.is_error == False,
@@ -407,6 +408,8 @@ def master_dashboard(
             "file_type": ft,
             "separation_pdf": sep_pdf,
             "expedition_pdf": exp_pdf,
+            "check_separation": bool(sess.separation_pdf or sess.check_separation),
+            "check_planning": bool(sess.expedition_pdf or sess.check_planning),
         })
 
     # ── Agrupamento por operador ────────────────────────────────────────
@@ -504,16 +507,17 @@ def seller_dashboard(
     if not seller_id and user_role != "admin":
         raise HTTPException(status_code=400, detail="Usuário sem seller associado")
 
-    today = date.today()
+    today = today_brasilia()
     start = date_from or today
     end   = date_to   or today
 
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
 
-    # Filtra pelo range de datas de upload (imported_at)
+    # Filtra pelo range de datas de upload (imported_at), excluindo cancelados
     base_filter = [
         func.date(models.Order.imported_at) >= start,
         func.date(models.Order.imported_at) <= end,
+        models.Order.status != models.OrderStatus.CANCELLED,
     ]
     if seller_id:
         base_filter.append(models.Order.seller_id == seller_id)

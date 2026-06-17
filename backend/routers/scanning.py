@@ -15,6 +15,7 @@ from sqlalchemy import func
 
 from ..database import get_db
 from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin
+from ..timezone_utils import now_brasilia, end_of_day
 from .. import models, schemas
 
 router = APIRouter(prefix="/scanning", tags=["Bipagem"])
@@ -545,7 +546,7 @@ def process_scan(
             # Verifica se toda a sessão está completa
             if session.completed_orders >= session.total_orders:
                 session.status = models.OrderStatus.COMPLETED
-                session.completed_at = datetime.now()
+                session.completed_at = now_brasilia()
 
         # ── Atualiza estoque em tempo real ──────────────────────────
         # Cria StockMovement e atualiza StockPosition para cada item do pedido.
@@ -728,7 +729,7 @@ def force_complete_session(
     from ..services.stock_manager import update_stock_from_order
 
     forced = 0
-    now = datetime.now()
+    now = now_brasilia()
     seller_name = orders[0].seller.trade_name if orders[0].seller else f"Seller {seller_id}"
 
     for order in orders:
@@ -848,7 +849,7 @@ def cancel_handling_session(
     if not orders:
         raise HTTPException(status_code=400, detail="Nenhum pedido ativo encontrado para este seller")
 
-    now = datetime.now()
+    now = now_brasilia()
     seller_name = orders[0].seller.trade_name if orders[0].seller else f"Seller {seller_id}"
     cancelled = 0
 
@@ -934,7 +935,7 @@ def get_audit_log(
     """Retorna trilha de auditoria completa da bipagem."""
     query = db.query(models.ScanningLog).options(
         joinedload(models.ScanningLog.operator),
-        joinedload(models.ScanningLog.order),
+        joinedload(models.ScanningLog.order).joinedload(models.Order.seller),
     )
 
     if session_id:
@@ -946,7 +947,9 @@ def get_audit_log(
     if date_from:
         query = query.filter(models.ScanningLog.timestamp >= date_from)
     if date_to:
-        query = query.filter(models.ScanningLog.timestamp <= date_to)
+        # Usa o fim do dia (23:59:59) — senão "timestamp <= date_to" equivale a
+        # comparar com date_to 00:00:00 e descarta TODAS as bipagens daquele dia.
+        query = query.filter(models.ScanningLog.timestamp <= end_of_day(date_to))
 
     logs = query.order_by(models.ScanningLog.timestamp.desc()).limit(limit).all()
 
@@ -956,6 +959,7 @@ def get_audit_log(
             "timestamp": log.timestamp.strftime("%d/%m/%Y %H:%M:%S"),
             "order_nf": log.order.nf_number if log.order else None,
             "order_customer": log.order.customer_name if log.order else None,
+            "seller_name": (log.order.seller.trade_name if log.order and log.order.seller else None),
             "sku": log.sku,
             "barcode": log.barcode_scanned,
             "quantity": log.quantity,
@@ -1079,7 +1083,7 @@ def _save_audit_csv(log: models.ScanningLog, order: models.Order, user: models.U
             if order.seller and order.seller.trade_name
             else "SEM_SELLER"
         )
-        date_str = _dt.now().strftime("%Y%m%d")
+        date_str = now_brasilia().strftime("%Y%m%d")
         audit_dir = os.path.join(audit_root, seller_name, date_str)
         os.makedirs(audit_dir, exist_ok=True)
 
@@ -1095,7 +1099,7 @@ def _save_audit_csv(log: models.ScanningLog, order: models.Order, user: models.U
                     "is_error", "error_message", "operator",
                 ])
             writer.writerow([
-                _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                now_brasilia().strftime("%Y-%m-%d %H:%M:%S"),
                 order.nf_number,
                 order.customer_name,
                 log.sku,

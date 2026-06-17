@@ -53,7 +53,7 @@ export default function KitsPage() {
     setItems([{ sku: '', quantity: 1 }]); setShowModal(true);
   };
   const openEdit = (k: any) => {
-    setEditId(k.id); setKitSku(k.sku); setKitName(k.name); setSellerId(k.seller_id);
+    setEditId(k.id); setKitSku(k.kit_sku ?? k.sku); setKitName(k.kit_name ?? k.name); setSellerId(k.seller_id);
     setItems(k.items?.map((i: any) => ({ sku: i.component_sku, quantity: i.quantity })) ?? [{ sku: '', quantity: 1 }]);
     setShowModal(true);
   };
@@ -167,9 +167,9 @@ export default function KitsPage() {
                 <Package size={16} className="text-purple-600" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white/90">{k.name}</p>
+                <p className="text-sm font-semibold text-white/90">{k.kit_name ?? k.name}</p>
                 <p className="text-xs text-white/35">
-                  <span className="font-mono">{k.sku}</span>
+                  <span className="font-mono">{k.kit_sku ?? k.sku}</span>
                   {' · '}
                   {k.seller_name}
                   {' · '}

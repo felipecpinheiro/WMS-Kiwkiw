@@ -6,7 +6,7 @@ Reproduz a lógica da macro 'atualizar_estoque()'.
 
 import csv
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict
 from collections import defaultdict
 
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 
 from .. import models
+from ..timezone_utils import now_brasilia, today_brasilia
 
 # Mapa de normalização para valores legados ('IN'/'OUT') no campo movement_type
 _MT_NORM = {
@@ -80,7 +81,7 @@ def update_stock_from_session(session: models.PickingSession, db: Session) -> Di
                     sku=item.sku,
                     product_name=item.product_name,
                     # Usa a data real de finalização (hoje), não a data do ERP
-                    movement_date=date.today(),
+                    movement_date=today_brasilia(),
                     movement_type=movement_type,
                     quantity=item.quantity,
                     adjusted_quantity=item.quantity,
@@ -144,7 +145,7 @@ def update_stock_from_order(order, db: Session) -> None:
             sku=item.sku,
             product_name=item.product_name,
             # Usa a data real de conclusão/interrupção (hoje), não a data do ERP
-            movement_date=date.today(),
+            movement_date=today_brasilia(),
             movement_type=movement_type,
             quantity=item.quantity,
             adjusted_quantity=item.quantity,
@@ -200,7 +201,7 @@ def update_stock_position(
 
     position.current_stock = position.initial_stock + position.total_in - position.total_out
     position.level = calculate_stock_level(position.current_stock)
-    position.updated_at = datetime.now()
+    position.updated_at = now_brasilia()
 
     if not position.product_name:
         position.product_name = product_name
@@ -217,8 +218,7 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
         models.StockPosition.seller_id == seller_id,
     ).order_by(models.StockPosition.sku).all()
 
-    from datetime import timedelta
-    sixty_days_ago = date.today() - timedelta(days=60)
+    sixty_days_ago = today_brasilia() - timedelta(days=60)
 
     # Pré-carrega saídas dos últimos 60 dias via SQL raw (suporta valores legados 'OUT'/'Saída')
     out_rows = db.execute(
@@ -263,9 +263,8 @@ def get_sku_history(seller_id: int, sku: str, db: Session, days: int = 90) -> di
     Retorna histórico de movimentações de um SKU para popup de análise no frontend.
     Inclui: gráfico diário de saídas/entradas, média de vendas 60d, projeção de duração.
     """
-    from datetime import timedelta
-    start_date = date.today() - timedelta(days=days)
-    sixty_days_ago = date.today() - timedelta(days=60)
+    start_date = today_brasilia() - timedelta(days=days)
+    sixty_days_ago = today_brasilia() - timedelta(days=60)
 
 
     # Raw SQL para evitar falha do ORM com valores legados ('IN'/'OUT')
@@ -347,7 +346,7 @@ def export_stock_to_csv(seller_id: int, db: Session, output_dir: str) -> Optiona
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     seller_name = seller.trade_name if seller else f"seller_{seller_id}"
 
-    today = date.today()
+    today = today_brasilia()
     output_subdir = os.path.join(
         output_dir,
         seller_name.replace(" ", "_"),
@@ -404,7 +403,7 @@ def export_movements_to_csv(
         params,
     ).fetchall()
 
-    today = date.today()
+    today = today_brasilia()
     output_subdir = os.path.join(
         output_dir,
         seller_name.replace(" ", "_"),

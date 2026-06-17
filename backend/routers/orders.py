@@ -18,8 +18,9 @@ from ..database import get_db
 from ..auth import get_current_user, require_admin, require_manager_or_above
 from .. import models, schemas
 from ..services.order_import import import_excel_orders
-from ..services.pdf_generator import generate_separation_bytes, generate_expedition_bytes
+from ..services.pdf_generator import generate_separation_bytes, generate_expedition_bytes, generate_pdfs_for_session
 from ..services.audit_export import export_session_to_csv
+from ..timezone_utils import today_brasilia
 
 router = APIRouter(prefix="/orders", tags=["Pedidos"])
 
@@ -59,7 +60,7 @@ async def import_orders(
 
     # Salva arquivo temporário — sanitizar nome para evitar path traversal
     safe_name = os.path.basename(file.filename or "upload.xlsx").replace("..", "")
-    file_path = os.path.join(UPLOAD_DIR, f"{date.today().strftime('%Y%m%d')}_{safe_name}")
+    file_path = os.path.join(UPLOAD_DIR, f"{today_brasilia().strftime('%Y%m%d')}_{safe_name}")
     async with aiofiles.open(file_path, "wb") as f:
         content = await file.read()
         await f.write(content)
@@ -78,13 +79,12 @@ async def import_orders(
     if getattr(result, "requires_confirmation", False):
         return result
 
-    # Gera apenas o CSV de auditoria (leve, para rastreio interno).
-    # PDFs são gerados sob demanda via GET /orders/sessions/{id}/pdf/separation|expedition.
     if result.success and result.session_id:
         session = db.query(models.PickingSession).filter(
             models.PickingSession.id == result.session_id
         ).first()
         if session:
+            # CSV de auditoria (sempre)
             try:
                 os.makedirs(EXPORT_DIR, exist_ok=True)
                 csv_paths = export_session_to_csv(session, db, EXPORT_DIR)
@@ -94,6 +94,26 @@ async def import_orders(
             except Exception as e:
                 db.rollback()
                 result.warnings.append(f"Aviso: CSV de auditoria não gerado: {str(e)}")
+
+            # Modo local (SQLite) → salva PDFs em disco e registra caminho na sessão.
+            # Modo produção (PostgreSQL) → PDFs gerados sob demanda via endpoint.
+            database_url = os.getenv("DATABASE_URL", "")
+            is_local = not database_url.startswith(("postgresql", "postgres"))
+            if is_local:
+                from ..routers.settings import _get_or_create as _get_setting
+                pdf_base = _get_setting(db, "pdf_base_folder").value or os.path.join(BASE_DIR, "data", "exports", "pdfs")
+                try:
+                    pdf_results = generate_pdfs_for_session(session, db, pdf_base)
+                    if pdf_results:
+                        sep_path, exp_path = pdf_results[0]
+                        session.separation_pdf = sep_path
+                        session.expedition_pdf = exp_path
+                        session.check_separation = True
+                        session.check_planning = True
+                        db.commit()
+                        result.warnings.append("PDFs de separação e expedição salvos (modo local)")
+                except Exception as e:
+                    result.warnings.append(f"Aviso: PDF local não gerado: {str(e)}")
 
     return result
 

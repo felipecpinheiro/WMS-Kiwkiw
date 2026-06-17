@@ -9,10 +9,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from datetime import datetime
 import enum
 
 from .database import Base
+from .timezone_utils import now_brasilia
 
 
 # ============================================================
@@ -75,7 +75,7 @@ class Unit(Base):
     responsible = Column(String(100))                        # Responsável
     phone = Column(String(30), nullable=True)                # Telefone
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
 
     # Relacionamentos
     users = relationship("User", back_populates="unit")
@@ -95,7 +95,7 @@ class User(Base):
     unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)   # Nulo para admin/seller
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True) # Para role=seller
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
     last_login = Column(DateTime, nullable=True)
 
     # Relacionamentos
@@ -125,7 +125,7 @@ class Seller(Base):
     email = Column(String(150), nullable=True)
     active = Column(Boolean, default=True)
     unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
 
     # Campos comerciais / cobrança
     caixa_b2b = Column(Float, nullable=True)
@@ -200,7 +200,7 @@ class Product(Base):
     photo_url = Column(String(300), nullable=True)         # Foto do produto (para bipagem visual)
     is_input = Column(Boolean, default=False)              # É insumo (embalagem)
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
 
     # Chave composta: seller + SKU é único
     __table_args__ = (UniqueConstraint("seller_id", "sku", name="uq_seller_sku"),)
@@ -220,7 +220,7 @@ class Kit(Base):
     kit_sku = Column(String(100), nullable=False)          # SKU do kit no ERP
     kit_name = Column(String(300), nullable=False)
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
 
     __table_args__ = (UniqueConstraint("seller_id", "kit_sku", name="uq_seller_kit_sku"),)
 
@@ -286,7 +286,7 @@ class Order(Base):
     nf_key = Column(String(50), nullable=True)              # chave = NF+seller
     file_type = Column(Enum(FileType), default=FileType.EXPORT)  # entrada ou saída
     for_billing = Column(Boolean, default=True)             # considerar para faturamento
-    imported_at = Column(DateTime, default=datetime.now)
+    imported_at = Column(DateTime, default=now_brasilia)
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)
 
     # Relacionamentos
@@ -339,7 +339,7 @@ class PickingSession(Base):
     total_orders = Column(Integer, default=0)
     completed_orders = Column(Integer, default=0)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
     completed_at = Column(DateTime, nullable=True)
 
     # Configuração do arquivo (nível de sessão — aplica-se a todos os pedidos do upload)
@@ -383,7 +383,7 @@ class ScanningLog(Base):
     barcode_scanned = Column(String(100), nullable=False)   # O que foi lido pelo scanner
     quantity = Column(Integer, default=1)
     operator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    timestamp = Column(DateTime, default=datetime.now)        # Horário exato do scan
+    timestamp = Column(DateTime, default=now_brasilia)        # Horário exato do scan
     is_interrupted = Column(Boolean, default=False)         # Pedido foi interrompido
     error_message = Column(String(500), nullable=True)      # Erro se houver
     is_error = Column(Boolean, default=False)               # Scan com erro
@@ -420,7 +420,7 @@ class StockMovement(Base):
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)
     observation = Column(Text, nullable=True)
     operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=now_brasilia)
     # Localização no armazém
     floor = Column(String(20), nullable=True)               # Andar
     zone = Column(String(20), nullable=True)                # Zona
@@ -450,7 +450,7 @@ class StockPosition(Base):
     unit_value = Column(Float, default=0.0)
     level = Column(String(20), nullable=True)            # ALTO / MÉDIO / BAIXO
     supply_type = Column(String(50), nullable=True)      # Insumo: CAIXA, CARD, etc.
-    updated_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=now_brasilia)
 
     __table_args__ = (UniqueConstraint("seller_id", "sku", name="uq_stock_seller_sku"),)
 
@@ -496,7 +496,7 @@ class AuditLog(Base):
     detail = Column(Text, nullable=True)                    # JSON com detalhes da ação
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     ip_address = Column(String(50), nullable=True)
-    timestamp = Column(DateTime, default=datetime.now)
+    timestamp = Column(DateTime, default=now_brasilia)
 
     user = relationship("User", back_populates="audit_logs")
 
@@ -516,5 +516,5 @@ class AppSetting(Base):
     key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(Text, nullable=True)
     description = Column(String(300), nullable=True)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)

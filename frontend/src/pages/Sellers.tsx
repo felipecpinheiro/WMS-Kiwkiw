@@ -127,13 +127,15 @@ export default function SellersPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Remover este seller?')) return;
+  const handleDelete = async (id: number, name: string) => {
+    if (!confirm(`Deseja inativar o seller "${name}"?\n\nO seller será marcado como inativo mas permanecerá no histórico.`)) return;
     try {
       await cadastrosApi.deleteSeller(id);
-      toast.success('Seller removido');
+      toast.success(`Seller "${name}" inativado com sucesso`);
       qc.invalidateQueries('sellers');
-    } catch { toast.error('Erro ao remover'); }
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao inativar seller');
+    }
   };
 
   const handleGridPaste = (e: React.ClipboardEvent) => {
@@ -255,7 +257,7 @@ export default function SellersPage() {
                 <td className="py-2.5 px-3">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(s)} className="text-white/35 hover:text-violet-400 transition"><Pencil size={14} /></button>
-                    <button onClick={() => handleDelete(s.id)} className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                    <button onClick={() => handleDelete(s.id, s.trade_name || s.name || '')} className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
                   </div>
                 </td>
               </tr>

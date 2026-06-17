@@ -19,6 +19,7 @@ from sqlalchemy import func, text
 
 from ..database import get_db
 from ..auth import get_current_user, require_manager_or_above, require_admin
+from ..timezone_utils import now_brasilia, today_brasilia
 from .. import models
 from ..services.stock_manager import (
     get_stock_report, update_stock_position, get_sku_history, calculate_stock_level,
@@ -289,7 +290,7 @@ def create_manual_movement(
     sku = body.get("sku", "").strip()
     movement_type_str = body.get("movement_type", "")
     quantity = int(body.get("quantity", 0))
-    movement_date_str = body.get("movement_date") or str(date.today())
+    movement_date_str = body.get("movement_date") or str(today_brasilia())
     observation = body.get("observation", "")
     nf_number = body.get("nf_number", "")
     product_name = body.get("product_name", sku)
@@ -319,7 +320,7 @@ def create_manual_movement(
     try:
         mov_date = date.fromisoformat(movement_date_str)
     except ValueError:
-        mov_date = date.today()
+        mov_date = today_brasilia()
 
     # Resolves product_name from DB if not provided
     if not product_name or product_name == sku:
@@ -341,7 +342,7 @@ def create_manual_movement(
         nf_number=nf_number or None,
         observation=observation or None,
         operator_id=current_user.id,
-        created_at=datetime.now(),
+        created_at=now_brasilia(),
     )
     db.add(movement)
 
@@ -438,7 +439,7 @@ def create_bulk_movements(
     movements_to_add: list[models.StockMovement] = []
     ok = 0
     errors: list[str] = []
-    now = datetime.now()
+    now = now_brasilia()
 
     # ── 3. Processa cada linha sem tocar no banco ─────────────────────────────
     for i, row in enumerate(rows):
@@ -461,11 +462,11 @@ def create_bulk_movements(
                 errors.append(f"Linha {i + 1}: quantidade inválida")
                 continue
 
-            movement_date_str = row.get("movement_date") or str(date.today())
+            movement_date_str = row.get("movement_date") or str(today_brasilia())
             try:
                 mov_date = date.fromisoformat(movement_date_str)
             except ValueError:
-                mov_date = date.today()
+                mov_date = today_brasilia()
 
             product_name = products_by_sku.get(sku, sku)
             nf_number = row.get("nf_number") or None
@@ -587,7 +588,7 @@ def update_movement(
             position.current_stock = position.initial_stock + position.total_in - position.total_out
             from ..services.stock_manager import calculate_stock_level
             position.level = calculate_stock_level(position.current_stock)
-            position.updated_at = datetime.now()
+            position.updated_at = now_brasilia()
 
         movement.quantity = new_qty
         movement.adjusted_quantity = new_qty
@@ -729,7 +730,7 @@ def export_stock_csv(
         ])
 
     output.seek(0)
-    filename = f"estoque_{seller_name}_{date.today().isoformat()}.csv"
+    filename = f"estoque_{seller_name}_{today_brasilia().isoformat()}.csv"
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8-sig")]),
         media_type="text/csv",
@@ -817,7 +818,7 @@ def export_movements_csv(
         ])
 
     output.seek(0)
-    filename = f"movimentacoes_{seller_name}_{date.today().isoformat()}.csv"
+    filename = f"movimentacoes_{seller_name}_{today_brasilia().isoformat()}.csv"
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8-sig")]),
         media_type="text/csv",
@@ -903,7 +904,7 @@ def _parse_history_excel(file_bytes: bytes):
         elif isinstance(data, date) and not isinstance(data, datetime):
             mov_date = data
         else:
-            mov_date = date.today()
+            mov_date = today_brasilia()
 
         rows.append({
             "sku": sku,
@@ -1021,7 +1022,7 @@ async def execute_history_import(
         try:
             mov_date = date.fromisoformat(r["movement_date"])
         except Exception:
-            mov_date = date.today()
+            mov_date = today_brasilia()
 
         try:
             mt = (
@@ -1054,7 +1055,7 @@ async def execute_history_import(
             nf_number=r["nf_number"],
             observation=r["observation"],
             operator_id=current_user.id,
-            created_at=datetime.now(),
+            created_at=now_brasilia(),
         )
         db.add(movement)
 
@@ -1172,7 +1173,7 @@ async def bulk_stock_upload(
     # ── FASE 1: Validação completa — zero gravações ───────────────────────────
     valid_rows: list[dict] = []
     errors: list[str] = []
-    now_ts = _dt.now()
+    now_ts = now_brasilia()
 
     for i, row in enumerate(rows_raw):
         line = i + 2  # 1-based + cabeçalho
@@ -1290,7 +1291,7 @@ async def bulk_stock_upload(
             else:
                 delta_out[k] += r["quantity"]
 
-        now_dt = _dt.now()
+        now_dt = now_brasilia()
         for (sid, sku) in affected:
             k = (sid, sku)
             if k not in positions_map:

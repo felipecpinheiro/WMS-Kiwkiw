@@ -9,8 +9,9 @@ import os
 import shutil
 import threading
 import logging
-from datetime import datetime
 from typing import Optional, List
+
+from ..timezone_utils import now_brasilia
 
 logger = logging.getLogger("watcher")
 
@@ -19,7 +20,7 @@ _thread: Optional[threading.Thread] = None
 _stop_event = threading.Event()
 _lock = threading.Lock()
 
-_last_check: Optional[datetime] = None
+_last_check = None
 _files_processed: int = 0
 _last_files: List[dict] = []          # últimos N arquivos processados
 
@@ -77,7 +78,7 @@ def _run_loop(inbox_path: str, processed_path: str, interval_sec: int):
     global _last_check, _files_processed, _last_files
 
     while not _stop_event.wait(timeout=interval_sec):
-        _last_check = datetime.now()
+        _last_check = now_brasilia()
 
         if not os.path.isdir(inbox_path):
             logger.warning(f"[watcher] pasta de inbox não existe: {repr(inbox_path)}")
@@ -131,10 +132,10 @@ def _process_file(fpath: str, processed_path: str, inbox_path: str = "") -> dict
       dest     – str com caminho de destino do arquivo
     """
     fname = os.path.basename(fpath)
-    ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts    = now_brasilia().strftime("%Y%m%d_%H%M%S")
     result = {
         "file":      fname,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_brasilia().isoformat(),
         "success":   False,
         "orders":    0,
         "reason":    None,

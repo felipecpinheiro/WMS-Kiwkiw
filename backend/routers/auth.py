@@ -5,10 +5,10 @@ Endpoints de login, logout e refresh de token.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
 
 from ..database import get_db
 from ..auth import verify_password, create_access_token, hash_password, get_current_user
+from ..timezone_utils import now_brasilia
 from .. import models, schemas
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
@@ -28,8 +28,8 @@ def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
             detail="Email ou senha incorretos",
         )
 
-    # Atualiza último login
-    user.last_login = datetime.now()
+    # Atualiza último login (sempre no horário de Brasília, ver timezone_utils.py)
+    user.last_login = now_brasilia()
     db.commit()
 
     token = create_access_token(user)

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { scanningApi, cadastrosApi } from '../api';
 import { format } from 'date-fns';
+import { todayBrasiliaStr } from '../timezone';
 
 // ── Mapa de ícone/cor por tipo de entidade (aba Sistema) ─────────────────────
 const ENTITY_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -40,8 +41,8 @@ const ACTION_COLOR: Record<string, string> = {
 
 // ── Subcomponente: aba Bipagens ───────────────────────────────────────────────
 function ScanAuditTab() {
-  const [dateFrom, setDateFrom] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo]     = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
+  const [dateTo, setDateTo]     = useState(todayBrasiliaStr());
   const [operatorId, setOperatorId] = useState('');
   const [search, setSearch] = useState('');
 
@@ -161,18 +162,19 @@ function ScanAuditTab() {
           <table className="w-full">
             <thead>
               <tr className="bg-white/4 border-b border-white/8">
-                {['Horário', 'Operador', 'NF', 'SKU', 'Código Bipado', 'Qtd', 'Status', 'Mensagem'].map(h => (
+                {['Horário', 'Operador', 'Cliente', 'NF', 'SKU', 'Código Bipado', 'Qtd', 'Status', 'Mensagem'].map(h => (
                   <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={8} className="text-center py-10 text-sm text-white/35">Carregando...</td></tr>
+                <tr><td colSpan={9} className="text-center py-10 text-sm text-white/35">Carregando...</td></tr>
               ) : filtered.length > 0 ? filtered.map((l: any, i: number) => (
                 <tr key={i} className={`border-b border-white/5 hover:bg-white/4 ${l.is_error ? 'bg-red-900/20' : l.is_interrupted ? 'bg-amber-900/15' : ''}`}>
                   <td className="py-2 px-3 text-xs font-mono text-white/50 whitespace-nowrap">{l.timestamp}</td>
                   <td className="py-2 px-3 text-sm text-white/80">{l.operator || l.operator_name}</td>
+                  <td className="py-2 px-3 text-xs text-white/60">{l.seller_name || '—'}</td>
                   <td className="py-2 px-3 text-xs font-mono text-white/50">{l.order_nf}</td>
                   <td className="py-2 px-3 text-xs font-mono text-white/60">{l.sku || '—'}</td>
                   <td className="py-2 px-3 text-xs font-mono text-white/50">{l.barcode || l.barcode_scanned}</td>
@@ -189,7 +191,7 @@ function ScanAuditTab() {
                   <td className="py-2 px-3 text-xs text-white/35 max-w-[200px] truncate">{l.error_message || l.message || '—'}</td>
                 </tr>
               )) : (
-                <tr><td colSpan={8} className="text-center py-10">
+                <tr><td colSpan={9} className="text-center py-10">
                   <Shield size={28} className="text-white/25 mx-auto mb-2" />
                   <p className="text-sm text-white/35">Nenhum registro encontrado para os filtros selecionados</p>
                 </td></tr>
@@ -205,8 +207,8 @@ function ScanAuditTab() {
 
 // ── Subcomponente: aba Ações do Sistema ──────────────────────────────────────
 function SystemAuditTab() {
-  const [dateFrom, setDateFrom] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [dateTo, setDateTo]     = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
+  const [dateTo, setDateTo]     = useState(todayBrasiliaStr());
   const [entityType, setEntityType] = useState('');
   const [action, setAction]     = useState('');
   const [userId, setUserId]     = useState('');

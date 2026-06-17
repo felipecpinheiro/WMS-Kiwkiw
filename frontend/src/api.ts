@@ -41,6 +41,26 @@ api.interceptors.response.use(
 
 
 // ============================================================
+// HELPERS
+// ============================================================
+
+/** Download autenticado via Axios (envia Bearer token). Fallback para window.open caso falhe. */
+async function downloadAuthenticatedFile(url: string, fallbackFilename: string): Promise<void> {
+  const response = await api.get(url, { responseType: 'blob', timeout: 60000 });
+  const disposition: string = response.headers['content-disposition'] ?? '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : fallbackFilename;
+  const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(blobUrl);
+}
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -411,16 +431,20 @@ export const inventoryApi = {
     api.post<{ imported: number; errors: string[] }>('/inventory/movements/bulk', data),
   skuHistory: (sellerId: number, sku: string, days = 90) =>
     api.get(`/inventory/sku-history/${sellerId}/${encodeURIComponent(sku)}`, { params: { days } }),
-  exportStockCsv: (sellerId: number) => {
-    window.open(`${API_BASE}/inventory/stock/${sellerId}/export/csv`, '_blank');
-    return Promise.resolve();
-  },
+  exportStockCsv: (sellerId: number) =>
+    downloadAuthenticatedFile(
+      `/inventory/stock/${sellerId}/export/csv`,
+      `estoque_${sellerId}.csv`,
+    ),
   exportMovementsCsv: (sellerId: number, dateFrom?: string, dateTo?: string) => {
     const params = new URLSearchParams();
     if (dateFrom) params.set('date_from', dateFrom);
     if (dateTo) params.set('date_to', dateTo);
-    window.open(`${API_BASE}/inventory/movements/${sellerId}/export/csv?${params}`, '_blank');
-    return Promise.resolve();
+    const qs = params.toString();
+    return downloadAuthenticatedFile(
+      `/inventory/movements/${sellerId}/export/csv${qs ? `?${qs}` : ''}`,
+      `movimentacoes_${sellerId}.csv`,
+    );
   },
   skuLookup: (sellerId: number, sku: string) =>
     api.get<{ found: boolean; sku: string; name?: string; barcode_seller?: string }>('/inventory/sku-lookup', { params: { seller_id: sellerId, sku } }),

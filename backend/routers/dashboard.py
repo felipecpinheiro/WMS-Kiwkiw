@@ -307,8 +307,8 @@ def master_dashboard(
             models.Order.session_id == last_session.id
         ).all()
         if session_orders:
-            checks["separation"] = bool(last_session.separation_pdf)
-            checks["planning"]   = bool(last_session.expedition_pdf)
+            checks["separation"] = bool(last_session.check_separation)
+            checks["planning"]   = bool(last_session.check_planning)
 
             if cfg_nf_unicas:
                 keys = [o.danfe_key for o in session_orders if o.danfe_key]

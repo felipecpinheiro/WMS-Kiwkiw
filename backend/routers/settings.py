@@ -24,11 +24,6 @@ DEFAULT_SETTINGS = {
     "default_movement_type":  {"value": "Saída", "description": "Tipo de movimentação padrão no estoque"},
     "auto_generate_pdfs":     {"value": "true",  "description": "Gera PDFs automaticamente após importação"},
     "require_all_checks":     {"value": "true",  "description": "Bloqueia importação se alguma checagem falhar"},
-    # ── Destino dos PDFs gerados ────────────────────────────────────────────
-    "pdf_base_folder": {"value": "", "description": "Pasta raiz para salvar PDFs. Estrutura automática: Base/Unidade/mês-AAAA/dia/arquivo. Vazio = usa data/exports."},
-    # Legado — mantidos para retrocompatibilidade; ignorados quando pdf_base_folder definido
-    "pdf_separation_folder":  {"value": "", "description": "[Legado] Substituído por pdf_base_folder."},
-    "pdf_expedition_folder":  {"value": "", "description": "[Legado] Substituído por pdf_base_folder."},
     # ── Checagens granulares ─────────────────────────────────────────────────
     "check_transportadora":        {"value": "true",  "description": "Verifica se todos os pedidos têm transportadora definida"},
     "check_nf_unicas":             {"value": "true",  "description": "Verifica se as chaves DANFE são únicas (sem NFs duplicadas)"},

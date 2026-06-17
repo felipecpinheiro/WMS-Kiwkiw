@@ -317,6 +317,23 @@ export const ordersApi = {
     api.patch(`/orders/${id}/config`, null, { params: data }),
   updateCarrier: (orderId: number, carrier: string) =>
     api.patch(`/orders/${orderId}/carrier`, { carrier }),
+  downloadSessionPdf: async (sessionId: number, type: 'separation' | 'expedition'): Promise<void> => {
+    const response = await api.get(`/orders/sessions/${sessionId}/pdf/${type}`, {
+      responseType: 'blob',
+      timeout: 60000,
+    });
+    const disposition: string = response.headers['content-disposition'] ?? '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : `${type}_${sessionId}.pdf`;
+    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 
@@ -602,8 +619,6 @@ export const importApi = {
     api.get<any>(`/orders/sessions/${sessionId}`),
   deleteSession: (sessionId: number) =>
     api.delete(`/orders/sessions/${sessionId}`),
-  regeneratePdfs: (sessionId: number) =>
-    api.post<{ message: string; files: string[] }>(`/orders/sessions/${sessionId}/regenerate-pdfs`),
 };
 
 

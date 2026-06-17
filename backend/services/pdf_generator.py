@@ -589,3 +589,79 @@ def generate_separation_report(
 
     doc.build(story)
     return output_path
+
+
+# ════════════════════════════════════════════════════════════════
+# Geração em memória (sem salvar em disco) — para download direto
+# ════════════════════════════════════════════════════════════════
+
+import re as _re
+import tempfile as _tempfile
+
+
+def generate_separation_bytes(
+    session: models.PickingSession,
+    db: Session,
+    orders: list | None = None,
+) -> tuple[bytes, str]:
+    """
+    Gera o PDF de separação em memória.
+    Retorna (bytes_do_pdf, nome_do_arquivo).
+    Nome inclui unidade antes dos sellers: SEPARACAO_YYYYMMDD_Unidade_SEL1_id.pdf
+    """
+    if orders is None:
+        orders = db.query(models.Order).options(
+            joinedload(models.Order.seller).joinedload(models.Seller.unit),
+            joinedload(models.Order.items),
+        ).filter(models.Order.session_id == session.id).all()
+
+    unit_name = "SEM_UNIDADE"
+    for o in orders:
+        if o.seller and o.seller.unit:
+            unit_name = o.seller.unit.name
+            break
+
+    safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
+    sellers_tag = _sellers_suffix(orders)
+    filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+
+    with _tempfile.TemporaryDirectory() as tmpdir:
+        path = generate_separation_report(session, db, tmpdir, orders=orders)
+        with open(path, 'rb') as f:
+            data = f.read()
+
+    return data, filename
+
+
+def generate_expedition_bytes(
+    session: models.PickingSession,
+    db: Session,
+    orders: list | None = None,
+) -> tuple[bytes, str]:
+    """
+    Gera o PDF de expedição em memória.
+    Retorna (bytes_do_pdf, nome_do_arquivo).
+    Nome inclui unidade antes dos sellers: EXPEDICAO_YYYYMMDD_Unidade_SEL1_id.pdf
+    """
+    if orders is None:
+        orders = db.query(models.Order).options(
+            joinedload(models.Order.seller).joinedload(models.Seller.unit),
+            joinedload(models.Order.items),
+        ).filter(models.Order.session_id == session.id).all()
+
+    unit_name = "SEM_UNIDADE"
+    for o in orders:
+        if o.seller and o.seller.unit:
+            unit_name = o.seller.unit.name
+            break
+
+    safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
+    sellers_tag = _sellers_suffix(orders)
+    filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+
+    with _tempfile.TemporaryDirectory() as tmpdir:
+        path = generate_expedition_report(session, db, tmpdir, orders=orders)
+        with open(path, 'rb') as f:
+            data = f.read()
+
+    return data, filename

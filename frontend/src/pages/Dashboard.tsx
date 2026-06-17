@@ -316,6 +316,25 @@ export default function DashboardPage() {
         toast.success(`${orders_with_kits} pedido(s) com kits expandidos automaticamente`);
       }
       warnings.slice(0, 3).forEach((w: string) => toast(w, { icon: 'ℹ️' }));
+
+      // Downloads automáticos em sequência
+      if (session_id) {
+        if (generateSepPdf) {
+          try {
+            await ordersApi.downloadSessionPdf(session_id, 'separation');
+          } catch {
+            toast.error('PDF de Separação não gerado. Use o botão no histórico para tentar novamente.');
+          }
+        }
+        if (generateExpPdf) {
+          try {
+            await ordersApi.downloadSessionPdf(session_id, 'expedition');
+          } catch {
+            toast.error('PDF de Expedição não gerado. Use o botão no histórico para tentar novamente.');
+          }
+        }
+      }
+
       refetch();
       // Fecha tudo e limpa estado
       setUploadModalOpen(false);
@@ -835,36 +854,26 @@ export default function DashboardPage() {
                         )}
                       </div>
                     </div>
-                    {/* PDFs gerados */}
+                    {/* PDFs — sempre disponíveis via geração sob demanda */}
                     <div className="flex flex-col gap-1.5 flex-shrink-0">
-                      {sess.separation_pdf ? (
-                        <a
-                          href={`${API_BASE}/exports/${sess.separation_pdf}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 rounded-lg hover:bg-emerald-900/35 transition"
-                        >
-                          <FileText size={11} /> Separação
-                        </a>
-                      ) : (
-                        <span className="px-2.5 py-1 text-[11px] text-white/25 border border-white/8 rounded-lg">
-                          Sem PDF Sep.
-                        </span>
-                      )}
-                      {sess.expedition_pdf ? (
-                        <a
-                          href={`${API_BASE}/exports/${sess.expedition_pdf}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-blue-300 bg-blue-900/25 border border-blue-500/20 rounded-lg hover:bg-blue-900/40 transition"
-                        >
-                          <FileText size={11} /> Expedição
-                        </a>
-                      ) : (
-                        <span className="px-2.5 py-1 text-[11px] text-white/25 border border-white/8 rounded-lg">
-                          Sem PDF Exp.
-                        </span>
-                      )}
+                      <button
+                        onClick={() =>
+                          ordersApi.downloadSessionPdf(sess.session_id, 'separation')
+                            .catch(() => toast.error('Erro ao baixar PDF de Separação'))
+                        }
+                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 rounded-lg hover:bg-emerald-900/35 transition"
+                      >
+                        <FileText size={11} /> Separação
+                      </button>
+                      <button
+                        onClick={() =>
+                          ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
+                            .catch(() => toast.error('Erro ao baixar PDF de Expedição'))
+                        }
+                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-blue-300 bg-blue-900/25 border border-blue-500/20 rounded-lg hover:bg-blue-900/40 transition"
+                      >
+                        <FileText size={11} /> Expedição
+                      </button>
                     </div>
                   </div>
                 ))}

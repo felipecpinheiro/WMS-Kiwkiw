@@ -3,24 +3,23 @@ WMS Kiwkiw - Router de Pedidos
 Importação, listagem e gestão de pedidos.
 """
 
+import io
 import os
 import aiofiles
 from typing import Optional, List
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_
+from sqlalchemy import or_
 
 from ..database import get_db
 from ..auth import get_current_user, require_admin, require_manager_or_above
 from .. import models, schemas
 from ..services.order_import import import_excel_orders
-from ..services.pdf_generator import (
-    generate_separation_report, generate_expedition_report,
-    generate_pdfs_for_session,
-)
-from ..services.audit_export import export_session_to_csv, organize_pdfs_by_session
+from ..services.pdf_generator import generate_separation_bytes, generate_expedition_bytes
+from ..services.audit_export import export_session_to_csv
 
 router = APIRouter(prefix="/orders", tags=["Pedidos"])
 
@@ -76,59 +75,81 @@ async def import_orders(
         force_duplicates=force_duplicates,
     )
 
-    # Se o serviço pediu confirmação (duplicatas), devolve direto sem gerar PDFs
     if getattr(result, "requires_confirmation", False):
         return result
 
-    # Gera PDFs + CSV de auditoria automaticamente se importação bem-sucedida.
+    # Gera apenas o CSV de auditoria (leve, para rastreio interno).
+    # PDFs são gerados sob demanda via GET /orders/sessions/{id}/pdf/separation|expedition.
     if result.success and result.session_id:
-        session = db.query(models.PickingSession).options(
-            joinedload(models.PickingSession.unit)
-        ).filter(models.PickingSession.id == result.session_id).first()
+        session = db.query(models.PickingSession).filter(
+            models.PickingSession.id == result.session_id
+        ).first()
         if session:
             try:
                 os.makedirs(EXPORT_DIR, exist_ok=True)
-
-                # ── Lê pasta base configurada ──────────────────────────────────
-                def _setting(key: str) -> str:
-                    obj = db.query(models.AppSetting).filter(
-                        models.AppSetting.key == key
-                    ).first()
-                    return (obj.value or "").strip() if obj else ""
-
-                base_folder_cfg = _setting("pdf_base_folder")
-
-                # Se não configurado, usa EXPORT_DIR como base
-                base_folder = base_folder_cfg if base_folder_cfg else EXPORT_DIR
-                try:
-                    os.makedirs(base_folder, exist_ok=True)
-                except OSError:
-                    base_folder = EXPORT_DIR
-
-                # ── Gera PDFs (1 par por unidade se sellers de múltiplas unidades) ──
-                pdf_pairs = generate_pdfs_for_session(session, db, base_folder)
-
-                # Armazena o primeiro par na sessão (referência para o cockpit)
-                if pdf_pairs:
-                    session.separation_pdf = pdf_pairs[0][0]
-                    session.expedition_pdf = pdf_pairs[0][1]
-                session.check_separation = True
-                session.check_planning = True
-
-                # CSV por seller em <base>/<unidade>/<seller>/<data>/
-                csv_paths = export_session_to_csv(session, db, base_folder)
+                csv_paths = export_session_to_csv(session, db, EXPORT_DIR)
                 db.commit()
-
-                n_pdfs = len(pdf_pairs)
-                result.warnings.append(
-                    f"PDFs gerados: {n_pdfs} par(es) por unidade "
-                    f"| {len(csv_paths)} CSV(s) de auditoria"
-                )
+                if csv_paths:
+                    result.warnings.append(f"{len(csv_paths)} CSV(s) de auditoria gerado(s)")
             except Exception as e:
                 db.rollback()
-                result.warnings.append(f"Aviso: PDFs/CSV não gerados automaticamente: {str(e)}")
+                result.warnings.append(f"Aviso: CSV de auditoria não gerado: {str(e)}")
 
     return result
+
+
+@router.get("/sessions/{session_id}/pdf/separation")
+def download_separation_pdf(
+    session_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Gera e baixa o PDF de separação da sessão. Marca check_separation na sessão."""
+    session = db.query(models.PickingSession).filter(
+        models.PickingSession.id == session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    try:
+        data, filename = generate_separation_bytes(session, db)
+        session.check_separation = True
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF de separação: {str(e)}")
+
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/sessions/{session_id}/pdf/expedition")
+def download_expedition_pdf(
+    session_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Gera e baixa o PDF de expedição da sessão. Marca check_planning na sessão."""
+    session = db.query(models.PickingSession).filter(
+        models.PickingSession.id == session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    try:
+        data, filename = generate_expedition_bytes(session, db)
+        session.check_planning = True
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF de expedição: {str(e)}")
+
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/", response_model=List[schemas.OrderResponse])

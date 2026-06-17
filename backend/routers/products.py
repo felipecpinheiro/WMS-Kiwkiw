@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..auth import get_current_user, require_manager_or_above, require_admin
+from ..auth import get_current_user, require_manager_or_above, require_admin, require_internal
 from .. import models, schemas
 
 router = APIRouter(prefix="/cadastros", tags=["Cadastros"])
@@ -91,7 +91,7 @@ def list_products(
 @router.post("/products", response_model=schemas.ProductResponse)
 def create_product(
     product: schemas.ProductCreate,
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.Product).filter(
@@ -130,7 +130,7 @@ def create_product(
 def update_product(
     product_id: int,
     data: schemas.ProductUpdate,
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()

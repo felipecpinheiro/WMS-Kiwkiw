@@ -260,6 +260,15 @@ export default function ScannerPage() {
     }
   }, [localOrders, activeOrderId, scanning, sessionId]);
 
+  // Restaura foco no input após cada scan completo (scanning true → false).
+  // O useEffect dispara após o React re-renderizar com scanning=false,
+  // garantindo que o input já está habilitado no DOM quando .focus() é chamado.
+  useEffect(() => {
+    if (!scanning) {
+      inputRef.current?.focus();
+    }
+  }, [scanning]);
+
   // Auto-focus input
   useEffect(() => { inputRef.current?.focus(); }, [activeOrderId]);
 
@@ -584,12 +593,14 @@ export default function ScannerPage() {
         await cadastrosApi.updateProduct(productModal.product_id, {
           barcode_seller: productForm.barcode_seller.trim(),
           name: productForm.name || productModal.item.product_name,
+          box_type: productForm.box_type || undefined,
         });
         toast.success('Código de barras atualizado!');
       }
       // Refresh dos pedidos para carregar o novo barcode_seller
       qc.invalidateQueries(['session-orders', sessionId, sellerId]);
       setProductModal(null);
+      setTimeout(() => inputRef.current?.focus(), 50);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Erro ao salvar produto');
     } finally {
@@ -1093,7 +1104,7 @@ export default function ScannerPage() {
                 </h3>
                 <p className="text-xs text-white/40 mt-0.5">{productModal.seller_name}</p>
               </div>
-              <button onClick={() => setProductModal(null)} className="text-white/30 hover:text-white/70">✕</button>
+              <button onClick={() => { setProductModal(null); setTimeout(() => inputRef.current?.focus(), 50); }} className="text-white/30 hover:text-white/70">✕</button>
             </div>
 
             <div className="space-y-3">
@@ -1144,7 +1155,7 @@ export default function ScannerPage() {
 
             <div className="flex gap-2 mt-5">
               <button
-                onClick={() => setProductModal(null)}
+                onClick={() => { setProductModal(null); setTimeout(() => inputRef.current?.focus(), 50); }}
                 className="flex-1 py-2.5 text-sm text-white/50 border border-white/10 rounded-xl hover:bg-white/5 transition"
               >
                 Cancelar

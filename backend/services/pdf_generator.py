@@ -107,8 +107,8 @@ def generate_pdfs_for_session(
 
     for unit_name, unit_order_list in sorted(unit_orders.items()):
         output_dir = _resolve_pdf_dir(base_folder, unit_name, session.session_date)
-        sep_path = generate_separation_report(session, db, output_dir, orders=unit_order_list)
-        exp_path = generate_expedition_report(session, db, output_dir, orders=unit_order_list)
+        exp_path = generate_separation_report(session, db, output_dir, orders=unit_order_list)
+        sep_path = generate_expedition_report(session, db, output_dir, orders=unit_order_list)
         results.append((sep_path, exp_path))
 
     return results
@@ -138,7 +138,7 @@ def generate_expedition_report(
     sellers_tag = _sellers_suffix(orders)
     output_path = os.path.join(
         output_dir,
-        f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
+        f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -169,7 +169,7 @@ def generate_expedition_report(
 
     # ── Cabeçalho ─────────────────────────────────────────────────────────────
     total_vol = sum(item.quantity for o in orders for item in o.items)
-    story.append(Paragraph("Relatório de Expedição", s_title))
+    story.append(Paragraph("Relatório de Separação", s_title))
     story.append(Paragraph(
         f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
         f"Total Pedidos: <b>{len(orders)}</b>  ·  "
@@ -188,9 +188,9 @@ def generate_expedition_report(
             seller_data[sname]["skus"][item.sku]["name"] = item.product_name or "—"
             seller_data[sname]["skus"][item.sku]["qty"] += item.quantity
 
-    # Larguras: seller | cod sku | nome produto | qtd total
-    C = [2.8*cm, 3.2*cm, 10.0*cm, 1.8*cm]
-    HDR = ["Seller", "Cód SKU", "Nome Produto", "Qtd"]
+    # Larguras: seller | cod sku | qtd total | nome produto
+    C = [2.8*cm, 3.2*cm, 1.8*cm, 10.0*cm]
+    HDR = ["Seller", "Cód SKU", "Qtd", "Nome Produto"]
 
     grand_qty = 0
     grand_orders = 0
@@ -208,8 +208,8 @@ def generate_expedition_report(
             rows.append([
                 Paragraph(sname if i == 0 else "", s_sell if i == 0 else s_cell),
                 Paragraph(sku, s_bold),
-                Paragraph(info["name"], s_cell),
                 Paragraph(str(info["qty"]), s_bold),
+                Paragraph(info["name"], s_cell),
             ])
 
         # Span da coluna seller em todas as linhas do seller
@@ -228,7 +228,7 @@ def generate_expedition_report(
             ("BACKGROUND",     (0, 0), (-1, 0),             HDR_BG),
             ("ROWBACKGROUNDS", (0, 1), (-1, total_row_idx-1), [ROW_ODD, ROW_EVEN]),
             ("BACKGROUND",     (0, total_row_idx), (-1, total_row_idx), TOTAL_BG),
-            ("ALIGN",          (3, 0), (3, -1),             "CENTER"),
+            ("ALIGN",          (2, 0), (2, -1),             "CENTER"),
             ("VALIGN",         (0, 0), (-1, -1),             "TOP"),
             ("TOPPADDING",     (0, 0), (-1, -1),             3),
             ("BOTTOMPADDING",  (0, 0), (-1, -1),             3),
@@ -290,7 +290,7 @@ def generate_separation_report(
     sellers_tag = _sellers_suffix(orders)
     output_path = os.path.join(
         output_dir,
-        f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
+        f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{sellers_tag}_{session.id}.pdf"
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -334,7 +334,7 @@ def generate_separation_report(
     # ════════════════════════════════
     # PÁGINA 1 — RESUMO
     # ════════════════════════════════
-    story.append(Paragraph("Relatório de Separação", s_title))
+    story.append(Paragraph("Relatório de Expedição", s_title))
     story.append(Paragraph(
         f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
         f"Total Pedidos: <b>{total_orders}</b>  ·  "
@@ -384,7 +384,7 @@ def generate_separation_report(
     # ════════════════════════════════
     # PÁGINAS SEGUINTES — DETALHE
     # ════════════════════════════════
-    story.append(Paragraph("Relatório de Separação — Detalhe", s_title))
+    story.append(Paragraph("Relatório de Expedição — Detalhe", s_title))
     story.append(Paragraph(
         f"{session.session_date.strftime('%d/%m/%Y')}  ·  "
         f"Total Pedidos: <b>{total_orders}</b>  ·  "
@@ -625,7 +625,7 @@ def generate_separation_bytes(
 
     safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
     sellers_tag = _sellers_suffix(orders)
-    filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+    filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
         path = generate_separation_report(session, db, tmpdir, orders=orders)
@@ -659,7 +659,7 @@ def generate_expedition_bytes(
 
     safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
     sellers_tag = _sellers_suffix(orders)
-    filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+    filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
         path = generate_expedition_report(session, db, tmpdir, orders=orders)

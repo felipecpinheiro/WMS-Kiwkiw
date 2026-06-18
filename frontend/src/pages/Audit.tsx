@@ -46,13 +46,15 @@ function ScanAuditTab() {
   const [operatorId, setOperatorId] = useState('');
   const [search, setSearch] = useState('');
 
+  const isAdmin = (() => { try { return JSON.parse(localStorage.getItem('wms_user') || '{}').role === 'admin'; } catch { return false; } })();
+
   const { data: logs = [], isLoading } = useQuery(
     ['audit', dateFrom, dateTo, operatorId],
     () => scanningApi.auditLog({ date_from: dateFrom, date_to: dateTo, operator_id: operatorId || undefined }).then(r => r.data),
     { keepPreviousData: true }
   );
 
-  const { data: users = [] } = useQuery('users', () => cadastrosApi.users().then(r => r.data));
+  const { data: users = [] } = useQuery('users', () => cadastrosApi.users().then(r => r.data), { enabled: isAdmin });
 
   const { data: productivity = [] } = useQuery(
     ['productivity', dateFrom, dateTo],

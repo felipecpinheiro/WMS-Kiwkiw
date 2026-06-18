@@ -70,7 +70,7 @@ export default function ProtectedRoute({
     return <Navigate to="/login" replace />;
   }
 
-  let user: { role: UserRole } | null = null;
+  let user: { role: UserRole; force_password_change?: boolean } | null = null;
   try {
     user = JSON.parse(userStr);
   } catch {
@@ -82,6 +82,11 @@ export default function ProtectedRoute({
 
   if (!user?.role) {
     return <Navigate to="/login" replace />;
+  }
+
+  // 2. Senha temporária ativa → não renderiza nada (App.tsx exibe o modal bloqueante)
+  if (user.force_password_change) {
+    return null;
   }
 
   const role = user.role;

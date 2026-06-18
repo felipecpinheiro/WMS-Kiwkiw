@@ -169,6 +169,7 @@ export default function UsersPage() {
   const { data: users = [], isLoading } = useQuery(
     'users',
     () => cadastrosApi.users({ active_only: false }).then(r => r.data),
+    { enabled: isAdmin },
   );
   const { data: units = [] } = useQuery('units', () => cadastrosApi.units().then(r => r.data));
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
@@ -270,6 +271,15 @@ export default function UsersPage() {
   const showUnit        = ['admin', 'manager', 'operator'].includes(form.role);
   const showSellerMulti = ['manager', 'operator'].includes(form.role);
   const showSellerSingle = form.role === 'client';
+
+  if (!isAdmin) {
+    return (
+      <div className="p-6 text-center text-white/35 py-20">
+        <Shield size={32} className="mx-auto mb-3 text-white/20" />
+        <p className="text-sm">Acesso restrito ao administrador.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">

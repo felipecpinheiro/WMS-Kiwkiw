@@ -3,7 +3,7 @@
  * Define rotas e layout global da aplicação.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { Toaster } from 'react-hot-toast';
@@ -51,6 +51,33 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Focus trap: ao montar, foca o container; bloqueia Tab fora do modal e Escape
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusable = containerRef.current?.querySelectorAll<HTMLElement>(
+        'input, button, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable || focusable.length === 0) { e.preventDefault(); return; }
+      const first = focusable[0];
+      const last  = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (document.activeElement === last)  { e.preventDefault(); first.focus(); }
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +104,13 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 outline-none"
+      style={{ pointerEvents: 'all' }}
+    >
       <div className="bg-gray-900 border border-amber-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-7">
         <div className="flex flex-col items-center mb-6">
           <div className="w-14 h-14 bg-amber-500/15 rounded-full flex items-center justify-center mb-4">

@@ -231,7 +231,7 @@ export default function KitsPage() {
                   <select value={sellerId} onChange={e => setSellerId(Number(e.target.value))}
                     className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
                     <option value="">Selecione...</option>
-                    {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
                   </select>
                 </div>
               </div>

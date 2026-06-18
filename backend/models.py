@@ -95,6 +95,7 @@ class User(Base):
     unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)   # Nulo para admin/seller
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True) # Para role=seller
     active = Column(Boolean, default=True)
+    force_password_change = Column(Boolean, default=False)
     created_at = Column(DateTime, default=now_brasilia)
     last_login = Column(DateTime, nullable=True)
 

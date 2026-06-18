@@ -192,6 +192,38 @@ def delete_product(
     db.commit()
 
 
+@router.post("/products/{product_id}/reactivate", response_model=schemas.ProductResponse)
+def reactivate_product(
+    product_id: int,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """Reativa um produto inativado (active=False → True)."""
+    product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if product.active:
+        raise HTTPException(status_code=400, detail="Produto já está ativo")
+    product.active = True
+    seller = db.query(models.Seller).filter(models.Seller.id == product.seller_id).first()
+    db.add(models.AuditLog(
+        entity_type="Product",
+        entity_id=product_id,
+        action="REACTIVATE",
+        detail=f"Produto reativado: SKU={product.sku} | Seller={seller.trade_name if seller else product.seller_id}",
+        user_id=current_user.id,
+    ))
+    db.commit()
+    db.refresh(product)
+    return schemas.ProductResponse(
+        id=product.id, seller_id=product.seller_id,
+        seller_name=seller.trade_name if seller else None,
+        sku=product.sku, name=product.name, barcode_seller=product.barcode_seller,
+        unit_value=product.unit_value or 0.0, box_type=product.box_type,
+        is_input=bool(product.is_input), photo_url=product.photo_url, active=product.active,
+    )
+
+
 @router.post("/products/{product_id}/photo")
 async def upload_product_photo(
     product_id: int,
@@ -225,16 +257,40 @@ async def upload_product_photo(
 # KITS
 # ============================================================
 
-@router.get("/kits", response_model=List[schemas.KitResponse])
+@router.get("/kits")
 def list_kits(
     seller_id: Optional[int] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(models.Kit).filter(models.Kit.active == True)
+    query = (
+        db.query(models.Kit)
+        .options(joinedload(models.Kit.items), joinedload(models.Kit.seller))
+        .filter(models.Kit.active == True)
+    )
     if seller_id:
         query = query.filter(models.Kit.seller_id == seller_id)
-    return query.order_by(models.Kit.kit_sku).all()
+    kits = query.order_by(models.Kit.kit_sku).all()
+    return [
+        {
+            "id": k.id,
+            "seller_id": k.seller_id,
+            "seller_name": k.seller.trade_name if k.seller else None,
+            "kit_sku": k.kit_sku,
+            "kit_name": k.kit_name,
+            "active": k.active,
+            "items": [
+                {
+                    "id": i.id,
+                    "component_sku": i.component_sku,
+                    "component_name": i.component_name,
+                    "quantity": i.quantity,
+                }
+                for i in k.items
+            ],
+        }
+        for k in kits
+    ]
 
 
 @router.post("/kits", response_model=schemas.KitResponse)
@@ -246,6 +302,7 @@ def create_kit(
     existing = db.query(models.Kit).filter(
         models.Kit.seller_id == kit.seller_id,
         models.Kit.kit_sku == kit.kit_sku,
+        models.Kit.active == True,
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Kit '{kit.kit_sku}' já cadastrado")
@@ -1042,6 +1099,7 @@ def _user_to_response(u: models.User) -> schemas.UserResponse:
         seller_ids=[s.id for s in (u.sellers or [])],
         seller_names=[s.trade_name for s in (u.sellers or [])],
         active=u.active,
+        force_password_change=bool(u.force_password_change),
         created_at=u.created_at,
         last_login=u.last_login,
     )

@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { settingsApi } from '../api';
+import { settingsApi, authApi } from '../api';
 import toast from 'react-hot-toast';
 import {
   Settings, FolderOpen, Bot, Play, Square, RefreshCw,
   CheckCircle2, XCircle, Clock, FileSpreadsheet, AlertTriangle,
-  ToggleLeft, ToggleRight, Save, ShieldCheck, FileText,
+  ToggleLeft, ToggleRight, Save, ShieldCheck, FileText, KeyRound,
 } from 'lucide-react';
 
 const inputCls = "w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white/80 placeholder-white/25";
@@ -203,6 +203,10 @@ export default function SettingsPage() {
   const [initialized, setInitialized] = useState(false);
   const [dirty, setDirty] = useState(false);
 
+  // Alterar senha
+  const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
+  const [pwdSaving, setPwdSaving] = useState(false);
+
   if (settings && !initialized) {
     const initial: Record<string, string> = {};
     Object.entries(settings).forEach(([k, v]) => { initial[k] = v.value ?? ''; });
@@ -235,6 +239,22 @@ export default function SettingsPage() {
 
   function handleSave() {
     saveMut.mutate(form);
+  }
+
+  async function handlePwdSave() {
+    if (!pwdForm.current) { toast.error('Informe a senha atual'); return; }
+    if (pwdForm.next.length < 6) { toast.error('A nova senha deve ter pelo menos 6 caracteres'); return; }
+    if (pwdForm.next !== pwdForm.confirm) { toast.error('As senhas não coincidem'); return; }
+    setPwdSaving(true);
+    try {
+      await authApi.changePassword(pwdForm.current, pwdForm.next);
+      toast.success('Senha alterada com sucesso!');
+      setPwdForm({ current: '', next: '', confirm: '' });
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao alterar senha');
+    } finally {
+      setPwdSaving(false);
+    }
   }
 
   if (isLoading) {
@@ -454,6 +474,54 @@ export default function SettingsPage() {
             </button>
           </FieldRow>
         ))}
+      </SectionCard>
+
+      {/* ── Alterar Senha (todos os roles) ──────────────────── */}
+      <SectionCard title="Alterar Minha Senha" icon={<KeyRound size={16} />}>
+        <div className="space-y-3 max-w-sm">
+          <div>
+            <label className="block text-xs text-white/50 mb-1">Senha atual *</label>
+            <input
+              type="password"
+              value={pwdForm.current}
+              onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
+              placeholder="Sua senha atual"
+              className={inputCls}
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-white/50 mb-1">Nova senha *</label>
+            <input
+              type="password"
+              value={pwdForm.next}
+              onChange={e => setPwdForm(p => ({ ...p, next: e.target.value }))}
+              placeholder="Mínimo 6 caracteres"
+              className={inputCls}
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-white/50 mb-1">Confirmar nova senha *</label>
+            <input
+              type="password"
+              value={pwdForm.confirm}
+              onChange={e => setPwdForm(p => ({ ...p, confirm: e.target.value }))}
+              placeholder="Repita a nova senha"
+              className={inputCls}
+              style={inputStyle}
+            />
+          </div>
+          <button
+            onClick={handlePwdSave}
+            disabled={pwdSaving || !pwdForm.current || !pwdForm.next || !pwdForm.confirm}
+            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded-lg font-medium disabled:opacity-50 transition"
+          >
+            {pwdSaving && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            <KeyRound size={13} />
+            {pwdSaving ? 'Salvando...' : 'Alterar senha'}
+          </button>
+        </div>
       </SectionCard>
 
       {dirty && (

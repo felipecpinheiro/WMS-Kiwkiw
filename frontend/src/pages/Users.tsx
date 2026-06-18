@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
-import { Plus, Pencil, UserX, UserCheck, X, Check, Shield, User, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, UserX, UserCheck, X, Check, Shield, User, ChevronDown, KeyRound } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
 
@@ -159,6 +159,8 @@ function SellerMultiSelect({
 // ---------------------------------------------------------------------------
 export default function UsersPage() {
   const qc = useQueryClient();
+  const currentUser = (() => { try { return JSON.parse(localStorage.getItem('wms_user') || '{}'); } catch { return {}; } })();
+  const isAdmin = currentUser.role === 'admin';
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<UserForm>(EMPTY);
@@ -240,6 +242,17 @@ export default function UsersPage() {
     }
   };
 
+  const handleTempPassword = async (id: number, name: string) => {
+    if (!confirm(`Definir senha temporária "123456" para ${name}?\n\nO usuário será obrigado a trocar a senha no próximo login.`)) return;
+    try {
+      await cadastrosApi.setTempPassword(id);
+      toast.success(`Senha temporária definida para ${name}`);
+      qc.invalidateQueries('users');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao definir senha temporária');
+    }
+  };
+
   const handleReactivate = async (id: number, name: string) => {
     if (!confirm(`Reativar "${name}"? Ele voltará a conseguir fazer login.`)) return;
     try {
@@ -312,7 +325,6 @@ export default function UsersPage() {
                   {u.unit_name && (
                     <p>Unidade: <span className="text-white/60">{u.unit_name}</span></p>
                   )}
-                  {/* Sellers associados (manager/operator) */}
                   {u.seller_names && u.seller_names.length > 0 && (
                     <p>
                       Sellers:{' '}
@@ -321,7 +333,6 @@ export default function UsersPage() {
                       </span>
                     </p>
                   )}
-                  {/* Seller único (client) */}
                   {u.seller_name && (!u.seller_names || u.seller_names.length === 0) && (
                     <p>Seller: <span className="text-white/60">{u.seller_name}</span></p>
                   )}
@@ -334,9 +345,14 @@ export default function UsersPage() {
                   {u.active === false && (
                     <p className="text-red-400/80 font-medium">Inativo</p>
                   )}
+                  {u.force_password_change && (
+                    <p className="text-amber-400/90 font-medium flex items-center gap-1">
+                      <KeyRound size={11} /> Senha temporária ativa
+                    </p>
+                  )}
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {u.active !== false ? (
                     <>
                       <button
@@ -345,6 +361,15 @@ export default function UsersPage() {
                       >
                         <Pencil size={12} /> Editar
                       </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleTempPassword(u.id, u.name)}
+                          className="flex items-center justify-center px-3 py-1.5 text-xs text-amber-400 border border-amber-900/40 rounded-lg hover:bg-amber-900/20 transition"
+                          title="Definir senha temporária (123456)"
+                        >
+                          <KeyRound size={12} />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDeactivate(u.id, u.name)}
                         className="flex items-center justify-center px-3 py-1.5 text-xs text-red-400 border border-red-900/40 rounded-lg hover:bg-red-900/20 transition"

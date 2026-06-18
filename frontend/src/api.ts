@@ -287,6 +287,8 @@ export const authApi = {
   login: (email: string, password: string) =>
     api.post<LoginResponse>('/auth/login', { email, password }),
   me: () => api.get<User>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }),
 };
 
 
@@ -550,6 +552,7 @@ export const cadastrosApi = {
     });
   },
   deleteProduct: (id: number) => api.delete(`/cadastros/products/${id}`),
+  reactivateProduct: (id: number) => api.post(`/cadastros/products/${id}/reactivate`),
   bulkPasteProducts: (items: any[]) => api.post('/cadastros/products/bulk-paste', items),
   bulkUploadProducts: (file: File) => {
     const fd = new FormData();
@@ -578,6 +581,15 @@ export const cadastrosApi = {
   updateUser: (id: number, data: Record<string, any>) => api.put(`/cadastros/users/${id}`, data),
   deleteUser:     (id: number) => api.delete(`/cadastros/users/${id}`),
   reactivateUser: (id: number) => api.post(`/cadastros/users/${id}/reactivate`),
+  setTempPassword: (id: number) =>
+    api.put(`/cadastros/users/${id}`, { password: '123456', force_password_change: true }),
+  uploadExperienceFile: (sellerId: number, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post(`/cadastros/sellers/${sellerId}/experience-file`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
 // ============================================================

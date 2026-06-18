@@ -71,6 +71,8 @@ def run_light_migrations():
                 migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
             if not col_exists("sellers", "experience_file_path"):
                 migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+            if not col_exists("users", "force_password_change"):
+                migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT FALSE NOT NULL")
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
@@ -98,6 +100,11 @@ def run_light_migrations():
                 migrations.append("ALTER TABLE sellers ADD COLUMN code TEXT")
             if "experience_file_path" not in existing_sel:
                 migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
+
+            rows_usr = db.execute(text("PRAGMA table_info(users)")).fetchall()
+            existing_usr = {r[1] for r in rows_usr}
+            if "force_password_change" not in existing_usr:
+                migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT 0 NOT NULL")
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (

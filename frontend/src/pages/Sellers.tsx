@@ -1,6 +1,7 @@
 /**
  * WMS Kiwkiw - Cadastro de Sellers
  * CRUD completo com importacao em massa via grade.
+ * Aba Comercial linkada ao BillingConfig (fonte de verdade única).
  */
 
 import { useState, useRef, useMemo } from 'react';
@@ -9,30 +10,88 @@ import {
   Building2, Plus, Pencil, Trash2, X, Check, Store,
   ClipboardList, Upload, ExternalLink, Search,
 } from 'lucide-react';
-import { cadastrosApi } from '../api';
+import { cadastrosApi, billingApi } from '../api';
 import toast from 'react-hot-toast';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+interface BillingFields {
+  taxa_base: string;
+  preco_unitario: string;
+  franquia: string;
+  num_minimo_pedidos: string;
+  preco_adicional: string;
+  manuseio: string;
+  armazenagem: string;
+  armazenagem_incluso: boolean;
+}
 
 interface SellerForm {
   name: string; code: string; cnpj: string; contact_name: string;
   contact_email: string; contact_phone: string; unit_name: string;
   unit_id: number | ''; is_active: boolean;
-  preco_unitario: number | ''; manuseio: number | '';
   caixa_inclusa: boolean; caixa1: string; caixa2: string; caixa3: string;
   caixa4: string; caixa5: string; caixa6: string; caixa7: string; caixa8: string;
   caixa_prop: boolean; other_aliases: string; experiencia_file_url: string;
+  billing: BillingFields;
 }
+
+const EMPTY_BILLING: BillingFields = {
+  taxa_base: '', preco_unitario: '', franquia: '',
+  num_minimo_pedidos: '', preco_adicional: '',
+  manuseio: '', armazenagem: '', armazenagem_incluso: false,
+};
 
 const EMPTY: SellerForm = {
   name: '', code: '', cnpj: '', contact_name: '', contact_email: '',
   contact_phone: '', unit_name: '', unit_id: '', is_active: true,
-  preco_unitario: '', manuseio: '', caixa_inclusa: false,
+  caixa_inclusa: false,
   caixa1: '', caixa2: '', caixa3: '', caixa4: '',
   caixa5: '', caixa6: '', caixa7: '', caixa8: '',
   caixa_prop: false, other_aliases: '', experiencia_file_url: '',
+  billing: { ...EMPTY_BILLING },
 };
 
 const GRID_ROWS = 10;
 const GRID_COLS = 13;
+
+const BILLING_FIELDS: Array<{ label: string; key: keyof BillingFields; type: 'number' | 'check' }> = [
+  { label: 'Taxa Base (R$)',               key: 'taxa_base',          type: 'number' },
+  { label: 'Preço Unitário (R$)',          key: 'preco_unitario',     type: 'number' },
+  { label: 'Franquia (nº pedidos)',        key: 'franquia',           type: 'number' },
+  { label: 'Nº mín. pedidos',             key: 'num_minimo_pedidos', type: 'number' },
+  { label: 'Preço Adicional (R$)',         key: 'preco_adicional',    type: 'number' },
+  { label: 'Manuseio (R$)',               key: 'manuseio',           type: 'number' },
+  { label: 'Armazenagem (R$)',            key: 'armazenagem',        type: 'number' },
+  { label: 'Armazenagem Inclusa',         key: 'armazenagem_incluso', type: 'check' },
+];
+
+// Nomes dos campos no BillingConfig (chaves salvas no banco)
+const BILLING_KEY_MAP: Record<keyof BillingFields, string> = {
+  taxa_base: 'Taxa Base',
+  preco_unitario: 'Preço Unitário',
+  franquia: 'Franquia',
+  num_minimo_pedidos: 'Número Mínimo de Pedidos',
+  preco_adicional: 'Preço Adicional',
+  manuseio: 'Manuseio',
+  armazenagem: 'Armazenagem',
+  armazenagem_incluso: 'Armazenagem Incluso',
+};
+
+function billingConfigToFields(configs: any[]): BillingFields {
+  const map: Record<string, string> = {};
+  (configs || []).forEach((c: any) => { map[c.config_key] = c.config_value; });
+  return {
+    taxa_base: map['Taxa Base'] ?? '',
+    preco_unitario: map['Preço Unitário'] ?? '',
+    franquia: map['Franquia'] ?? '',
+    num_minimo_pedidos: map['Número Mínimo de Pedidos'] ?? '',
+    preco_adicional: map['Preço Adicional'] ?? '',
+    manuseio: map['Manuseio'] ?? '',
+    armazenagem: map['Armazenagem'] ?? '',
+    armazenagem_incluso: (map['Armazenagem Incluso'] ?? '').toLowerCase() === 'sim',
+  };
+}
 
 export default function SellersPage() {
   const qc = useQueryClient();
@@ -49,6 +108,7 @@ export default function SellersPage() {
   const [anchorCell, setAnchorCell]   = useState<[number,number]>([0,0]);
   const [expFile, setExpFile]         = useState<File | null>(null);
   const [expUploading, setExpUploading] = useState(false);
+  const [saving, setSaving]           = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: sellers = [] } = useQuery('sellers', () =>
@@ -68,28 +128,48 @@ export default function SellersPage() {
   }, [sellers, search]);
 
   const set = (k: keyof SellerForm, v: any) => setForm(prev => ({ ...prev, [k]: v }));
+  const setBilling = (k: keyof BillingFields, v: any) =>
+    setForm(prev => ({ ...prev, billing: { ...prev.billing, [k]: v } }));
 
-  const openCreate = () => { setEditId(null); setForm(EMPTY); setFormTab('basic'); setShowModal(true); };
-  const openEdit = (s: any) => {
+  const openCreate = () => {
+    setEditId(null);
+    setForm(EMPTY);
+    setFormTab('basic');
+    setExpFile(null);
+    setShowModal(true);
+  };
+
+  const openEdit = async (s: any) => {
     setEditId(s.id);
+    setFormTab('basic');
+    setExpFile(null);
+    // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
       contact_name: s.contact_name||'', contact_email: s.contact_email||'',
       contact_phone: s.contact_phone||'', unit_name: s.unit_name||'',
       unit_id: s.unit_id ?? '',
       is_active: s.is_active ?? s.active ?? true,
-      preco_unitario: s.preco_unitario ?? '', manuseio: s.manuseio ?? '',
       caixa_inclusa: s.caixa_inclusa ?? false,
       caixa1: s.caixa1||'', caixa2: s.caixa2||'', caixa3: s.caixa3||'',
       caixa4: s.caixa4||'', caixa5: s.caixa5||'', caixa6: s.caixa6||'',
       caixa7: s.caixa7||'', caixa8: s.caixa8||'',
       caixa_prop: s.caixa_prop ?? false, other_aliases: s.other_aliases||'',
       experiencia_file_url: s.experiencia_file_url||'',
+      billing: { ...EMPTY_BILLING },
     });
-    setFormTab('basic'); setShowModal(true);
+    setShowModal(true);
+    // Carrega BillingConfig em paralelo
+    try {
+      const res = await billingApi.config(s.id);
+      const configs: any[] = res.data || [];
+      setForm(prev => ({ ...prev, billing: billingConfigToFields(configs) }));
+    } catch {
+      // se não tem config ainda, campos ficam vazios
+    }
   };
 
-  const buildPayload = () => ({
+  const buildSellerPayload = () => ({
     name: form.name.trim(), trade_name: form.name.trim(),
     code: form.code||undefined, cnpj: form.cnpj||undefined,
     contact_name: form.contact_name||undefined,
@@ -98,8 +178,8 @@ export default function SellersPage() {
     unit_name: form.unit_name||undefined,
     unit_id: form.unit_id !== '' ? Number(form.unit_id) : null,
     is_active: form.is_active, active: form.is_active,
-    preco_unitario: form.preco_unitario !== '' ? Number(form.preco_unitario) : undefined,
-    manuseio: form.manuseio !== '' ? Number(form.manuseio) : undefined,
+    preco_unitario: form.billing.preco_unitario !== '' ? Number(form.billing.preco_unitario) : undefined,
+    manuseio: form.billing.manuseio !== '' ? Number(form.billing.manuseio) : undefined,
     caixa_inclusa: form.caixa_inclusa,
     caixa1: form.caixa1||undefined, caixa2: form.caixa2||undefined,
     caixa3: form.caixa3||undefined, caixa4: form.caixa4||undefined,
@@ -108,22 +188,61 @@ export default function SellersPage() {
     caixa_prop: form.caixa_prop, other_aliases: form.other_aliases||undefined,
   });
 
+  const buildBillingPayload = (sellerId: number) => {
+    const b = form.billing;
+    const configs: Array<{ config_key: string; config_value: string }> = [];
+    (Object.keys(BILLING_KEY_MAP) as (keyof BillingFields)[]).forEach(k => {
+      const v = b[k];
+      const val = k === 'armazenagem_incluso' ? (v ? 'sim' : 'nao') : String(v ?? '');
+      if (val !== '' && val !== 'nao') {
+        configs.push({ config_key: BILLING_KEY_MAP[k], config_value: val });
+      }
+    });
+    return { seller_id: sellerId, configs };
+  };
+
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('Nome e obrigatorio'); return; }
+    if (!form.name.trim()) { toast.error('Nome é obrigatório'); return; }
+    setSaving(true);
     try {
+      let savedId = editId;
       if (editId) {
-        await cadastrosApi.updateSeller(editId, buildPayload());
-        // Experience file upload (feature pending API endpoint)
-        if (expFile) { setExpFile(null); }
+        await cadastrosApi.updateSeller(editId, buildSellerPayload());
         toast.success('Seller atualizado');
       } else {
-        await cadastrosApi.createSeller(buildPayload());
+        const res = await cadastrosApi.createSeller(buildSellerPayload());
+        savedId = (res.data as any).id;
         toast.success('Seller criado');
       }
+
+      // Salva BillingConfig se há campos preenchidos
+      if (savedId) {
+        const billingPayload = buildBillingPayload(savedId);
+        if (billingPayload.configs.length > 0) {
+          await billingApi.saveConfig(billingPayload);
+        }
+      }
+
+      // Upload do arquivo de experiência
+      if (expFile && savedId) {
+        setExpUploading(true);
+        try {
+          await cadastrosApi.uploadExperienceFile(savedId, expFile);
+          toast.success('Arquivo de experiência enviado!');
+          setExpFile(null);
+        } catch {
+          toast.error('Seller salvo, mas falha ao enviar arquivo de experiência');
+        } finally {
+          setExpUploading(false);
+        }
+      }
+
       qc.invalidateQueries('sellers');
       setShowModal(false);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Erro ao salvar');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -165,11 +284,14 @@ export default function SellersPage() {
       caixa1: row[10]?.trim()||undefined, caixa2: row[11]?.trim()||undefined,
       caixa3: row[12]?.trim()||undefined,
     }));
-    if (!items.length) { toast.error('Nenhum seller valido'); return; }
+    if (!items.length) { toast.error('Nenhum seller válido'); return; }
     setPasting(true);
     try {
-      await Promise.all(items.map((s: any) => cadastrosApi.createSeller(s)));
-      toast.success(`${items.length} seller(s) criado(s)!`);
+      const results = await Promise.allSettled(items.map((s: any) => cadastrosApi.createSeller(s)));
+      const ok = results.filter(r => r.status === 'fulfilled').length;
+      const fail = results.filter(r => r.status === 'rejected').length;
+      if (ok > 0) toast.success(`${ok} seller(s) criado(s)!`);
+      if (fail > 0) toast(`${fail} seller(s) com erro`, { icon: '⚠️' });
       qc.invalidateQueries('sellers');
       setShowPasteModal(false);
       setSellerGrid(Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill('')));
@@ -180,6 +302,10 @@ export default function SellersPage() {
   const cls = 'w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500';
   const clsStyle = { background: '#14122A', colorScheme: 'dark' as const, color: 'rgba(255,255,255,0.8)' };
   const validRows = sellerGrid.filter(r => r[0]?.trim()).length;
+
+  const expFileUrl = form.experiencia_file_url
+    ? (form.experiencia_file_url.startsWith('http') ? form.experiencia_file_url : `${API_BASE}${form.experiencia_file_url}`)
+    : null;
 
   return (
     <div className="p-6 space-y-5 min-h-full">
@@ -272,6 +398,7 @@ export default function SellersPage() {
         <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">{filtered.length} seller(s)</div>
       </div>
 
+      {/* ── Modal Edição ──────────────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-2xl my-8 p-6">
@@ -285,10 +412,11 @@ export default function SellersPage() {
                   className={`px-4 py-2 text-sm font-medium border-b-2 transition ${formTab === tab
                     ? (tab === 'experiencia' ? 'border-teal-500 text-teal-300' : 'border-violet-600 text-violet-300')
                     : 'border-transparent text-white/50 hover:text-white/80'}`}>
-                  {tab === 'basic' ? 'Dados Basicos' : tab === 'comercial' ? 'Comercial' : tab === 'caixas' ? 'Caixas' : 'Experiencia'}
+                  {tab === 'basic' ? 'Dados Básicos' : tab === 'comercial' ? 'Comercial' : tab === 'caixas' ? 'Caixas' : 'Experiência'}
                 </button>
               ))}
             </div>
+
             {formTab === 'basic' && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
@@ -296,7 +424,7 @@ export default function SellersPage() {
                   <input value={form.name} onChange={e => set('name', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Codigo</label>
+                  <label className="block text-xs text-white/50 mb-1">Código</label>
                   <input value={form.code} onChange={e => set('code', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
@@ -331,28 +459,49 @@ export default function SellersPage() {
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs text-white/50 mb-1">Outros apelidos (separados por ";")</label>
-                  <input value={form.other_aliases} onChange={e => set('other_aliases', e.target.value)} className={cls} style={clsStyle} placeholder="Ex: Seller ABC; ABC Ltda" />
+                  <input value={form.other_aliases} onChange={e => set('other_aliases', e.target.value)} className={cls} style={clsStyle} placeholder='Ex: Seller ABC; ABC Ltda' />
                 </div>
               </div>
             )}
+
             {formTab === 'comercial' && (
-              <div className="grid grid-cols-2 gap-3">
-                {[{label:'Preco Unitario (R$)',key:'preco_unitario'},{label:'Manuseio (R$)',key:'manuseio'}].map((f: any) => (
-                  <div key={f.key}>
-                    <label className="block text-xs text-white/50 mb-1">{f.label}</label>
-                    <input type="number" step="0.01" min="0" value={(form as any)[f.key]} onChange={e => set(f.key, e.target.value)} className={cls} style={clsStyle} />
-                  </div>
-                ))}
-                <div className="col-span-2 flex items-center gap-2">
-                  <input type="checkbox" id="ci" checked={form.caixa_inclusa} onChange={e => set('caixa_inclusa', e.target.checked)} className="w-4 h-4" />
-                  <label htmlFor="ci" className="text-sm text-white/70">Caixa inclusa no preco</label>
+              <div className="space-y-4">
+                <p className="text-xs text-white/40">Estes valores são sincronizados com o módulo de Faturamento.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {BILLING_FIELDS.filter(f => f.type === 'number').map(f => (
+                    <div key={f.key}>
+                      <label className="block text-xs text-white/50 mb-1">{f.label}</label>
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={form.billing[f.key] as string}
+                        onChange={e => setBilling(f.key, e.target.value)}
+                        className={cls} style={clsStyle}
+                      />
+                    </div>
+                  ))}
                 </div>
-                <div className="col-span-2 flex items-center gap-2">
-                  <input type="checkbox" id="cp" checked={form.caixa_prop} onChange={e => set('caixa_prop', e.target.checked)} className="w-4 h-4" />
-                  <label htmlFor="cp" className="text-sm text-white/70">Caixa propria</label>
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="ci" checked={form.caixa_inclusa} onChange={e => set('caixa_inclusa', e.target.checked)} className="w-4 h-4 accent-violet-500" />
+                    <label htmlFor="ci" className="text-sm text-white/70">Caixa inclusa no preço</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="cp" checked={form.caixa_prop} onChange={e => set('caixa_prop', e.target.checked)} className="w-4 h-4 accent-violet-500" />
+                    <label htmlFor="cp" className="text-sm text-white/70">Caixa própria</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox" id="ai"
+                      checked={form.billing.armazenagem_incluso}
+                      onChange={e => setBilling('armazenagem_incluso', e.target.checked)}
+                      className="w-4 h-4 accent-violet-500"
+                    />
+                    <label htmlFor="ai" className="text-sm text-white/70">Armazenagem inclusa</label>
+                  </div>
                 </div>
               </div>
             )}
+
             {formTab === 'caixas' && (
               <div className="grid grid-cols-4 gap-3">
                 {(['caixa1','caixa2','caixa3','caixa4','caixa5','caixa6','caixa7','caixa8'] as const).map((k, i) => (
@@ -363,40 +512,55 @@ export default function SellersPage() {
                 ))}
               </div>
             )}
+
             {formTab === 'experiencia' && (
               <div className="space-y-4">
-                <p className="text-sm text-white/50">Upload do roteiro de experiencia do seller (PDF/DOC).</p>
-                {form.experiencia_file_url && (
-                  <a href={form.experiencia_file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-violet-300 hover:underline">
+                <p className="text-sm text-white/50">Upload do roteiro de experiência do seller (PDF/DOC).</p>
+                {expFileUrl && (
+                  <a href={expFileUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-violet-300 hover:underline">
                     <ExternalLink size={14} /> Ver arquivo atual
                   </a>
                 )}
-                <div>
-                  <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-3 py-2 border border-white/12 rounded-lg text-sm text-white/60 hover:bg-white/4 transition">
+                <div className="flex items-center gap-3">
+                  <button onClick={() => fileRef.current?.click()}
+                    className="flex items-center gap-2 px-3 py-2 border border-white/12 rounded-lg text-sm text-white/60 hover:bg-white/4 transition">
                     <Upload size={14} /> {expFile ? expFile.name : 'Selecionar arquivo'}
                   </button>
-                  {expUploading && <span className="text-xs text-white/40 ml-2">Enviando...</span>}
-                  <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="sr-only" onChange={e => setExpFile(e.target.files?.[0] ?? null)} />
+                  {expFile && (
+                    <button onClick={() => setExpFile(null)} className="text-xs text-white/30 hover:text-white/60"><X size={14} /></button>
+                  )}
+                  {expUploading && <span className="text-xs text-white/40">Enviando...</span>}
+                  <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" className="sr-only"
+                    onChange={e => setExpFile(e.target.files?.[0] ?? null)} />
                 </div>
+                {expFile && <p className="text-xs text-amber-400/80">O arquivo será enviado ao salvar.</p>}
               </div>
             )}
+
             <div className="flex gap-2 mt-6">
-              <button onClick={() => setShowModal(false)} className="flex-1 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition">Cancelar</button>
-              <button onClick={handleSave} className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5">
-                <Check size={14} /> Salvar
+              <button onClick={() => setShowModal(false)}
+                className="flex-1 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition">
+                Cancelar
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5 disabled:opacity-60">
+                {saving ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check size={14} />}
+                {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── Modal Colar em Massa ─────────────────────────────── */}
       {showPasteModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
           <div className="bg-[#14122A] rounded-2xl w-full max-w-4xl my-8 border border-white/10">
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
               <div>
                 <h3 className="font-semibold text-white text-sm">Colar Sellers em Massa</h3>
-                <p className="text-[11px] text-white/40 mt-0.5">Nome | Trade | CNPJ | Contato | Email | Tel | Unidade | Preco | Manuseio | Cx Inclusa | C1 | C2 | C3</p>
+                <p className="text-[11px] text-white/40 mt-0.5">Nome | Trade | CNPJ | Contato | Email | Tel | Unidade | Preço | Manuseio | Cx Inclusa | C1 | C2 | C3</p>
               </div>
               <button onClick={() => setShowPasteModal(false)} className="text-white/35 hover:text-white/60"><X size={18} /></button>
             </div>
@@ -404,7 +568,7 @@ export default function SellersPage() {
               <table className="text-xs border-collapse">
                 <thead>
                   <tr>
-                    {['Nome*','Trade','CNPJ','Contato','E-mail','Tel','Unidade','Preco','Manuseio','Cx Inclusa','C1','C2','C3'].map((h, ci) => (
+                    {['Nome*','Trade','CNPJ','Contato','E-mail','Tel','Unidade','Preço','Manuseio','Cx Inclusa','C1','C2','C3'].map((h, ci) => (
                       <th key={ci} className="border border-white/10 bg-white/5 px-2 py-1 text-white/50 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -433,12 +597,15 @@ export default function SellersPage() {
             </div>
             <div className="flex items-center justify-between px-5 py-4 border-t border-white/8">
               <div className="flex items-center gap-3">
-                <button onClick={() => setSellerGrid(Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill('')))} className="text-xs text-white/35 hover:underline">Limpar</button>
-                <span className="text-xs text-white/35">{validRows} seller(s) validos</span>
+                <button onClick={() => setSellerGrid(Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill('')))}
+                  className="text-xs text-white/35 hover:underline">Limpar</button>
+                <span className="text-xs text-white/35">{validRows} seller(s) válidos</span>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setShowPasteModal(false)} className="px-4 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4">Cancelar</button>
-                <button onClick={handlePasteSave} disabled={pasting} className="px-4 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg font-medium disabled:opacity-50">
+                <button onClick={() => setShowPasteModal(false)}
+                  className="px-4 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4">Cancelar</button>
+                <button onClick={handlePasteSave} disabled={pasting}
+                  className="px-4 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg font-medium disabled:opacity-50">
                   {pasting ? 'Salvando...' : `Importar ${validRows} seller(s)`}
                 </button>
               </div>

@@ -32,6 +32,7 @@ export default function LoginPage() {
         role: res.role,
         unit_id: res.unit_id,
         seller_id: res.seller_id,
+        force_password_change: !!(res as any).force_password_change,
       }));
 
       toast.success(`Bem-vindo, ${res.name}!`);

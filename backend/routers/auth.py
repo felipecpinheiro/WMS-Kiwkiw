@@ -28,7 +28,6 @@ def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
             detail="Email ou senha incorretos",
         )
 
-    # Atualiza último login (sempre no horário de Brasília, ver timezone_utils.py)
     user.last_login = now_brasilia()
     db.commit()
 
@@ -43,6 +42,7 @@ def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
         name=user.name,
         unit_id=user.unit_id,
         seller_id=user.seller_id,
+        force_password_change=bool(user.force_password_change),
     )
 
 
@@ -62,6 +62,7 @@ def get_me(current_user: models.User = Depends(get_current_user)):
         seller_ids=[s.id for s in (current_user.sellers or [])],
         seller_names=[s.trade_name for s in (current_user.sellers or [])],
         active=current_user.active,
+        force_password_change=bool(current_user.force_password_change),
         created_at=current_user.created_at,
         last_login=current_user.last_login,
     )
@@ -69,18 +70,19 @@ def get_me(current_user: models.User = Depends(get_current_user)):
 
 @router.post("/change-password")
 def change_password(
-    old_password: str,
-    new_password: str,
+    request: schemas.ChangePasswordRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Altera senha do usuário autenticado."""
-    if not verify_password(old_password, current_user.password_hash):
+    """Altera a própria senha. Disponível para qualquer role autenticado.
+    Se force_password_change estava ativo, limpa a flag após troca bem-sucedida."""
+    if not verify_password(request.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Senha atual incorreta")
 
-    if len(new_password) < 6:
+    if len(request.new_password) < 6:
         raise HTTPException(status_code=400, detail="Nova senha deve ter pelo menos 6 caracteres")
 
-    current_user.password_hash = hash_password(new_password)
+    current_user.password_hash = hash_password(request.new_password)
+    current_user.force_password_change = False
     db.commit()
     return {"message": "Senha alterada com sucesso"}

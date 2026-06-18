@@ -4,20 +4,20 @@
  * aba de Movimentações e aba de Pedidos.
  */
 
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Package, TrendingDown, CheckCircle, Clock, LogOut,
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
-  BarChart2, List, CalendarDays,
+  BarChart2, List, CalendarDays, KeyRound,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend,
 } from 'recharts';
-import { dashboardApi, inventoryApi } from '../api';
+import { dashboardApi, inventoryApi, authApi } from '../api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
@@ -216,10 +216,31 @@ export default function SellerPortalPage() {
     { enabled: !!sellerId && tab === 'movements' },
   );
 
+  const [showPwdModal, setShowPwdModal] = useState(false);
+  const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
+  const [pwdSaving, setPwdSaving] = useState(false);
+
   const handleLogout = () => {
     localStorage.removeItem('wms_token');
     localStorage.removeItem('wms_user');
     navigate('/login');
+  };
+
+  const handlePwdSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pwdForm.next.length < 6) { toast.error('A nova senha deve ter pelo menos 6 caracteres'); return; }
+    if (pwdForm.next !== pwdForm.confirm) { toast.error('As senhas não coincidem'); return; }
+    setPwdSaving(true);
+    try {
+      await authApi.changePassword(pwdForm.current, pwdForm.next);
+      toast.success('Senha alterada com sucesso!');
+      setPwdForm({ current: '', next: '', confirm: '' });
+      setShowPwdModal(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao alterar senha');
+    } finally {
+      setPwdSaving(false);
+    }
   };
 
   // ── Pedidos ────────────────────────────────────────────────────────────────
@@ -397,6 +418,13 @@ export default function SellerPortalPage() {
             </div>
           </div>
           <button
+            onClick={() => setShowPwdModal(true)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-white/40
+              hover:text-violet-400 hover:bg-violet-900/15 transition mb-1"
+          >
+            <KeyRound size={12} /> Alterar senha
+          </button>
+          <button
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-white/40
               hover:text-red-400 hover:bg-red-900/15 transition"
@@ -405,6 +433,44 @@ export default function SellerPortalPage() {
           </button>
         </div>
       </aside>
+
+      {/* Modal alterar senha */}
+      {showPwdModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-xs p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-white text-sm flex items-center gap-2"><KeyRound size={15} className="text-violet-400" /> Alterar Senha</h3>
+              <button onClick={() => setShowPwdModal(false)} className="text-white/35 hover:text-white/60"><X size={16} /></button>
+            </div>
+            <form onSubmit={handlePwdSave} className="space-y-3">
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Senha atual *</label>
+                <input type="password" value={pwdForm.current} onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
+                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Nova senha *</label>
+                <input type="password" value={pwdForm.next} onChange={e => setPwdForm(p => ({ ...p, next: e.target.value }))}
+                  placeholder="Mínimo 6 caracteres"
+                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Confirmar *</label>
+                <input type="password" value={pwdForm.confirm} onChange={e => setPwdForm(p => ({ ...p, confirm: e.target.value }))}
+                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setShowPwdModal(false)}
+                  className="flex-1 py-2 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/4">Cancelar</button>
+                <button type="submit" disabled={pwdSaving}
+                  className="flex-1 py-2 text-xs text-white bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-50">
+                  {pwdSaving ? 'Salvando...' : 'Salvar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ══ CONTEÚDO PRINCIPAL ════════════════════════════════════════════════ */}
       <main className="flex-1 overflow-y-auto">

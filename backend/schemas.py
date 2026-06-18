@@ -25,6 +25,7 @@ class Token(BaseModel):
     name: str
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None
+    force_password_change: bool = False
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
@@ -32,6 +33,10 @@ class TokenData(BaseModel):
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None
     seller_ids: Optional[List[int]] = None
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 # ============================================================
@@ -56,6 +61,7 @@ class UserUpdate(BaseModel):
     seller_id: Optional[int] = None        # seller principal (client)
     seller_ids: Optional[List[int]] = None  # grupo de sellers (manager/operator)
     active: Optional[bool] = None
+    force_password_change: Optional[bool] = None
 
 class UserResponse(BaseModel):
     id: int
@@ -69,6 +75,7 @@ class UserResponse(BaseModel):
     seller_ids: List[int] = []         # grupo de sellers (manager/operator)
     seller_names: List[str] = []       # nomes dos sellers do grupo
     active: bool
+    force_password_change: bool = False
     created_at: datetime
     last_login: Optional[datetime] = None
 
@@ -324,6 +331,7 @@ class KitItemResponse(BaseModel):
 class KitResponse(BaseModel):
     id: int
     seller_id: int
+    seller_name: Optional[str] = None
     kit_sku: str
     kit_name: str
     items: List[KitItemResponse] = []

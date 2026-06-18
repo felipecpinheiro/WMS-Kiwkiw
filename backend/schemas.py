@@ -385,6 +385,7 @@ class OrderItemResponse(BaseModel):
     quantity: int
     is_kit_component: bool
     original_kit_sku: Optional[str] = None
+    scanned_qty: int = 0
 
     class Config:
         from_attributes = True

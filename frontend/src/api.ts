@@ -174,6 +174,7 @@ export interface OrderItem {
   quantity: number;
   is_kit_component: boolean;
   original_kit_sku: string | null;
+  scanned_qty: number;
 }
 
 export interface PickingSession {
@@ -588,8 +589,13 @@ export const billingApi = {
     api.get(`/billing/config/${sellerId}`),
   saveConfig: (data: Record<string, any>) =>
     api.post('/billing/config', data),
-  report: (sellerId: number, month: string) =>
-    api.get(`/billing/report/${sellerId}`, { params: { month } }),
+  report: (sellerId: number, month: string) => {
+    const [year, mon] = month.split('-').map(Number);
+    const date_from = `${month}-01`;
+    const lastDay = new Date(year, mon, 0).getDate();
+    const date_to = `${month}-${String(lastDay).padStart(2, '0')}`;
+    return api.get(`/billing/report/${sellerId}`, { params: { date_from, date_to } });
+  },
   exportReport: (sellerId: number, month: string) =>
     window.open(
       `${API_BASE}/billing/report/${sellerId}/export?month=${month}`,

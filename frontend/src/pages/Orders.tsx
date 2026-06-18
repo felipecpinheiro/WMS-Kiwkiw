@@ -27,6 +27,17 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled:   { label: 'Cancelado',     color: 'bg-red-900/40 text-red-300 border border-red-500/20' },
 };
 
+const normalizeFileType = (ft?: string): 'Saída' | 'Entrada' | '' => {
+  if (!ft) return '';
+  const lower = ft.toLowerCase();
+  return (lower === 'entrada' || lower === 'in') ? 'Entrada' : 'Saída';
+};
+
+const excelText = (v: string | null | undefined): string => {
+  const s = String(v ?? '');
+  return /^\d{10,}$/.test(s) ? `="${s}"` : s;
+};
+
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? { label: status, color: 'bg-white/8 text-white/50' };
   return (
@@ -42,21 +53,26 @@ function SessionCard({
   session,
   onOpen,
   onConfig,
+  onClick,
   sellers = [],
 }: {
   session: PickingSession;
   onOpen: (id: number) => void;
   onConfig: (s: PickingSession) => void;
+  onClick: (s: PickingSession) => void;
   sellers?: string[];
 }) {
   const pct = session.total_orders > 0
     ? Math.round((session.completed_orders / session.total_orders) * 100)
     : 0;
 
-  const isEntrada = session.file_type === 'Entrada';
+  const isEntrada = normalizeFileType(session.file_type) === 'Entrada';
 
   return (
-    <div className="bg-gray-900/60 border border-white/8 rounded-xl p-4 hover:border-violet-500/20 transition">
+    <div
+      className="bg-gray-900/60 border border-white/8 rounded-xl p-4 hover:border-violet-500/20 transition cursor-pointer"
+      onClick={() => onClick(session)}
+    >
       <div className="flex items-start justify-between mb-3">
         <div>
           <p className="text-xs text-white/35">Sessão #{session.id}</p>
@@ -104,7 +120,7 @@ function SessionCard({
         </span>
 
         <button
-          onClick={() => onConfig(session)}
+          onClick={(e) => { e.stopPropagation(); onConfig(session); }}
           className="ml-auto text-white/35 hover:text-violet-400 transition"
           title="Configurar sessão"
         >
@@ -159,9 +175,12 @@ function SessionCard({
 
 // ─── Linha de pedido ──────────────────────────────────────────
 
-function OrderRow({ order }: { order: Order }) {
+function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
   return (
-    <tr className="border-b border-white/5 hover:bg-white/4 transition">
+    <tr
+      className="border-b border-white/5 hover:bg-white/4 transition cursor-pointer"
+      onClick={onClick}
+    >
       <td className="py-2.5 px-3 text-sm font-mono text-white/80">{order.nf_number}</td>
       <td className="py-2.5 px-3 text-sm text-white/80 max-w-[180px] truncate">{order.customer_name}</td>
       <td className="py-2.5 px-3 text-sm text-white/50">{order.seller_name}</td>
@@ -184,6 +203,182 @@ function OrderRow({ order }: { order: Order }) {
         )}
       </td>
     </tr>
+  );
+}
+
+// ─── Modal de detalhe do pedido ──────────────────────────────
+
+function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () => void }) {
+  const { data: order, isLoading } = useQuery(
+    ['order-detail', orderId],
+    () => ordersApi.get(orderId).then(r => r.data),
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-gray-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        {isLoading || !order ? (
+          <div className="p-8 text-center text-sm text-white/40">Carregando...</div>
+        ) : (
+          <>
+            <div className="p-5 border-b border-white/8 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[11px] text-white/35 uppercase tracking-wide">{order.seller_name}</p>
+                <h3 className="text-base font-semibold text-white mt-0.5">NF {order.nf_number}</h3>
+                <p className="text-xs text-white/50 mt-1">
+                  {order.customer_name}
+                  {order.carrier ? ` · ${order.carrier}` : ''}
+                </p>
+                {order.danfe_key && (
+                  <p className="text-[10px] font-mono text-white/25 mt-1 break-all select-all">{order.danfe_key}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <StatusBadge status={order.status} />
+                <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+              </div>
+            </div>
+
+            {/* Itens */}
+            <div className="overflow-y-auto flex-1">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-white/8 bg-white/4">
+                    <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">SKU</th>
+                    <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Produto</th>
+                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Qtd</th>
+                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Bipado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.items.map(item => {
+                    const scanned = item.scanned_qty ?? 0;
+                    const done = scanned >= item.quantity;
+                    const partial = scanned > 0 && !done;
+                    return (
+                      <tr key={item.id} className="border-b border-white/5">
+                        <td className="py-2.5 px-4 text-xs font-mono text-white/60">{item.sku}</td>
+                        <td className="py-2.5 px-4 text-xs text-white/80">
+                          {item.product_name}
+                          {item.is_kit_component && (
+                            <span className="ml-1 text-[10px] text-violet-400">(kit)</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4 text-xs text-right text-white/50">{item.quantity}</td>
+                        <td className="py-2.5 px-4 text-xs text-right font-medium">
+                          <span className={done ? 'text-emerald-400' : partial ? 'text-amber-400' : 'text-white/30'}>
+                            {scanned} de {item.quantity}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {order.items.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="text-center text-sm text-white/35 py-8">Sem itens cadastrados</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-white/8 flex justify-between items-center">
+              <p className="text-xs text-white/35">
+                {order.items.length} item(ns) · importado {order.imported_at ? format(new Date(order.imported_at), 'dd/MM/yy HH:mm') : '—'}
+              </p>
+              <button onClick={onClose} className="px-4 py-1.5 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/5 transition">
+                Fechar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de pedidos da sessão ───────────────────────────────
+
+function SessionOrdersModal({
+  session,
+  onClose,
+  onSelectOrder,
+}: {
+  session: PickingSession;
+  onClose: () => void;
+  onSelectOrder: (orderId: number) => void;
+}) {
+  const { data: sessionOrders = [], isLoading } = useQuery(
+    ['session-orders-modal', session.id],
+    () => scanningApi.sessionOrders(session.id).then(r => (r.data as any).orders ?? r.data),
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-gray-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
+        <div className="p-5 border-b border-white/8 flex items-start justify-between">
+          <div>
+            <p className="text-[11px] text-white/35 uppercase tracking-wide">
+              Sessão #{session.id} · {format(new Date(session.session_date + 'T00:00:00'), 'dd/MM/yyyy')}
+            </p>
+            <h3 className="text-base font-semibold text-white mt-0.5">Pedidos da Sessão</h3>
+          </div>
+          <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {isLoading ? (
+            <p className="text-center text-sm text-white/35 py-8">Carregando...</p>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/8 bg-white/4">
+                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">NF</th>
+                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Cliente</th>
+                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Seller</th>
+                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Status</th>
+                  <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Bipagem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(sessionOrders as any[]).map(o => {
+                  const done = o.scanned_items >= o.total_items && o.total_items > 0;
+                  const partial = o.scanned_items > 0 && !done;
+                  return (
+                    <tr
+                      key={o.id}
+                      onClick={() => { onClose(); onSelectOrder(o.id); }}
+                      className="border-b border-white/5 hover:bg-white/4 cursor-pointer transition"
+                    >
+                      <td className="py-2.5 px-4 text-sm font-mono text-white/80">{o.nf_number}</td>
+                      <td className="py-2.5 px-4 text-sm text-white/70 max-w-[160px] truncate">{o.customer_name}</td>
+                      <td className="py-2.5 px-4 text-sm text-white/50">{o.seller}</td>
+                      <td className="py-2.5 px-4"><StatusBadge status={o.status} /></td>
+                      <td className="py-2.5 px-4 text-sm text-right font-medium">
+                        <span className={done ? 'text-emerald-400' : partial ? 'text-amber-400' : 'text-white/30'}>
+                          {o.scanned_items} de {o.total_items}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-white/8 flex justify-between items-center">
+          <p className="text-xs text-white/35">{(sessionOrders as any[]).length} pedido(s)</p>
+          <button onClick={onClose} className="px-4 py-1.5 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/5 transition">
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -324,6 +519,8 @@ export default function OrdersPage() {
   const [sellerFilter, setSellerFilter] = useState('');
   const [carrierFilter, setCarrierFilter] = useState('');
   const [configSession, setConfigSession] = useState<PickingSession | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+  const [selectedSession, setSelectedSession] = useState<PickingSession | null>(null);
   // Filtros por nível de arquivo (sessão)
   const [fileTypeFilter, setFileTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
   const [billingFilter, setBillingFilter] = useState<'' | 'yes' | 'no'>('');
@@ -386,8 +583,8 @@ export default function OrdersPage() {
         if (items.length === 0) {
           // Pedido sem itens carregados: exporta só o cabeçalho
           rows.push([
-            o.nf_number,
-            (o as any).danfe_key ?? '',
+            excelText(o.nf_number),
+            excelText((o as any).danfe_key),
             o.order_date ? format(new Date(o.order_date), 'dd/MM/yyyy') : '',
             (o as any).imported_at ? format(new Date((o as any).imported_at), 'dd/MM/yyyy HH:mm') : '',
             o.customer_name,
@@ -400,8 +597,8 @@ export default function OrdersPage() {
         } else {
           items.forEach((item: any) => {
             rows.push([
-              o.nf_number,
-              (o as any).danfe_key ?? '',
+              excelText(o.nf_number),
+              excelText((o as any).danfe_key),
               (o as any).imported_at ? format(new Date((o as any).imported_at), 'dd/MM/yyyy HH:mm') : '',
               (o as any).imported_at ? format(new Date((o as any).imported_at), 'dd/MM/yyyy HH:mm') : '',
               o.customer_name,
@@ -449,11 +646,10 @@ export default function OrdersPage() {
     if (carrierFilter && o.carrier !== carrierFilter) return false;
     if (billingFilter === 'yes' && !o.for_billing) return false;
     if (billingFilter === 'no' && o.for_billing) return false;
-    // Filtra por file_type usando a sessão do pedido
+    // Filtra por file_type usando a sessão do pedido (normaliza "saida"→"Saída")
     if (fileTypeFilter) {
       const sess = sessions.find(s => s.id === (o as any).session_id);
-      const ft = sess?.file_type;
-      if (ft !== fileTypeFilter) return false;
+      if (normalizeFileType(sess?.file_type) !== fileTypeFilter) return false;
     }
     // Filtros de data — usa imported_at (data do upload, sempre confiável)
     if (dateFrom) {
@@ -501,7 +697,7 @@ export default function OrdersPage() {
   }, {});
 
   const filteredSessions = sessions.filter((s: any) => {
-    if (fileTypeFilter && s.file_type !== fileTypeFilter) return false;
+    if (fileTypeFilter && normalizeFileType(s.file_type) !== fileTypeFilter) return false;
     if (billingFilter === 'yes' && !s.for_billing) return false;
     if (billingFilter === 'no' && s.for_billing) return false;
     // 4c: filtro de data também nos cards de sessão (usa session_date = data upload)
@@ -598,6 +794,7 @@ export default function OrdersPage() {
                 session={session}
                 onOpen={id => navigate(`/scan/${id}`)}
                 onConfig={setConfigSession}
+                onClick={setSelectedSession}
                 sellers={sellersBySession[(session as any).id] ?? []}
               />
             ))}
@@ -690,6 +887,7 @@ export default function OrdersPage() {
                 <OrderRow
                   key={order.id}
                   order={order}
+                  onClick={() => setSelectedOrderId(order.id)}
                 />
               ))}
               {sorted.length === 0 && (
@@ -732,6 +930,23 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {/* Modal de detalhe do pedido */}
+      {selectedOrderId && (
+        <OrderDetailModal
+          orderId={selectedOrderId}
+          onClose={() => setSelectedOrderId(null)}
+        />
+      )}
+
+      {/* Modal de pedidos da sessão */}
+      {selectedSession && (
+        <SessionOrdersModal
+          session={selectedSession}
+          onClose={() => setSelectedSession(null)}
+          onSelectOrder={(id) => { setSelectedSession(null); setSelectedOrderId(id); }}
+        />
+      )}
 
       {/* Modal de configuração da SESSÃO */}
       {configSession && (

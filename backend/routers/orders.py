@@ -12,7 +12,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from ..database import get_db
 from ..auth import get_current_user, require_admin, require_manager_or_above
@@ -271,6 +271,18 @@ def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
+    item_scan_counts = {
+        item.sku: (
+            db.query(func.sum(models.ScanningLog.quantity)).filter(
+                models.ScanningLog.order_id == order.id,
+                models.ScanningLog.sku == item.sku,
+                models.ScanningLog.is_error == False,
+                models.ScanningLog.is_interrupted == False,
+            ).scalar() or 0
+        )
+        for item in order.items
+    }
+
     return schemas.OrderResponse(
         id=order.id,
         erp_code=order.erp_code,
@@ -287,6 +299,7 @@ def get_order(
         danfe_key=order.danfe_key,
         for_billing=order.for_billing,
         imported_at=order.imported_at,
+        session_id=order.session_id,
         items=[
             schemas.OrderItemResponse(
                 id=item.id,
@@ -295,6 +308,7 @@ def get_order(
                 quantity=item.quantity,
                 is_kit_component=item.is_kit_component,
                 original_kit_sku=item.original_kit_sku,
+                scanned_qty=item_scan_counts.get(item.sku, 0),
             )
             for item in order.items
         ],

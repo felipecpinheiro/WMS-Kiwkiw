@@ -4,7 +4,7 @@ Configurações de cobrança por seller e relatórios de faturamento.
 """
 
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime as _dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..auth import get_current_user, require_manager_or_above, require_admin
 from .. import models, schemas
+from ..timezone_utils import end_of_day
 
 router = APIRouter(prefix="/billing", tags=["Faturamento"])
 
@@ -76,8 +77,8 @@ def billing_report(
     # Busca pedidos do período
     orders = db.query(models.Order).filter(
         models.Order.seller_id == seller_id,
-        models.Order.order_date >= date_from,
-        models.Order.order_date <= date_to,
+        models.Order.imported_at >= _dt.combine(date_from, _dt.min.time()),
+        models.Order.imported_at <= end_of_day(date_to),
         models.Order.for_billing == True,
         models.Order.status == "completed",
     ).all()

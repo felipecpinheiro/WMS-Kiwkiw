@@ -4,6 +4,7 @@
  */
 
 import { useState } from 'react';
+import { todayBrasiliaStr } from '../timezone';
 import { useQuery, useQueryClient } from 'react-query';
 import { DollarSign, Check, Save, Download } from 'lucide-react';
 import { billingApi, cadastrosApi } from '../api';
@@ -12,18 +13,16 @@ import toast from 'react-hot-toast';
 export default function BillingPage() {
   const qc = useQueryClient();
   const [sellerId, setSellerId] = useState<number | ''>('');
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => todayBrasiliaStr().slice(0, 7));
   const [config, setConfig] = useState<any>({
-    base_fee: 0, price_per_order: 0, franchise_orders: 0,
-    extra_order_price: 0, storage_fee_per_sku: 0,
+    base_fee: 0, price_per_order: 0, franchise: 1,
+    franchise_orders: 0, extra_order_price: 0,
+    handling: 0, storage_fee_per_sku: 0, storage_included: false,
   });
   const [saving, setSaving] = useState(false);
   // Filtro de data para exportação
-  const [exportFrom, setExportFrom] = useState(() => {
-    const d = new Date(); d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [exportTo, setExportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exportFrom, setExportFrom] = useState(() => todayBrasiliaStr().slice(0, 7) + '-01');
+  const [exportTo, setExportTo] = useState(() => todayBrasiliaStr());
   const [exporting, setExporting] = useState(false);
 
   const handleExport = async () => {
@@ -56,7 +55,21 @@ export default function BillingPage() {
     () => sellerId ? billingApi.config(sellerId).then(r => r.data) : null,
     {
       enabled: !!sellerId,
-      onSuccess: (data) => { if (data) setConfig(data); }
+      onSuccess: (data: any[]) => {
+        if (!data) return;
+        const map: Record<string, string> = {};
+        data.forEach((c: any) => { map[c.config_key] = c.config_value ?? '0'; });
+        setConfig({
+          base_fee:            parseFloat(map['Taxa Base'] ?? '0'),
+          price_per_order:     parseFloat(map['Preço Unitário'] ?? '0'),
+          franchise:           parseInt(map['Franquia'] ?? '1'),
+          franchise_orders:    parseInt(map['Número Mínimo de Pedidos'] ?? '0'),
+          extra_order_price:   parseFloat(map['Preço Adicional'] ?? '0'),
+          handling:            parseFloat(map['Manuseio'] ?? '0'),
+          storage_fee_per_sku: parseFloat(map['Armazenagem'] ?? '0'),
+          storage_included:    (map['Armazenagem Incluso'] ?? '0') !== '0',
+        });
+      }
     }
   );
 
@@ -70,7 +83,17 @@ export default function BillingPage() {
     if (!sellerId) { toast.error('Selecione um seller'); return; }
     setSaving(true);
     try {
-      await billingApi.saveConfig({ ...config, seller_id: sellerId });
+      const entries = [
+        { config_key: 'Taxa Base',               config_value: String(config.base_fee) },
+        { config_key: 'Preço Unitário',           config_value: String(config.price_per_order) },
+        { config_key: 'Franquia',                 config_value: String(config.franchise) },
+        { config_key: 'Número Mínimo de Pedidos', config_value: String(config.franchise_orders) },
+        { config_key: 'Preço Adicional',          config_value: String(config.extra_order_price) },
+        { config_key: 'Manuseio',                 config_value: String(config.handling) },
+        { config_key: 'Armazenagem',              config_value: String(config.storage_fee_per_sku) },
+        { config_key: 'Armazenagem Incluso',      config_value: config.storage_included ? '1' : '0' },
+      ];
+      await Promise.all(entries.map(e => billingApi.saveConfig({ seller_id: Number(sellerId), ...e })));
       toast.success('Configuração salva!');
       qc.invalidateQueries(['billing-config', sellerId]);
     } catch { toast.error('Erro ao salvar configuração'); }
@@ -152,9 +175,11 @@ export default function BillingPage() {
               {[
                 { label: 'Taxa Base (R$)', key: 'base_fee' },
                 { label: 'Preço por Pedido (R$)', key: 'price_per_order' },
-                { label: 'Franquia de Pedidos', key: 'franchise_orders' },
+                { label: 'Ativa Franquia (0 = não, 1 = sim)', key: 'franchise' },
+                { label: 'Número Mínimo de Pedidos (Franquia)', key: 'franchise_orders' },
                 { label: 'Extra por Pedido Acima da Franquia (R$)', key: 'extra_order_price' },
-                { label: 'Taxa de Armazenagem por SKU (R$)', key: 'storage_fee_per_sku' },
+                { label: 'Manuseio (R$)', key: 'handling' },
+                { label: 'Armazenagem por SKU (R$)', key: 'storage_fee_per_sku' },
               ].map(field => (
                 <div key={field.key}>
                   <label className="block text-xs text-white/50 mb-1">{field.label}</label>
@@ -166,6 +191,18 @@ export default function BillingPage() {
                   />
                 </div>
               ))}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="storage_included"
+                  checked={!!config.storage_included}
+                  onChange={e => setConfig((prev: any) => ({ ...prev, storage_included: e.target.checked }))}
+                  className="w-4 h-4 accent-violet-500"
+                />
+                <label htmlFor="storage_included" className="text-xs text-white/50 cursor-pointer">
+                  Armazenagem inclusa no plano
+                </label>
+              </div>
             </div>
             <button onClick={handleSaveConfig} disabled={saving}
               className="mt-4 w-full flex items-center justify-center gap-1.5 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-60 rounded-lg transition">
@@ -181,20 +218,19 @@ export default function BillingPage() {
             {report ? (
               <div className="space-y-3">
                 {[
-                  { label: 'Total de Pedidos', value: report.total_orders, fmt: (v: number) => v.toString() },
-                  { label: 'Taxa Base', value: report.base_fee, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                  { label: 'Cobrança por Pedidos', value: report.orders_fee, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                  { label: 'Pedidos Extras (acima da franquia)', value: report.extra_orders_fee, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                  { label: 'Armazenagem', value: report.storage_fee, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
+                  { label: 'Total de Pedidos',                value: report.total_orders,    fmt: (v: number) => v.toString() },
+                  { label: 'Cobrança por Pedidos',            value: report.base_value,      fmt: (v: number) => `R$ ${v.toFixed(2)}` },
+                  { label: 'Pedidos Extras (acima franquia)', value: report.franchise_value, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
+                  { label: 'Armazenagem',                     value: report.storage,         fmt: (v: number) => `R$ ${v.toFixed(2)}` },
                 ].map(row => (
                   <div key={row.label} className="flex justify-between py-2 border-b border-white/5 last:border-0">
                     <span className="text-sm text-white/60">{row.label}</span>
-                    <span className="text-sm font-medium text-white/90">{row.fmt(row.value)}</span>
+                    <span className="text-sm font-medium text-white/90">{row.fmt(row.value ?? 0)}</span>
                   </div>
                 ))}
                 <div className="flex justify-between py-3 bg-violet-900/25 rounded-lg px-3 mt-2">
                   <span className="text-sm font-bold text-white/80">Total do Mês</span>
-                  <span className="text-lg font-black text-violet-400">R$ {(report.total_fee ?? 0).toFixed(2)}</span>
+                  <span className="text-lg font-black text-violet-400">R$ {(report.total ?? 0).toFixed(2)}</span>
                 </div>
               </div>
             ) : (

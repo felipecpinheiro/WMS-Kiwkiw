@@ -5,6 +5,7 @@ Importação, listagem e gestão de pedidos.
 
 import io
 import os
+import json
 import aiofiles
 from typing import Optional, List
 from datetime import date
@@ -36,6 +37,9 @@ async def import_orders(
     file_type: str = Form("Saída", description="'Entrada' ou 'Saída' (aplica-se a TODOS os pedidos do arquivo)"),
     for_billing: bool = Form(True, description="Considerar este arquivo para faturamento (aplica-se a TODOS os pedidos)"),
     force_duplicates: bool = Form(False, description="Se True, reimporta mesmo havendo NFs já presentes no banco"),
+    inactive_seller_decisions: Optional[str] = Form(
+        None, description='JSON {"<seller_id>": "reactivate"|"ignore"} — decisões para sellers inativos encontrados no arquivo'
+    ),
     current_user: models.User = Depends(require_admin),  # SOMENTE ADMIN importa pedidos
     db: Session = Depends(get_db),
 ):
@@ -49,6 +53,11 @@ async def import_orders(
     Se o arquivo contiver NFs já importadas e `force_duplicates=False`,
     a resposta vem com `requires_confirmation=true` e a lista de duplicados;
     o frontend deve então repetir a chamada com `force_duplicates=true`.
+
+    Se o arquivo referenciar sellers inativos, a resposta vem com
+    `requires_confirmation=true` e a lista em `inactive_sellers`; o frontend
+    deve repetir a chamada enviando `inactive_seller_decisions` com a decisão
+    ("reactivate" ou "ignore") para cada `seller_id` listado.
     """
     if not file.filename.endswith((".xlsx", ".xlsm", ".xls")):
         raise HTTPException(status_code=400, detail="Apenas arquivos Excel são aceitos (.xlsx, .xlsm, .xls)")
@@ -65,6 +74,15 @@ async def import_orders(
         content = await file.read()
         await f.write(content)
 
+    # Decisões de sellers inativos vêm como JSON {"<seller_id>": "reactivate"|"ignore"}
+    decisions_dict = {}
+    if inactive_seller_decisions:
+        try:
+            raw_decisions = json.loads(inactive_seller_decisions)
+            decisions_dict = {int(k): v for k, v in raw_decisions.items()}
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(status_code=400, detail="inactive_seller_decisions inválido — esperado JSON {seller_id: decisão}")
+
     # Importa pedidos — passa as configs de nível de sessão
     result = await import_excel_orders(
         file_path=file_path,
@@ -74,6 +92,7 @@ async def import_orders(
         file_type=file_type_enum,
         for_billing=for_billing,
         force_duplicates=force_duplicates,
+        inactive_seller_decisions=decisions_dict,
     )
 
     if getattr(result, "requires_confirmation", False):
@@ -177,6 +196,7 @@ def list_orders(
     session_id: Optional[int] = None,
     seller_id: Optional[int] = None,
     unit_id: Optional[int] = None,
+    include_inactive_sellers: bool = Query(False, description="Se True, o filtro por unidade também considera sellers inativos"),
     status: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
@@ -202,7 +222,13 @@ def list_orders(
     if seller_id:
         query = query.filter(models.Order.seller_id == seller_id)
     if unit_id:
-        query = query.filter(models.Order.unit_id == unit_id)
+        # Filtra por Seller.unit_id (não Order.unit_id, campo denormalizado que
+        # pode estar desatualizado em pedidos históricos — ver CLAUDE.md).
+        sellers_in_unit_filter = [models.Seller.unit_id == unit_id]
+        if not include_inactive_sellers:
+            sellers_in_unit_filter.append(models.Seller.active == True)
+        sellers_in_unit = db.query(models.Seller.id).filter(*sellers_in_unit_filter).subquery()
+        query = query.filter(models.Order.seller_id.in_(sellers_in_unit))
     if status:
         query = query.filter(models.Order.status == status)
     if date_from:

@@ -1182,6 +1182,7 @@ def _build_progress(order: models.Order, db: Session) -> dict:
 @router.get("/session-cards")
 def session_cards(
     unit_id: Optional[int] = None,
+    include_inactive_sellers: bool = False,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     current_user: models.User = Depends(get_current_user),
@@ -1222,10 +1223,10 @@ def session_cards(
         )
     elif unit_id:
         # Admin filtrou por unidade explicitamente: restringe via sellers da unidade
-        sellers_in_unit = db.query(models.Seller.id).filter(
-            models.Seller.unit_id == unit_id,
-            models.Seller.active == True,
-        ).subquery()
+        unit_seller_filter = [models.Seller.unit_id == unit_id]
+        if not include_inactive_sellers:
+            unit_seller_filter.append(models.Seller.active == True)
+        sellers_in_unit = db.query(models.Seller.id).filter(*unit_seller_filter).subquery()
         q = q.filter(
             _exists().where(
                 (models.Order.session_id == models.PickingSession.id) &

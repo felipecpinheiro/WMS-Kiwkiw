@@ -426,6 +426,10 @@ def bulk_paste_products(
             results["errors"].append(f"Seller '{item.seller_name}' não encontrado")
             results["skipped"] += 1
             continue
+        if not seller.active:
+            results["errors"].append(f"Seller '{item.seller_name}' está inativo — reative-o em Sellers antes de importar")
+            results["skipped"] += 1
+            continue
 
         existing = db.query(models.Product).filter(
             models.Product.seller_id == seller.id,
@@ -545,7 +549,7 @@ async def bulk_upload_products(
     for p in db.query(models.Product).all():
         existing_products[(p.seller_id, p.sku)] = p
 
-    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "sellers_not_found": set()}
+    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "sellers_not_found": set(), "inactive_sellers": set()}
     BATCH = 500
     pending = 0
 
@@ -595,6 +599,10 @@ async def bulk_upload_products(
             results["sellers_not_found"].add(seller_key)
             results["skipped"] += 1
             continue
+        if not seller.active:
+            results["inactive_sellers"].add(seller_key)
+            results["skipped"] += 1
+            continue
 
         key = (seller.id, sku)
         existing = existing_products.get(key)
@@ -632,6 +640,7 @@ async def bulk_upload_products(
 
     # Converte set para lista para serialização JSON
     results["sellers_not_found"] = sorted(results["sellers_not_found"])
+    results["inactive_sellers"] = sorted(results["inactive_sellers"])
 
     # ── Trilha de auditoria: registra import em lote ─────────────────────────
     db.add(models.AuditLog(
@@ -675,6 +684,10 @@ def bulk_import_kits(
         seller = sellers_cache.get(item.seller_name.lower())
         if not seller:
             results["errors"].append(f"Seller '{item.seller_name}' não encontrado")
+            results["skipped"] += 1
+            continue
+        if not seller.active:
+            results["errors"].append(f"Seller '{item.seller_name}' está inativo — reative-o em Sellers antes de importar")
             results["skipped"] += 1
             continue
 

@@ -13,7 +13,7 @@ import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
   ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, DuplicateOrderInfo } from '../api';
+import { dashboardApi, ordersApi, DuplicateOrderInfo, InactiveSellerInfo } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -221,6 +221,14 @@ export default function DashboardPage() {
   const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
   const [carrierModalOrders, setCarrierModalOrders] = useState<any[]>([]);
 
+  // Modal de confirmação quando o arquivo referencia sellers inativos
+  const [inactiveSellers, setInactiveSellers] = useState<InactiveSellerInfo[]>([]);
+  const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
+  const [inactiveDecisions, setInactiveDecisions] = useState<Record<number, 'reactivate' | 'ignore'>>({});
+
+  // Toggle "mostrar sellers inativos" no filtro por unidade do cockpit
+  const [includeInactiveSellers, setIncludeInactiveSellers] = useState(false);
+
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { unit_id: null };
 
@@ -242,8 +250,12 @@ export default function DashboardPage() {
   );
 
   const { data, isLoading, refetch } = useQuery(
-    ['dashboard', targetDate, activeUnitId],
-    () => dashboardApi.master({ target_date: targetDate, unit_id: activeUnitId }).then(r => r.data),
+    ['dashboard', targetDate, activeUnitId, includeInactiveSellers],
+    () => dashboardApi.master({
+      target_date: targetDate,
+      unit_id: activeUnitId,
+      include_inactive_sellers: includeInactiveSellers,
+    }).then(r => r.data),
     { refetchInterval: 60000 }, // atualiza a cada 1 minuto
   );
 
@@ -273,9 +285,10 @@ export default function DashboardPage() {
     e.target.value = '';
   };
 
-  // Chamada base — dispara o POST e trata a resposta (sucesso, duplicata, erro)
-  const runImport = async (forceDuplicates: boolean) => {
+  // Chamada base — dispara o POST e trata a resposta (sucesso, seller inativo, duplicata, erro)
+  const runImport = async (forceDuplicates: boolean, decisionsOverride?: Record<number, 'reactivate' | 'ignore'>) => {
     if (!pendingFile || !user.unit_id) return;
+    const decisions = decisionsOverride ?? inactiveDecisions;
     setUploading(true);
     try {
       const res = await ordersApi.import(pendingFile, user.unit_id, {
@@ -284,6 +297,7 @@ export default function DashboardPage() {
         force_duplicates: forceDuplicates,
         generate_sep_pdf: generateSepPdf,
         generate_exp_pdf: generateExpPdf,
+        inactive_seller_decisions: decisions,
       });
       const data = res.data || ({} as any);
       const {
@@ -296,7 +310,16 @@ export default function DashboardPage() {
         errors = [],
         requires_confirmation = false,
         duplicates: dups = [],
+        inactive_sellers: inactives = [],
       } = data;
+
+      // Backend achou sellers inativos referenciados no arquivo → exibe modal de decisão.
+      if (requires_confirmation && inactives.length > 0) {
+        setInactiveSellers(inactives);
+        setUploadModalOpen(false);
+        setInactiveModalOpen(true);
+        return;
+      }
 
       // Backend detectou NFs já importadas → exibe modal de confirmação.
       if (requires_confirmation && !forceDuplicates) {
@@ -341,6 +364,9 @@ export default function DashboardPage() {
       setUploadModalOpen(false);
       setDuplicateModalOpen(false);
       setDuplicates([]);
+      setInactiveModalOpen(false);
+      setInactiveSellers([]);
+      setInactiveDecisions({});
       setPendingFile(null);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || err.message || 'Erro ao importar arquivo');
@@ -365,6 +391,26 @@ export default function DashboardPage() {
     if (uploading) return;
     setDuplicateModalOpen(false);
     setDuplicates([]);
+    setPendingFile(null);
+  };
+
+  // Passo intermediário (opcional): usuário decide reativar ou ignorar cada seller inativo
+  const handleSetInactiveDecision = (sellerId: number, decision: 'reactivate' | 'ignore') => {
+    setInactiveDecisions(prev => ({ ...prev, [sellerId]: decision }));
+  };
+
+  const allInactiveDecided = inactiveSellers.every(s => !!inactiveDecisions[s.seller_id]);
+
+  const handleConfirmInactiveSellers = () => {
+    setInactiveModalOpen(false);
+    runImport(false, inactiveDecisions);
+  };
+
+  const handleCancelInactiveSellers = () => {
+    if (uploading) return;
+    setInactiveModalOpen(false);
+    setInactiveSellers([]);
+    setInactiveDecisions({});
     setPendingFile(null);
   };
 
@@ -447,6 +493,19 @@ export default function DashboardPage() {
                 ))}
               </select>
             </div>
+          )}
+
+          {/* Toggle: incluir sellers inativos no filtro por unidade */}
+          {(user.role === 'admin' || user.role === 'manager') && activeUnitId && (
+            <label className="flex items-center gap-1.5 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg text-xs text-white/60 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeInactiveSellers}
+                onChange={e => setIncludeInactiveSellers(e.target.checked)}
+                className="accent-violet-500"
+              />
+              Mostrar sellers inativos
+            </label>
           )}
 
           {/* Seletor de data */}
@@ -864,7 +923,7 @@ export default function DashboardPage() {
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 hover:bg-emerald-900/35' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
+                        <FileText size={11} /> Expedição{sess.separation_pdf ? ' ✓' : ''}
                       </button>
                       <button
                         onClick={() =>
@@ -873,7 +932,7 @@ export default function DashboardPage() {
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-blue-300 bg-blue-900/25 border border-blue-500/20 hover:bg-blue-900/40' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
+                        <FileText size={11} /> Separação{sess.expedition_pdf ? ' ✓' : ''}
                       </button>
                     </div>
                   </div>
@@ -1060,6 +1119,80 @@ export default function DashboardPage() {
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Reimportar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmação de sellers inativos */}
+      {inactiveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelInactiveSellers}>
+          <div
+            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-yellow-900/30">
+                <AlertTriangle size={20} className="text-yellow-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">
+                  {inactiveSellers.length} seller(s) inativo(s) neste arquivo
+                </h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Escolha, para cada seller, se deseja reativá-lo e importar os pedidos dele, ou ignorar só os pedidos desse seller neste arquivo.
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+              {inactiveSellers.map((s) => (
+                <div key={s.seller_id} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-white/90 truncate">{s.seller_name}</p>
+                    <p className="text-xs text-white/35">{s.nf_numbers.length} NF(s): {s.nf_numbers.slice(0, 5).join(', ')}{s.nf_numbers.length > 5 ? '…' : ''}</p>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => handleSetInactiveDecision(s.seller_id, 'reactivate')}
+                      className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
+                        inactiveDecisions[s.seller_id] === 'reactivate'
+                          ? 'bg-violet-600 border-violet-600 text-white'
+                          : 'border-white/12 text-white/50 hover:text-white hover:border-white/25'
+                      }`}
+                    >
+                      Reativar
+                    </button>
+                    <button
+                      onClick={() => handleSetInactiveDecision(s.seller_id, 'ignore')}
+                      className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
+                        inactiveDecisions[s.seller_id] === 'ignore'
+                          ? 'bg-white/15 border-white/25 text-white'
+                          : 'border-white/12 text-white/50 hover:text-white hover:border-white/25'
+                      }`}
+                    >
+                      Ignorar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2 justify-end mt-2">
+              <button
+                onClick={handleCancelInactiveSellers}
+                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
+              >
+                Cancelar importação
+              </button>
+              <button
+                onClick={handleConfirmInactiveSellers}
+                disabled={!allInactiveDecided}
+                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40"
+                style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
+              >
+                Continuar
               </button>
             </div>
           </div>

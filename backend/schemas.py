@@ -686,6 +686,13 @@ class DuplicateOrderInfo(BaseModel):
     existing_imported_at: Optional[datetime] = None
 
 
+class InactiveSellerInfo(BaseModel):
+    """Seller inativo referenciado por linhas do arquivo sendo importado."""
+    seller_id: int
+    seller_name: str
+    nf_numbers: List[str] = []
+
+
 class ImportResult(BaseModel):
     """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
     success: bool = False
@@ -699,3 +706,4 @@ class ImportResult(BaseModel):
     warnings: List[str] = []
     requires_confirmation: bool = False
     duplicates: List[DuplicateOrderInfo] = []
+    inactive_sellers: List[InactiveSellerInfo] = []

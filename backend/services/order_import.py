@@ -124,10 +124,10 @@ def parse_date_safe(value) -> Optional[date]:
     return None
 
 
-def _build_seller_alias_map(db: Session) -> dict:
+def _build_seller_alias_map(db: Session, active: bool = True) -> dict:
     """
-    Carrega todos os sellers ativos uma única vez e constrói um dict de lookup:
-        alias_normalizado (lower+strip) → objeto models.Seller
+    Carrega os sellers (ativos ou inativos, conforme `active`) uma única vez e
+    constrói um dict de lookup: alias_normalizado (lower+strip) → objeto models.Seller
 
     Inclui três fontes de chave por seller:
       1. trade_name  — apelido oficial (ex: "YUGEN")
@@ -135,7 +135,7 @@ def _build_seller_alias_map(db: Session) -> dict:
       3. other_aliases — strings extras separadas por ";" cadastradas pelo usuário
                         (ex: "MERU SERVICOS EMPRESARIAIS E VAREJO LTDA;MERU SERVICOS")
     """
-    sellers = db.query(models.Seller).filter(models.Seller.active == True).all()
+    sellers = db.query(models.Seller).filter(models.Seller.active == active).all()
     alias_map: dict[str, models.Seller] = {}
     for s in sellers:
         for key in (s.trade_name, s.name):
@@ -441,6 +441,17 @@ def import_orders_from_excel_sync(
             details="",
         )
 
+    # ── Confirmação necessária (sellers inativos) ───────────────────────────────
+    # O watcher roda sozinho, sem alguém pra confirmar — trata como falha e
+    # deixa o arquivo para reimportação manual via tela, onde há o modal de decisão.
+    if result.requires_confirmation and result.inactive_sellers:
+        inactives = result.inactive_sellers
+        detail_lines = [f"{i.seller_name}: {len(i.nf_numbers)} NF(s)" for i in inactives[:5]]
+        raise WatcherImportError(
+            reason=f"{len(inactives)} seller(s) inativo(s) no arquivo — requer confirmação manual",
+            details="\n".join(detail_lines),
+        )
+
     # ── Confirmação necessária (NFs duplicadas) ────────────────────────────────
     if result.requires_confirmation:
         dups = result.duplicates or []
@@ -473,6 +484,7 @@ async def import_excel_orders(
     file_type: Optional["models.FileType"] = None,
     for_billing: bool = True,
     force_duplicates: bool = False,
+    inactive_seller_decisions: Optional[dict] = None,
 ) -> schemas.ImportResult:
     """
     Importa arquivo Excel de pedidos (gerado pelo robô de captura dos ERPs).
@@ -486,10 +498,17 @@ async def import_excel_orders(
       - force_duplicates: se False (default), aborta quando detecta NFs que já
         existem no banco e retorna a lista de duplicatas para confirmação
         pelo usuário. Se True, reimporta os duplicados como novos pedidos.
+      - inactive_seller_decisions: dict {seller_id: "reactivate" | "ignore"}.
+        Se o arquivo referenciar sellers inativos e este dict não cobrir todos
+        eles, a importação aborta e retorna `requires_confirmation=True` com a
+        lista em `inactive_sellers` para o usuário decidir. "reactivate"
+        reativa o seller (active=True) antes de importar seus pedidos;
+        "ignore" pula apenas os pedidos daquele seller, sem tocar nos demais.
     """
     errors = []
     warnings = []
     duplicates_info: List[schemas.DuplicateOrderInfo] = []
+    inactive_seller_decisions = inactive_seller_decisions or {}
     orders_imported = 0
     kits_expanded = 0
 
@@ -514,10 +533,15 @@ async def import_excel_orders(
 
         cmap = _build_column_map(header_row)
 
-        # ── Constrói mapa de aliases uma única vez ──────────────────────────────
+        # ── Constrói mapas de aliases uma única vez ─────────────────────────────
         # Permite resolução O(1) de "MERU SERVICOS EMPRESARIAIS" → "YUGEN" para
         # todas as linhas do arquivo, sem queries adicionais por row.
-        seller_alias_map = _build_seller_alias_map(db)
+        # Mapa de inativos é separado para nunca ser usado silenciosamente na
+        # criação/atualização de pedidos sem confirmação explícita do usuário.
+        seller_alias_map = _build_seller_alias_map(db, active=True)
+        inactive_seller_alias_map = _build_seller_alias_map(db, active=False)
+        # Usado só para resolver o nome canônico exibido (não decide ativo/inativo)
+        seller_name_resolve_map = {**inactive_seller_alias_map, **seller_alias_map}
 
         # Valida campos essenciais
         required = ["nf_number", "sku", "seller_name"]
@@ -572,7 +596,7 @@ async def import_excel_orders(
             seller_name_raw = str(get(row, "seller_name")).strip() if get(row, "seller_name") else None
             # ── Resolução de aliases: substitui razão social / apelido alternativo
             # pelo trade_name canônico do seller (ex: "MERU SERVICOS..." → "YUGEN")
-            seller_name     = _resolve_seller_name(seller_name_raw, seller_alias_map) if seller_name_raw else None
+            seller_name     = _resolve_seller_name(seller_name_raw, seller_name_resolve_map) if seller_name_raw else None
             expedition_date = parse_date_safe(get(row, "expedition_date"))
             nature          = str(get(row, "nature")).strip() if get(row, "nature") else None
             nf_key_raw      = get(row, "nf_key")
@@ -622,20 +646,93 @@ async def import_excel_orders(
                     "quantity": quantity,
                 })
 
+        # ── RESOLUÇÃO ÚNICA DE SELLER POR PEDIDO ────────────────────
+        # Resolve o seller de cada order_key uma única vez (reaproveitado nas
+        # checagens abaixo e na persistência), já distinguindo sellers ativos
+        # de inativos — o mapa de inativos nunca é usado silenciosamente.
+        order_key_seller_map: dict[str, models.Seller] = {}
+        for order_key, order_data in orders_dict.items():
+            resolved_key = order_data["seller_name"].strip().lower()
+            seller_obj = seller_alias_map.get(resolved_key) or inactive_seller_alias_map.get(resolved_key)
+            if not seller_obj:
+                # Fallback para query direta (seller novo, ainda não em nenhum mapa)
+                seller_obj = db.query(models.Seller).filter(
+                    (models.Seller.trade_name == order_data["seller_name"]) |
+                    (models.Seller.name == order_data["seller_name"])
+                ).first()
+            if seller_obj:
+                order_key_seller_map[order_key] = seller_obj
+
+        # ── PRÉ-CHECAGEM DE SELLERS INATIVOS ────────────────────────
+        # Um seller inativo referenciado no arquivo nunca deve receber pedido
+        # novo silenciosamente. Exige decisão explícita: reativar ou ignorar
+        # apenas os pedidos daquele seller neste arquivo.
+        inactive_sellers_found: dict[int, schemas.InactiveSellerInfo] = {}
+        for order_key, order_data in orders_dict.items():
+            seller_obj = order_key_seller_map.get(order_key)
+            if seller_obj and not seller_obj.active:
+                info = inactive_sellers_found.setdefault(
+                    seller_obj.id,
+                    schemas.InactiveSellerInfo(seller_id=seller_obj.id, seller_name=seller_obj.trade_name, nf_numbers=[]),
+                )
+                info.nf_numbers.append(order_data["nf_number"])
+
+        missing_decisions = [
+            sid for sid in inactive_sellers_found
+            if inactive_seller_decisions.get(sid) not in ("reactivate", "ignore")
+        ]
+        if inactive_sellers_found and missing_decisions:
+            # Aborta sem criar nada — frontend vai perguntar ao usuário
+            return schemas.ImportResult(
+                success=False,
+                message=(
+                    f"{len(inactive_sellers_found)} seller(s) deste arquivo estão inativos. "
+                    f"Confirme se deseja reativá-los ou ignorar os pedidos deles neste arquivo."
+                ),
+                total_rows=total_rows,
+                orders_imported=0,
+                orders_with_kits=0,
+                errors=[],
+                warnings=warnings,
+                requires_confirmation=True,
+                inactive_sellers=list(inactive_sellers_found.values()),
+            )
+
+        # Aplica as decisões: reativa (com auditoria) ou marca pedidos p/ ignorar
+        ignored_order_keys: set[str] = set()
+        for seller_id, decision in inactive_seller_decisions.items():
+            if seller_id not in inactive_sellers_found:
+                continue
+            seller_obj = next(
+                (s for s in order_key_seller_map.values() if s.id == seller_id), None
+            )
+            if not seller_obj:
+                continue
+            if decision == "reactivate":
+                seller_obj.active = True
+                db.add(models.AuditLog(
+                    entity_type="Seller",
+                    entity_id=seller_obj.id,
+                    action="REACTIVATE",
+                    detail=f"Seller '{seller_obj.trade_name}' reativado automaticamente durante import de pedidos (arquivo {os.path.basename(file_path)})",
+                    user_id=created_by_id,
+                ))
+            elif decision == "ignore":
+                for order_key, order_data in orders_dict.items():
+                    if order_key_seller_map.get(order_key) and order_key_seller_map[order_key].id == seller_id:
+                        ignored_order_keys.add(order_key)
+                        warnings.append(
+                            f"NF {order_data['nf_number']} do seller '{order_data['seller_name']}' ignorada — seller inativo (confirmado pelo usuário)"
+                        )
+
         # ── PRÉ-CHECAGEM DE DUPLICATAS ──────────────────────────────
         # Antes de criar qualquer coisa, verifica se alguma NF deste arquivo
         # já existe no banco. Se sim e o usuário não confirmou (force_duplicates=False),
         # abortamos e devolvemos a lista pro frontend exibir e perguntar.
         for order_key, order_data in orders_dict.items():
-            # Usa o mapa em memória (seller_name já está resolvido pelo alias neste ponto)
-            resolved_key = order_data["seller_name"].strip().lower()
-            seller_obj = seller_alias_map.get(resolved_key)
-            if not seller_obj:
-                # Fallback para query direta (seller novo, ainda não no mapa)
-                seller_obj = db.query(models.Seller).filter(
-                    (models.Seller.trade_name == order_data["seller_name"]) |
-                    (models.Seller.name == order_data["seller_name"])
-                ).first()
+            if order_key in ignored_order_keys:
+                continue
+            seller_obj = order_key_seller_map.get(order_key)
             if not seller_obj:
                 # seller ainda não cadastrado → impossível ser duplicata
                 continue
@@ -679,7 +776,7 @@ async def import_excel_orders(
             session_date=today,
             unit_id=unit_id,
             status=models.OrderStatus.PENDING,
-            total_orders=len(orders_dict),
+            total_orders=len(orders_dict) - len(ignored_order_keys),
             completed_orders=0,
             created_by_id=created_by_id,
             source_file=os.path.basename(file_path),
@@ -695,9 +792,14 @@ async def import_excel_orders(
 
         # Persiste os pedidos
         for order_key, order_data in orders_dict.items():
+            if order_key in ignored_order_keys:
+                continue
             try:
-                # Resolve o seller (usa mapa em memória — sem query extra)
-                seller = get_or_create_seller(db, order_data["seller_name"], alias_map=seller_alias_map)
+                # Reaproveita o seller já resolvido (inclui reativados); se for
+                # seller novo (não visto na resolução acima), cria agora.
+                seller = order_key_seller_map.get(order_key) or get_or_create_seller(
+                    db, order_data["seller_name"], alias_map=seller_alias_map
+                )
 
                 is_duplicate = (order_data["nf_number"], order_data["seller_name"]) in duplicate_keys
                 if is_duplicate and force_duplicates:

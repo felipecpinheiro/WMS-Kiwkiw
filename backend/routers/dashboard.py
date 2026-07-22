@@ -124,6 +124,7 @@ def debug_state(
 def master_dashboard(
     target_date: Optional[date] = None,
     unit_id: Optional[int] = None,
+    include_inactive_sellers: bool = False,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -145,10 +146,10 @@ def master_dashboard(
     # (campo denormalizado que pode estar desatualizado em pedidos históricos)
     base_filter = [_imported_on(target)]
     if unit_id:
-        sellers_in_unit = db.query(models.Seller.id).filter(
-            models.Seller.unit_id == unit_id,
-            models.Seller.active  == True,
-        ).subquery()
+        unit_seller_filter = [models.Seller.unit_id == unit_id]
+        if not include_inactive_sellers:
+            unit_seller_filter.append(models.Seller.active == True)
+        sellers_in_unit = db.query(models.Seller.id).filter(*unit_seller_filter).subquery()
         base_filter.append(models.Order.seller_id.in_(sellers_in_unit))
     if manager_seller_ids:
         base_filter.append(models.Order.seller_id.in_(manager_seller_ids))
@@ -194,10 +195,10 @@ def master_dashboard(
             continue
 
         # Sellers que pertencem a esta unidade
-        sellers_of_unit = db.query(models.Seller.id).filter(
-            models.Seller.unit_id == unit.id,
-            models.Seller.active  == True,
-        ).subquery()
+        unit_of_seller_filter = [models.Seller.unit_id == unit.id]
+        if not include_inactive_sellers:
+            unit_of_seller_filter.append(models.Seller.active == True)
+        sellers_of_unit = db.query(models.Seller.id).filter(*unit_of_seller_filter).subquery()
 
         unit_filter = [
             _imported_on(target),

@@ -221,6 +221,12 @@ export interface DuplicateOrderInfo {
   existing_imported_at: string | null;
 }
 
+export interface InactiveSellerInfo {
+  seller_id: number;
+  seller_name: string;
+  nf_numbers: string[];
+}
+
 export interface ImportResult {
   success: boolean;
   message: string;
@@ -232,6 +238,7 @@ export interface ImportResult {
   warnings: string[];
   requires_confirmation: boolean;
   duplicates: DuplicateOrderInfo[];
+  inactive_sellers: InactiveSellerInfo[];
 }
 
 export interface ScanRequest {
@@ -297,7 +304,7 @@ export const authApi = {
 // ============================================================
 
 export const dashboardApi = {
-  master: (params?: { target_date?: string; unit_id?: number }) =>
+  master: (params?: { target_date?: string; unit_id?: number; include_inactive_sellers?: boolean }) =>
     api.get<DashboardStats>('/dashboard/master', { params }),
   seller: (params?: { date_from?: string; date_to?: string; seller_id?: number }) =>
     api.get('/dashboard/seller', { params }),
@@ -324,6 +331,7 @@ export const ordersApi = {
       force_duplicates?: boolean;
       generate_sep_pdf?: boolean;
       generate_exp_pdf?: boolean;
+      inactive_seller_decisions?: Record<number, 'reactivate' | 'ignore'>;
     } = {},
   ) => {
     const form = new FormData();
@@ -332,6 +340,9 @@ export const ordersApi = {
     form.append('file_type', opts.file_type || 'Saída');
     form.append('for_billing', String(opts.for_billing ?? true));
     form.append('force_duplicates', String(opts.force_duplicates ?? false));
+    if (opts.inactive_seller_decisions && Object.keys(opts.inactive_seller_decisions).length > 0) {
+      form.append('inactive_seller_decisions', JSON.stringify(opts.inactive_seller_decisions));
+    }
     return api.post<ImportResult>('/orders/import', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });

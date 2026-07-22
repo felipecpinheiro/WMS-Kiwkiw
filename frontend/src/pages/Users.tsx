@@ -332,7 +332,9 @@ export default function UsersPage() {
                 </div>
 
                 <div className="text-xs text-white/35 space-y-0.5 mb-3">
-                  {u.unit_name && (
+                  {u.role === 'admin' ? (
+                    <p>Unidades: <span className="text-white/60">Todas</span></p>
+                  ) : u.unit_name && (
                     <p>Unidade: <span className="text-white/60">{u.unit_name}</span></p>
                   )}
                   {u.seller_names && u.seller_names.length > 0 && (
@@ -492,19 +494,25 @@ export default function UsersPage() {
               {showUnit && (
                 <div>
                   <label className="block text-xs text-white/50 mb-1">Unidade</label>
-                  <div className="relative">
-                    <select
-                      value={form.unit_id}
-                      onChange={e => f('unit_id', e.target.value ? Number(e.target.value) : '')}
-                      className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
-                    >
-                      <option value="">Selecione uma unidade...</option>
-                      {units.map((u: any) => (
-                        <option key={u.id} value={u.id}>{u.name}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
-                  </div>
+                  {form.role === 'admin' ? (
+                    <div className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white/60">
+                      Todas as unidades
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <select
+                        value={form.unit_id}
+                        onChange={e => f('unit_id', e.target.value ? Number(e.target.value) : '')}
+                        className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
+                      >
+                        <option value="">Selecione uma unidade...</option>
+                        {units.map((u: any) => (
+                          <option key={u.id} value={u.id}>{u.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+                    </div>
+                  )}
                 </div>
               )}
 

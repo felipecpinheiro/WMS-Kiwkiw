@@ -187,7 +187,7 @@ def master_dashboard(
     units = db.query(models.Unit).filter(models.Unit.active == True).all()
     units_summary = []
     for unit in units:
-        if unit_id and unit_id != unit.id:
+        if unit_id and unit_id != unit.id and user_role != "admin":
             units_summary.append({
                 "unit_id": unit.id, "unit_name": unit.name,
                 "total": 0, "completed": 0, "pct": 0,

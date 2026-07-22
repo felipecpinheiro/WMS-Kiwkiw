@@ -306,6 +306,7 @@ export default function SellerPortalPage() {
   const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
   const ordersCompleted = dashboard?.orders_completed ?? 0;
   const ordersPending   = dashboard?.orders_pending ?? 0;
+  const ordersInterrupted = orders.filter((o: any) => o.status === 'interrupted').length;
   const initials = user.name
     ? user.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
     : 'S';
@@ -358,6 +359,7 @@ export default function SellerPortalPage() {
           {[
             { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-white/80' },
             { label: 'Concluídos',    value: ordersCompleted,                color: 'text-green-400' },
+            { label: 'Interrompidos', value: ordersInterrupted,              color: 'text-orange-400' },
             { label: 'Pendentes',     value: ordersPending,                  color: 'text-violet-400' },
             { label: 'Estoque Baixo', value: (stock as any[]).filter((s: any) => s.level === 'BAIXO').length, color: 'text-red-400' },
           ].map(k => (

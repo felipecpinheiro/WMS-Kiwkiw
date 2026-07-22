@@ -146,7 +146,7 @@ export default function UnitsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {(units as any[]).map((u: any) => {
-            const unitSellers = (allSellers as any[]).filter((s: any) => s.unit_id === u.id);
+            const unitSellers = (allSellers as any[]).filter((s: any) => s.unit_id === u.id && s.active !== false);
             return (
               <div key={u.id} className="bg-gray-900 rounded-2xl border border-white/8 p-5 flex flex-col gap-4">
                 {/* Cabeçalho do card */}

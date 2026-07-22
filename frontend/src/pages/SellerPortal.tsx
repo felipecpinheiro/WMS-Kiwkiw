@@ -248,7 +248,7 @@ export default function SellerPortalPage() {
   const orders = dashboard?.recent_orders ?? [];
   const filteredOrders = orders.filter((o: any) =>
     (!search || o.nf_number?.includes(search) || o.customer_name?.toLowerCase().includes(search.toLowerCase())) &&
-    (!statusFilter || o.status === statusFilter),
+    (!statusFilter || (STATUS_CONFIG[o.status]?.label ?? o.status) === statusFilter),
   );
 
   // ── Estoque com sort ───────────────────────────────────────────────────────
@@ -525,9 +525,8 @@ export default function SellerPortalPage() {
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
                   className="border border-white/12 rounded-lg px-3 py-1.5 text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500">
                   <option value="">Todos os status</option>
-                  {Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([k, v]) => (
-                    <option key={k} value={k}>{v.label}</option>
-                  ))}
+                  {Array.from(new Set(Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([, v]) => v.label)))
+                    .map(label => <option key={label} value={label}>{label}</option>)}
                 </select>
               </div>
 

@@ -528,7 +528,10 @@ def seller_dashboard(
         *base_filter, models.Order.status == models.OrderStatus.COMPLETED,
     ).scalar() or 0
     pending = total - completed
-    completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+    interrupted = db.query(func.count(models.Order.id)).filter(
+        *base_filter, models.Order.status == models.OrderStatus.INTERRUPTED,
+    ).scalar() or 0
+    completion_rate = round(((completed + interrupted) / total * 100) if total > 0 else 0, 1)
 
     recent_orders = db.query(models.Order).filter(
         *base_filter

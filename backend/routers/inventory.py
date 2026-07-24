@@ -1064,10 +1064,26 @@ async def execute_history_import(
     if products_created:
         db.commit()
 
-    # Importa movimentações
+    # ── Importa movimentações ────────────────────────────────────────────────
+    # Planilhas de histórico chegam a 150k linhas. Uma consulta por linha
+    # (produto + posição) estouraria o timeout, então pré-carrega tudo em
+    # memória e grava em blocos, como já faz o /bulk-stock-upload.
     imported = 0
     skipped_dup = 0
     errors = []
+
+    nomes_por_sku = {
+        p.sku: p.name
+        for p in db.query(models.Product.sku, models.Product.name).filter(
+            models.Product.seller_id == seller_id,
+        ).all()
+    }
+
+    now_ts = now_brasilia()
+    pending: list[dict] = []
+    delta_in: dict = defaultdict(int)
+    delta_out: dict = defaultdict(int)
+    nome_final: dict = {}
 
     for r in rows:
         try:
@@ -1080,54 +1096,88 @@ async def execute_history_import(
         except Exception:
             nf_date = None
 
-        try:
-            mt = (
-                models.MovementType.IN
-                if r["movement_type"] == "Entrada"
-                else models.MovementType.OUT
-            )
-        except Exception:
-            errors.append(f"Tipo inválido: {r['movement_type']} (SKU {r['sku']})")
-            continue
+        is_in = r["movement_type"] == "Entrada"
+        mt = models.MovementType.IN if is_in else models.MovementType.OUT
 
-        # Resolve nome do produto
-        product_name = names_map.get(r["sku"]) or r["product_name_from_sheet"]
-        prod = db.query(models.Product).filter(
-            models.Product.seller_id == seller_id,
-            models.Product.sku == r["sku"],
-        ).first()
-        if prod:
-            product_name = prod.name
-
-        # Cria movimento
-        movement = models.StockMovement(
-            seller_id=seller_id,
-            sku=r["sku"],
-            product_name=product_name,
-            movement_date=mov_date,
-            movement_type=mt,
-            quantity=r["quantity"],
-            adjusted_quantity=r["quantity"],
-            nf_number=r["nf_number"],
-            nf_date=nf_date,
-            observation=r["observation"],
-            operator_id=current_user.id,
-            created_at=now_brasilia(),
+        sku = r["sku"]
+        # Nome cadastrado tem prioridade; senão o informado no modal; senão o da planilha
+        product_name = (
+            nomes_por_sku.get(sku)
+            or names_map.get(sku)
+            or r["product_name_from_sheet"]
         )
-        db.add(movement)
 
-        # Atualiza posição
-        update_stock_position(
-            seller_id=seller_id,
-            sku=r["sku"],
-            product_name=product_name,
-            movement_type=mt,
-            quantity=r["quantity"],
-            db=db,
-        )
+        pending.append({
+            "seller_id":     seller_id,
+            "sku":           sku,
+            "product_name":  product_name,
+            "movement_date": str(mov_date),
+            "movement_type": mt.value,
+            "quantity":      r["quantity"],
+            "adjusted_quantity": r["quantity"],
+            "nf_number":     r["nf_number"],
+            "nf_date":       str(nf_date) if nf_date else None,
+            "observation":   r["observation"],
+            "operator_id":   current_user.id,
+            "created_at":    str(now_ts),
+        })
+
+        if is_in:
+            delta_in[sku] += r["quantity"]
+        else:
+            delta_out[sku] += r["quantity"]
+        nome_final.setdefault(sku, product_name)
         imported += 1
 
-    db.commit()
+    try:
+        CHUNK = 5_000
+        raw_conn = db.connection()
+        for i in range(0, len(pending), CHUNK):
+            raw_conn.execute(
+                text("""
+                    INSERT INTO stock_movements
+                        (seller_id, sku, product_name, movement_date, movement_type,
+                         quantity, adjusted_quantity, nf_number, nf_date, observation,
+                         operator_id, created_at)
+                    VALUES
+                        (:seller_id, :sku, :product_name, :movement_date, :movement_type,
+                         :quantity, :adjusted_quantity, :nf_number, :nf_date, :observation,
+                         :operator_id, :created_at)
+                """),
+                pending[i: i + CHUNK],
+            )
+
+        # Posições: carrega as existentes de uma vez e aplica os deltas acumulados
+        afetados = set(delta_in) | set(delta_out)
+        positions_map = {
+            p.sku: p
+            for p in db.query(models.StockPosition).filter(
+                models.StockPosition.seller_id == seller_id,
+                models.StockPosition.sku.in_(list(afetados)),
+            ).all()
+        } if afetados else {}
+
+        for sku in afetados:
+            pos = positions_map.get(sku)
+            if pos is None:
+                pos = models.StockPosition(
+                    seller_id=seller_id, sku=sku, product_name=nome_final.get(sku, sku),
+                    initial_stock=0, total_in=0, total_out=0, current_stock=0,
+                )
+                db.add(pos)
+                positions_map[sku] = pos
+            pos.total_in  = (pos.total_in  or 0) + delta_in[sku]
+            pos.total_out = (pos.total_out or 0) + delta_out[sku]
+            pos.current_stock = (pos.initial_stock or 0) + pos.total_in - pos.total_out
+            pos.level = calculate_stock_level(pos.current_stock)
+            pos.updated_at = now_ts
+            if not pos.product_name:
+                pos.product_name = nome_final.get(sku, sku)
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, f"Erro ao gravar no banco — nenhuma movimentação foi salva: {exc}")
 
     return {
         "imported": imported,

@@ -193,6 +193,13 @@ def update_stock_position(
             current_stock=0,
         )
         db.add(position)
+        # A sessão usa autoflush=False: sem o flush, esta posição continuaria
+        # apenas na memória e a próxima chamada para o MESMO sku não a
+        # encontraria na query acima — criando uma segunda posição e violando
+        # a unique (seller_id, sku) no commit. Acontece sempre que um SKU tem
+        # mais de uma movimentação no mesmo lote (import de histórico, ou o
+        # mesmo SKU em dois pedidos da mesma sessão de bipagem).
+        db.flush()
 
     if movement_type == models.MovementType.IN:
         position.total_in += quantity

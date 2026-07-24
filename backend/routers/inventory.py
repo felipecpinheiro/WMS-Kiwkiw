@@ -242,7 +242,7 @@ def get_movements(
     where_clause = " AND ".join(conditions)
     sql = text(f"""
         SELECT id, seller_id, sku, product_name, movement_date, movement_type,
-               quantity, adjusted_quantity, nf_number, nature,
+               quantity, adjusted_quantity, nf_number, nf_date, nature,
                order_id, session_id, observation, created_at
         FROM stock_movements
         WHERE {where_clause}
@@ -266,6 +266,7 @@ def get_movements(
             "quantity":          r.quantity,
             "adjusted_quantity": r.adjusted_quantity,
             "nf_number":         r.nf_number,
+            "nf_date":           str(r.nf_date) if r.nf_date else None,
             "nature":            r.nature,
             "order_id":          r.order_id,
             "session_id":        r.session_id,
@@ -837,6 +838,13 @@ def _parse_history_excel(file_bytes: bytes):
     Linha 2: nomes das colunas
     Linha 3+: dados
     Colunas: B=Log, C=Tipo, D=Data, E=SKU, F=Quantidade, H=Nome, I=Observação, AB=#NF
+
+    Duas datas distintas, ambas preservadas:
+      - B (Log)  → data em que a Kiwkiw processou a movimentação → movement_date.
+                   A planilha de origem só preenche o Log na PRIMEIRA linha de cada
+                   bloco lançado; as seguintes vêm vazias e herdam o valor de cima
+                   (forward-fill).
+      - D (Data) → data em que o seller emitiu a NF → nf_date (controle do seller).
     """
     try:
         import openpyxl
@@ -862,20 +870,36 @@ def _parse_history_excel(file_bytes: bytes):
             detail="Aba 'DETALHADO' não encontrada no arquivo Excel.",
         )
 
+    def _to_date(value):
+        """Converte célula do Excel em date; devolve None se não for data."""
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return None
+
     rows = []
+    last_log = None   # forward-fill: último Log preenchido
     # Pula linhas 1 (merge) e 2 (cabeçalho), lê a partir da linha 3
     for i, row in enumerate(sheet.iter_rows(values_only=True, min_row=3)):
         # Garante acesso seguro a qualquer índice (linhas curtas retornam None)
         def _cell(idx: int):
             return row[idx] if len(row) > idx else None
 
-        data   = _cell(1)   # col B (Log — timestamp da movimentação)
+        log    = _cell(1)   # col B (Log — quando a Kiwkiw processou)
         tipo   = _cell(2)   # col C
+        nf_dt  = _cell(3)   # col D (data da NF emitida pelo seller)
         sku    = _cell(4)   # col E
         qty    = _cell(5)   # col F
         nome   = _cell(7)   # col H
         obs    = _cell(8)   # col I
         nf     = _cell(27)  # col AB
+
+        # Forward-fill: linha sem Log herda o da linha de cima
+        log_date = _to_date(log)
+        if log_date is not None:
+            last_log = log_date
+        data = last_log
 
         # Ignora linhas sem SKU ou quantidade
         if not sku or qty is None:
@@ -898,19 +922,17 @@ def _parse_history_excel(file_bytes: bytes):
         else:
             tipo_norm = "Entrada"
 
-        # Normaliza data
-        if isinstance(data, datetime):
-            mov_date = data.date()
-        elif isinstance(data, date) and not isinstance(data, datetime):
-            mov_date = data
-        else:
-            mov_date = today_brasilia()
+        # Data da movimentação: Log (com forward-fill). Sem Log em nenhuma linha
+        # anterior, cai na data da NF; em último caso, hoje.
+        nf_date = _to_date(nf_dt)
+        mov_date = data or nf_date or today_brasilia()
 
         rows.append({
             "sku": sku,
             "product_name_from_sheet": str(nome).strip() if nome else sku,
             "movement_type": tipo_norm,
             "movement_date": str(mov_date),
+            "nf_date": str(nf_date) if nf_date else None,
             "quantity": qty_int,
             "observation": str(obs).strip() if obs else None,
             "nf_number": str(nf).strip() if nf else None,
@@ -975,12 +997,16 @@ async def execute_history_import(
     seller_id: int,
     file: UploadFile = File(...),
     product_names: str = Form("{}"),
+    force: bool = Form(False),
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
     """
     Fase 2: importa o histórico de movimentações.
     - product_names: JSON {sku: name} para produtos a cadastrar
+    - force: quando False (padrão), a importação é BLOQUEADA se sobrar algum SKU
+      sem cadastro no seller — evita criar estoque de produto inexistente.
+      O frontend oferece "Cadastrar mesmo assim", que envia force=True.
     - Cria produtos novos, depois importa todas as movimentações
     - Recalcula posições de estoque
     """
@@ -992,6 +1018,31 @@ async def execute_history_import(
         names_map: dict = json.loads(product_names)
     except Exception:
         names_map = {}
+
+    # ── Trava: nenhum SKU pode ficar sem produto cadastrado ──────────────────
+    if not force:
+        skus_arquivo = {r["sku"] for r in rows}
+        cadastrados = {
+            p.sku for p in db.query(models.Product.sku).filter(
+                models.Product.seller_id == seller_id,
+                models.Product.sku.in_(list(skus_arquivo)),
+            ).all()
+        }
+        # SKUs que o usuário preencheu nome serão criados abaixo — não bloqueiam
+        a_criar = {sku for sku, nome in names_map.items() if nome and nome.strip()}
+        faltantes = sorted(skus_arquivo - cadastrados - a_criar)
+        if faltantes:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": (
+                        f"{len(faltantes)} SKU(s) do arquivo não estão cadastrados neste seller. "
+                        f"Cadastre-os antes de importar ou use 'Cadastrar mesmo assim'."
+                    ),
+                    "missing_skus": faltantes[:200],
+                    "missing_count": len(faltantes),
+                },
+            )
 
     products_created = 0
     for sku, name in names_map.items():
@@ -1025,6 +1076,11 @@ async def execute_history_import(
             mov_date = today_brasilia()
 
         try:
+            nf_date = date.fromisoformat(r["nf_date"]) if r.get("nf_date") else None
+        except Exception:
+            nf_date = None
+
+        try:
             mt = (
                 models.MovementType.IN
                 if r["movement_type"] == "Entrada"
@@ -1053,6 +1109,7 @@ async def execute_history_import(
             quantity=r["quantity"],
             adjusted_quantity=r["quantity"],
             nf_number=r["nf_number"],
+            nf_date=nf_date,
             observation=r["observation"],
             operator_id=current_user.id,
             created_at=now_brasilia(),

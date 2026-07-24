@@ -416,6 +416,7 @@ class StockMovement(Base):
     quantity = Column(Integer, nullable=False)
     adjusted_quantity = Column(Integer, nullable=True)      # Quantidade após ajuste manual
     nf_number = Column(String(20), nullable=True)
+    nf_date = Column(Date, nullable=True)                   # Data da NF emitida pelo seller
     nature = Column(String(200), nullable=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)

@@ -706,6 +706,7 @@ export default function SellerPortalPage() {
                     <tr className="bg-white/4 border-b border-white/8">
                       {([
                         { label: 'Data',    col: 'movement_date' },
+                        { label: 'Data NF', col: 'nf_date' },
                         { label: 'SKU',     col: 'sku' },
                         { label: 'Produto', col: 'product_name' },
                         { label: 'Tipo',    col: 'movement_type' },
@@ -738,6 +739,9 @@ export default function SellerPortalPage() {
                         <td className="py-2.5 px-3 text-xs text-white/50">
                           {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                         </td>
+                        <td className="py-2.5 px-3 text-xs text-white/50">
+                          {m.nf_date ? format(new Date(m.nf_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                        </td>
                         <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80">{m.sku}</td>
                         <td className="py-2.5 px-3 text-sm text-white/80 max-w-xs truncate">{m.product_name}</td>
                         <td className="py-2.5 px-3">
@@ -751,7 +755,7 @@ export default function SellerPortalPage() {
                         <td className="py-2.5 px-3 text-xs font-mono text-white/40">{m.nf_number || '—'}</td>
                       </tr>
                     )) : (
-                      <tr><td colSpan={6} className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</td></tr>
+                      <tr><td colSpan={7} className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</td></tr>
                     )}
                   </tbody>
                 </table>

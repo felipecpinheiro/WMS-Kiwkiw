@@ -480,10 +480,12 @@ export const inventoryApi = {
       timeout: 120000, // 2 min — arquivo grande
     });
   },
-  executeHistory: (sellerId: number, file: File, productNames: Record<string, string>) => {
+  /** force=true ignora a trava de SKU não cadastrado ("Cadastrar mesmo assim"). */
+  executeHistory: (sellerId: number, file: File, productNames: Record<string, string>, force = false) => {
     const form = new FormData();
     form.append('file', file);
     form.append('product_names', JSON.stringify(productNames));
+    form.append('force', String(force));
     return api.post<{
       imported: number;
       products_created: number;

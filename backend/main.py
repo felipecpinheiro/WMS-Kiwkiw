@@ -73,6 +73,8 @@ def run_light_migrations():
                 migrations.append("ALTER TABLE sellers ADD COLUMN experience_file_path TEXT")
             if not col_exists("users", "force_password_change"):
                 migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT FALSE NOT NULL")
+            if not col_exists("stock_movements", "nf_date"):
+                migrations.append("ALTER TABLE stock_movements ADD COLUMN nf_date DATE")
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
@@ -105,6 +107,11 @@ def run_light_migrations():
             existing_usr = {r[1] for r in rows_usr}
             if "force_password_change" not in existing_usr:
                 migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT 0 NOT NULL")
+
+            rows_mov = db.execute(text("PRAGMA table_info(stock_movements)")).fetchall()
+            existing_mov = {r[1] for r in rows_mov}
+            if "nf_date" not in existing_mov:
+                migrations.append("ALTER TABLE stock_movements ADD COLUMN nf_date DATE")
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (

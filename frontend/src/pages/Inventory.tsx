@@ -81,24 +81,39 @@ function ImportHistoryModal({
     }
   };
 
-  const handleImport = async () => {
+  /**
+   * force=false: o backend barra a importação se sobrar SKU sem cadastro.
+   * force=true : usado pelo botão "Cadastrar mesmo assim".
+   */
+  const handleImport = async (force = false) => {
     if (!file || !analyzeResult) return;
-    // Validate all unknown SKUs have names
-    const missing = analyzeResult.unknown_skus.filter((u) => !nameMap[u.sku]?.trim());
-    if (missing.length > 0) {
-      setError(`Preencha o nome de todos os SKUs não cadastrados (${missing.length} pendentes).`);
-      return;
+    // Sem force, exige nome para cada SKU novo — assim eles são cadastrados junto
+    if (!force) {
+      const missing = analyzeResult.unknown_skus.filter((u) => !nameMap[u.sku]?.trim());
+      if (missing.length > 0) {
+        setError(
+          `${missing.length} SKU(s) do arquivo não estão cadastrados neste seller. ` +
+          `Preencha o nome de cada um para cadastrá-los junto com a importação, ` +
+          `ou use "Cadastrar mesmo assim".`
+        );
+        return;
+      }
     }
     setPhase('importing');
     setError(null);
     try {
-      const res = await inventoryApi.executeHistory(sellerId, file, nameMap);
+      const res = await inventoryApi.executeHistory(sellerId, file, nameMap, force);
       setResult(res.data);
       setPhase('done');
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       const status = err?.response?.status;
-      setError(detail ? `[${status}] ${detail}` : `Erro de conexão: ${err?.message || 'desconhecido'}`);
+      // O backend devolve um objeto quando barra por SKU não cadastrado
+      const msg =
+        detail && typeof detail === 'object'
+          ? `${detail.message}${detail.missing_skus?.length ? `\nSKUs: ${detail.missing_skus.join(', ')}` : ''}`
+          : detail;
+      setError(msg ? `[${status}] ${msg}` : `Erro de conexão: ${err?.message || 'desconhecido'}`);
       setPhase('naming');
     }
   };
@@ -181,6 +196,16 @@ function ImportHistoryModal({
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
+                  <div className="bg-amber-500/10 border border-amber-500/40 rounded-lg p-3">
+                    <p className="text-amber-300 text-sm font-semibold mb-1">
+                      ⚠️ Importação bloqueada — {analyzeResult.unknown_skus.length} SKU(s) sem cadastro
+                    </p>
+                    <p className="text-white/60 text-xs leading-relaxed">
+                      Esses SKUs aparecem no arquivo mas não existem no cadastro de produtos deste seller.
+                      Importar assim criaria estoque de produto que não existe na tela de Produtos.
+                      Preencha o nome de cada um abaixo para cadastrá-los junto com a importação.
+                    </p>
+                  </div>
                   <p className="text-white/70 text-sm font-medium">
                     Defina o nome dos <span className="text-amber-400">{analyzeResult.unknown_skus.length} SKUs novos</span>:
                   </p>
@@ -206,7 +231,7 @@ function ImportHistoryModal({
 
               {error && (
                 <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                  <span className="text-red-400 text-xs leading-relaxed">{error}</span>
+                  <span className="text-red-400 text-xs leading-relaxed whitespace-pre-wrap">{error}</span>
                 </div>
               )}
             </div>
@@ -289,13 +314,24 @@ function ImportHistoryModal({
               )}
 
               {phase === 'naming' && (
-                <button
-                  onClick={handleImport}
-                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
-                  style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
-                >
-                  Importar Histórico
-                </button>
+                <>
+                  {analyzeResult && analyzeResult.unknown_skus.length > 0 && (
+                    <button
+                      onClick={() => handleImport(true)}
+                      title="Importa ignorando a trava de SKU não cadastrado"
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-amber-300 border border-amber-500/40 hover:bg-amber-500/10 transition"
+                    >
+                      Cadastrar mesmo assim
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleImport(false)}
+                    className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
+                    style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
+                  >
+                    Importar Histórico
+                  </button>
+                </>
               )}
             </>
           )}

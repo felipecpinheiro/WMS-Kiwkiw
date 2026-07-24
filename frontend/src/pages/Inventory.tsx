@@ -1608,9 +1608,7 @@ export default function InventoryPage() {
   const [showManual, setShowManual] = useState(false);
   const [detailSku, setDetailSku] = useState<string | null>(null);
   const [showPasteModal, setShowPasteModal] = useState(false);
-  const [showBulkImport, setShowBulkImport] = useState(false);
-  const [showBulkStockUpload, setShowBulkStockUpload] = useState(false);
-  const isAdmin = user?.role === 'admin';
+  const [showHistory, setShowHistory] = useState(false);
   const [editMovement, setEditMovement] = useState<any | null>(null);
 
   // Datas para filtro de movimentações (últimos 30 dias por padrão, em Brasília)
@@ -1793,29 +1791,17 @@ export default function InventoryPage() {
             Lançamento Manual
           </button>
 
-          {/* Importar CSV em lote (sem limite de linhas) */}
+          {/* Importa a planilha ESTOQUE do seller (aba DETALHADO) */}
           <button
-            onClick={() => setShowBulkImport(true)}
+            onClick={() => setShowHistory(true)}
             disabled={!sellerId}
+            title="Importa a planilha ESTOQUE do seller (Excel, aba DETALHADO) com todo o histórico de entradas e saídas"
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
             style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
           >
             <FileUp size={13} />
-            Importar CSV
+            Importar Histórico (Excel)
           </button>
-
-          {/* Bulk upload de posição de estoque (multi-seller) — admin only */}
-          {isAdmin && (
-            <button
-              onClick={() => setShowBulkStockUpload(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition"
-              style={{ background: 'linear-gradient(135deg,#C2410C,#9A3412)' }}
-              title="Upload CSV com posição de estoque de múltiplos sellers"
-            >
-              <FileUp size={13} />
-              Upload Estoque (Admin)
-            </button>
-          )}
         </div>
       </div>
 
@@ -2022,10 +2008,11 @@ export default function InventoryPage() {
               <button
                 onClick={() => setShowPasteModal(true)}
                 disabled={!sellerId}
+                title="Cole linhas de movimentação copiadas de uma planilha (data, SKU, tipo, quantidade)"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 text-white/70 hover:bg-white/5 transition disabled:opacity-40"
               >
                 <ClipboardPaste size={13} />
-                Colar em Lote
+                Colar Movimentações
               </button>
             </div>
 
@@ -2133,12 +2120,12 @@ export default function InventoryPage() {
         />
       )}
 
-      {/* Modal de importação CSV em lote */}
-      {showBulkImport && sellerId && (
-        <BulkCsvImportModal
+      {/* Modal de importação do histórico de estoque (planilha ESTOQUE do seller) */}
+      {showHistory && sellerId && (
+        <ImportHistoryModal
           sellerId={sellerId}
-          onClose={() => setShowBulkImport(false)}
-          onSuccess={() => { setShowBulkImport(false); invalidate(); }}
+          onClose={() => setShowHistory(false)}
+          onSuccess={() => { setShowHistory(false); invalidate(); }}
         />
       )}
 
@@ -2160,13 +2147,6 @@ export default function InventoryPage() {
         />
       )}
 
-      {/* Bulk upload de estoque (admin) */}
-      {showBulkStockUpload && (
-        <BulkStockUploadModal
-          onClose={() => setShowBulkStockUpload(false)}
-          onSuccess={() => { setShowBulkStockUpload(false); invalidate(); }}
-        />
-      )}
     </div>
   );
 }

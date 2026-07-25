@@ -227,13 +227,15 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
 
     sixty_days_ago = today_brasilia() - timedelta(days=60)
 
-    # Pré-carrega saídas dos últimos 60 dias via SQL raw (suporta valores legados 'OUT'/'Saída')
+    # Pré-carrega saídas dos últimos 60 dias via SQL raw (suporta valores legados 'OUT'/'Saída').
+    # CAST obrigatório: movement_type é ENUM nativo no PostgreSQL e comparar com
+    # 'Saída' dispara InvalidTextRepresentation (o UPPER também não aceita enum).
     out_rows = db.execute(
         text("""
             SELECT sku, SUM(quantity) as total
             FROM stock_movements
             WHERE seller_id = :sid
-              AND (movement_type = 'Saída' OR UPPER(movement_type) IN ('OUT','SAIDA','S'))
+              AND UPPER(CAST(movement_type AS VARCHAR)) IN ('OUT','S','SAIDA','SAÍDA')
               AND movement_date >= :cutoff
             GROUP BY sku
         """),

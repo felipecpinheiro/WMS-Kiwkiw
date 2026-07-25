@@ -93,13 +93,15 @@ def get_stock(
     from datetime import datetime as _dt, timedelta as _td
     cutoff_60d = (_dt.now() - _td(days=60)).date()
 
-    # Busca saídas dos últimos 60 dias — SQL raw para suportar valores legados
+    # Busca saídas dos últimos 60 dias — SQL raw para suportar valores legados.
+    # CAST obrigatório: movement_type é ENUM nativo no PostgreSQL e comparar com
+    # 'Saída' dispara InvalidTextRepresentation (o UPPER também não aceita enum).
     sales_60d = dict(
         db.execute(
             text("""
                 SELECT sku, SUM(quantity) FROM stock_movements
                 WHERE seller_id = :sid
-                  AND (movement_type = 'Saída' OR UPPER(movement_type) IN ('OUT','SAIDA','S'))
+                  AND UPPER(CAST(movement_type AS VARCHAR)) IN ('OUT','S','SAIDA','SAÍDA')
                   AND movement_date >= :cutoff
                 GROUP BY sku
             """),
@@ -234,10 +236,14 @@ def get_movements(
         conditions.append("sku LIKE :sku")
         params["sku"] = f"%{sku}%"
     if movement_type:
-        # Normaliza o filtro também
+        # Normaliza o filtro e compara sobre o texto: movement_type é ENUM nativo
+        # no PostgreSQL, então "movement_type = 'Entrada'" quebraria. As listas
+        # cobrem os rótulos atuais (IN/OUT) e os legados gravados antes deles.
         mt_normalized = _MT_NORMALIZE.get(movement_type.upper(), movement_type)
-        conditions.append("movement_type = :movement_type")
-        params["movement_type"] = mt_normalized
+        if mt_normalized == models.MovementType.IN.value:
+            conditions.append("UPPER(CAST(movement_type AS VARCHAR)) IN ('IN','ENTRADA','E')")
+        else:
+            conditions.append("UPPER(CAST(movement_type AS VARCHAR)) IN ('OUT','SAIDA','SAÍDA','S')")
 
     where_clause = " AND ".join(conditions)
     sql = text(f"""

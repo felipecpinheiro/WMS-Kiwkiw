@@ -1112,7 +1112,10 @@ async def execute_history_import(
             "sku":           sku,
             "product_name":  product_name,
             "movement_date": str(mov_date),
-            "movement_type": mt.value,
+            # .name (IN/OUT), nao .value: em producao a coluna e um ENUM nativo
+            # do PostgreSQL cujos rotulos sao os nomes do enum Python. Gravar
+            # "Entrada" quebra com InvalidTextRepresentation.
+            "movement_type": mt.name,
             "quantity":      r["quantity"],
             "adjusted_quantity": r["quantity"],
             "nf_number":     r["nf_number"],
@@ -1333,7 +1336,8 @@ async def bulk_stock_upload(
                 "sku":           sku,
                 "product_name":  None,
                 "quantity":      qty,
-                "movement_type": mt.value,
+                # .name (IN/OUT): a coluna e um ENUM nativo no PostgreSQL
+                "movement_type": mt.name,
                 "movement_date": str(mov_date),
                 "nf_number":     nf,
                 "observation":   observ,
@@ -1393,7 +1397,7 @@ async def bulk_stock_upload(
         delta_out: dict = _dd(int)
         for r in valid_rows:
             k = (r["seller_id"], r["sku"])
-            if r["movement_type"] == models.MovementType.IN.value:
+            if r["movement_type"] == models.MovementType.IN.name:
                 delta_in[k]  += r["quantity"]
             else:
                 delta_out[k] += r["quantity"]

@@ -13,7 +13,7 @@ import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
   ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, DuplicateOrderInfo, InactiveSellerInfo } from '../api';
+import { dashboardApi, ordersApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -226,6 +226,11 @@ export default function DashboardPage() {
   const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
   const [inactiveDecisions, setInactiveDecisions] = useState<Record<number, 'reactivate' | 'ignore'>>({});
 
+  // Modal de confirmação quando o arquivo referencia nomes de seller não reconhecidos
+  const [unmatchedSellers, setUnmatchedSellers] = useState<UnmatchedSellerInfo[]>([]);
+  const [unmatchedModalOpen, setUnmatchedModalOpen] = useState(false);
+  const [unmatchedDecisions, setUnmatchedDecisions] = useState<Record<string, SellerLinkDecision>>({});
+
   // Toggle "mostrar sellers inativos" no filtro por unidade do cockpit
   const [includeInactiveSellers, setIncludeInactiveSellers] = useState(false);
 
@@ -266,6 +271,13 @@ export default function DashboardPage() {
     { staleTime: 5 * 60 * 1000 },
   );
 
+  // Lista de sellers ativos p/ o dropdown de vínculo do modal de sellers não reconhecidos
+  const { data: activeSellersForLink = [] } = useQuery(
+    'active-sellers-for-link',
+    () => import('../api').then(m => m.cadastrosApi.sellers(true).then(r => r.data)),
+    { enabled: unmatchedModalOpen, staleTime: 5 * 60 * 1000 },
+  );
+
   // Passo 1: usuário seleciona arquivo — abrimos modal de confirmação
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -285,10 +297,16 @@ export default function DashboardPage() {
     e.target.value = '';
   };
 
-  // Chamada base — dispara o POST e trata a resposta (sucesso, seller inativo, duplicata, erro)
-  const runImport = async (forceDuplicates: boolean, decisionsOverride?: Record<number, 'reactivate' | 'ignore'>) => {
+  // Chamada base — dispara o POST e trata a resposta (sucesso, seller inativo, seller não
+  // reconhecido, duplicata, erro)
+  const runImport = async (
+    forceDuplicates: boolean,
+    decisionsOverride?: Record<number, 'reactivate' | 'ignore'>,
+    sellerLinkOverride?: Record<string, SellerLinkDecision>,
+  ) => {
     if (!pendingFile || !user.unit_id) return;
     const decisions = decisionsOverride ?? inactiveDecisions;
+    const sellerLinkDecisions = sellerLinkOverride ?? unmatchedDecisions;
     setUploading(true);
     try {
       const res = await ordersApi.import(pendingFile, user.unit_id, {
@@ -298,6 +316,7 @@ export default function DashboardPage() {
         generate_sep_pdf: generateSepPdf,
         generate_exp_pdf: generateExpPdf,
         inactive_seller_decisions: decisions,
+        seller_link_decisions: sellerLinkDecisions,
       });
       const data = res.data || ({} as any);
       const {
@@ -311,6 +330,7 @@ export default function DashboardPage() {
         requires_confirmation = false,
         duplicates: dups = [],
         inactive_sellers: inactives = [],
+        unmatched_sellers: unmatched = [],
       } = data;
 
       // Backend achou sellers inativos referenciados no arquivo → exibe modal de decisão.
@@ -318,6 +338,14 @@ export default function DashboardPage() {
         setInactiveSellers(inactives);
         setUploadModalOpen(false);
         setInactiveModalOpen(true);
+        return;
+      }
+
+      // Backend achou nomes de seller que não batem com nenhum cadastro → exibe modal de decisão.
+      if (requires_confirmation && unmatched.length > 0) {
+        setUnmatchedSellers(unmatched);
+        setUploadModalOpen(false);
+        setUnmatchedModalOpen(true);
         return;
       }
 
@@ -369,6 +397,9 @@ export default function DashboardPage() {
       setInactiveModalOpen(false);
       setInactiveSellers([]);
       setInactiveDecisions({});
+      setUnmatchedModalOpen(false);
+      setUnmatchedSellers([]);
+      setUnmatchedDecisions({});
       setPendingFile(null);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || err.message || 'Erro ao importar arquivo');
@@ -416,6 +447,31 @@ export default function DashboardPage() {
     setPendingFile(null);
   };
 
+  // Passo intermediário (opcional): usuário decide, para cada nome de seller não
+  // reconhecido, se vincula a um seller já cadastrado ou cria um novo (com unidade).
+  const handleSetUnmatchedDecision = (sellerName: string, decision: SellerLinkDecision) => {
+    setUnmatchedDecisions(prev => ({ ...prev, [sellerName]: decision }));
+  };
+
+  const allUnmatchedDecided = unmatchedSellers.every((s) => {
+    const d = unmatchedDecisions[s.seller_name];
+    if (!d) return false;
+    return d.action === 'create' ? !!d.unit_id : !!d.seller_id;
+  });
+
+  const handleConfirmUnmatchedSellers = () => {
+    setUnmatchedModalOpen(false);
+    runImport(false, undefined, unmatchedDecisions);
+  };
+
+  const handleCancelUnmatchedSellers = () => {
+    if (uploading) return;
+    setUnmatchedModalOpen(false);
+    setUnmatchedSellers([]);
+    setUnmatchedDecisions({});
+    setPendingFile(null);
+  };
+
   const handleCarrierSave = async (updates: Record<number, string>) => {
     const { ordersApi } = await import('../api');
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
@@ -460,13 +516,13 @@ export default function DashboardPage() {
             <p className="text-sm font-semibold text-amber-300">Sellers sem unidade associada</p>
             <p className="text-xs text-amber-400/80 mt-0.5">
               PDFs desses sellers serão salvos em <span className="font-mono">SEM_UNIDADE/</span>.
-              Acesse <strong>Cadastros → Unidades</strong> para associar.
+              Pode ser um seller duplicado com pedidos presos, ou só falta associar uma unidade.
             </p>
             <p className="text-xs text-amber-400/60 mt-1">
-              {(sellersWithoutUnit as any[]).map((s: any) => s.trade_name).join(', ')}
+              {(sellersWithoutUnit as any[]).map((s: any) => `${s.trade_name} (${s.order_count} pedido(s))`).join(', ')}
             </p>
           </div>
-          <a href="/units" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
+          <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
         </div>
       )}
 
@@ -1191,6 +1247,96 @@ export default function DashboardPage() {
               <button
                 onClick={handleConfirmInactiveSellers}
                 disabled={!allInactiveDecided}
+                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40"
+                style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unmatchedModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelUnmatchedSellers}>
+          <div
+            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-yellow-900/30">
+                <AlertTriangle size={20} className="text-yellow-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">
+                  {unmatchedSellers.length} nome(s) de seller não reconhecido(s)
+                </h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Esses nomes não batem com nenhum seller cadastrado. Escolha, para cada um, se deseja
+                  vincular a um seller já existente ou criar um novo (com unidade).
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+              {unmatchedSellers.map((s) => {
+                const decision = unmatchedDecisions[s.seller_name];
+                const isCreate = decision?.action === 'create';
+                const selectValue = !decision ? '' : decision.action === 'create' ? 'create' : String(decision.seller_id);
+                return (
+                  <div key={s.seller_name} className="px-3 py-2.5">
+                    <p className="text-sm text-white/90 truncate">{s.seller_name}</p>
+                    <p className="text-xs text-white/35 mb-2">
+                      {s.nf_numbers.length} NF(s): {s.nf_numbers.slice(0, 5).join(', ')}{s.nf_numbers.length > 5 ? '…' : ''}
+                    </p>
+                    <div className="flex gap-2">
+                      <select
+                        value={selectValue}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '') return;
+                          if (v === 'create') {
+                            handleSetUnmatchedDecision(s.seller_name, { action: 'create', unit_id: 0 });
+                          } else {
+                            handleSetUnmatchedDecision(s.seller_name, { action: 'link', seller_id: Number(v) });
+                          }
+                        }}
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                      >
+                        <option value="" disabled>Selecione...</option>
+                        <option value="create">Criar novo seller</option>
+                        {activeSellersForLink.map((sel: any) => (
+                          <option key={sel.id} value={sel.id}>Vincular a: {sel.trade_name}</option>
+                        ))}
+                      </select>
+                      {isCreate && (
+                        <select
+                          value={decision?.action === 'create' && decision.unit_id ? decision.unit_id : ''}
+                          onChange={(e) => handleSetUnmatchedDecision(s.seller_name, { action: 'create', unit_id: Number(e.target.value) })}
+                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                        >
+                          <option value="" disabled>Unidade...</option>
+                          {(units as any[]).map((u: any) => (
+                            <option key={u.id} value={u.id}>{u.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2 justify-end mt-2">
+              <button
+                onClick={handleCancelUnmatchedSellers}
+                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
+              >
+                Cancelar importação
+              </button>
+              <button
+                onClick={handleConfirmUnmatchedSellers}
+                disabled={!allUnmatchedDecided}
                 className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >

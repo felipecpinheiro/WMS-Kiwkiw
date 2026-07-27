@@ -6,7 +6,7 @@ Produtos, Kits, Algoritmo de Caixa, Sellers, Unidades e Usuários.
 import os, shutil
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -903,6 +903,38 @@ def create_seller(
     return s
 
 
+@router.post("/sellers/{seller_id}/assign-unit")
+def assign_seller_unit(
+    seller_id: int,
+    unit_id: int = Body(..., embed=True),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Associa uma unidade a um seller — ação restrita usada na página de
+    correção de sellers sem unidade. Diferente de `update_seller` (admin-only,
+    edição completa do cadastro), este endpoint só altera `unit_id` e é
+    liberado para manager também.
+    """
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+    unit = db.query(models.Unit).filter(models.Unit.id == unit_id).first()
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unidade não encontrada")
+
+    seller.unit_id = unit_id
+    db.add(models.AuditLog(
+        entity_type="Seller",
+        entity_id=seller_id,
+        action="ASSIGN_UNIT",
+        detail=f"Unidade '{unit.name}' associada ao seller '{seller.trade_name}' via página de correção",
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return {"seller_id": seller_id, "unit_id": unit_id}
+
+
 @router.put("/sellers/{seller_id}", response_model=schemas.SellerResponse)
 def update_seller(
     seller_id: int,
@@ -954,12 +986,56 @@ def sellers_without_unit(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retorna sellers ativos sem unidade associada (unit_id nulo)."""
+    """Retorna sellers ativos sem unidade associada (unit_id nulo), com a contagem de pedidos presos em cada um."""
     sellers = db.query(models.Seller).filter(
         models.Seller.active == True,
         models.Seller.unit_id == None,  # noqa: E711
     ).all()
-    return [{"id": s.id, "trade_name": s.trade_name} for s in sellers]
+    result = []
+    for s in sellers:
+        order_count = db.query(models.Order).filter(models.Order.seller_id == s.id).count()
+        result.append({"id": s.id, "trade_name": s.trade_name, "order_count": order_count})
+    return result
+
+
+@router.post("/sellers/{from_seller_id}/merge-orders-into/{to_seller_id}")
+def merge_seller_orders(
+    from_seller_id: int,
+    to_seller_id: int,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Reatribui todos os pedidos (Order.seller_id) de `from_seller_id` para
+    `to_seller_id` — usado para corrigir sellers duplicados/sem unidade que
+    acabaram recebendo pedidos por engano. Não move produtos, estoque, kits
+    ou configuração de cobrança — só pedidos.
+    """
+    if from_seller_id == to_seller_id:
+        raise HTTPException(status_code=400, detail="Seller de origem e destino não podem ser o mesmo")
+
+    from_seller = db.query(models.Seller).filter(models.Seller.id == from_seller_id).first()
+    to_seller = db.query(models.Seller).filter(models.Seller.id == to_seller_id).first()
+    if not from_seller:
+        raise HTTPException(status_code=404, detail="Seller de origem não encontrado")
+    if not to_seller:
+        raise HTTPException(status_code=404, detail="Seller de destino não encontrado")
+
+    count = db.query(models.Order).filter(models.Order.seller_id == from_seller_id).update(
+        {models.Order.seller_id: to_seller_id}, synchronize_session=False
+    )
+    db.add(models.AuditLog(
+        entity_type="Seller",
+        entity_id=to_seller_id,
+        action="MERGE_ORDERS",
+        detail=(
+            f"{count} pedido(s) migrado(s) de '{from_seller.trade_name}' (id={from_seller_id}) "
+            f"para '{to_seller.trade_name}' (id={to_seller_id})"
+        ),
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return {"migrated_orders": count, "from_seller_id": from_seller_id, "to_seller_id": to_seller_id}
 
 
 # ============================================================

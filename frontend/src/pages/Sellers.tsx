@@ -5,10 +5,11 @@
  */
 
 import { useState, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import {
   Building2, Plus, Pencil, Trash2, X, Check, Store,
-  ClipboardList, Upload, ExternalLink, Search,
+  ClipboardList, Upload, ExternalLink, Search, Wrench,
 } from 'lucide-react';
 import { cadastrosApi, billingApi } from '../api';
 import toast from 'react-hot-toast';
@@ -95,6 +96,12 @@ function billingConfigToFields(configs: any[]): BillingFields {
 
 export default function SellersPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const { data: sellersWithoutUnit = [] } = useQuery(
+    'sellers-without-unit',
+    () => cadastrosApi.sellersWithoutUnit().then(r => r.data),
+    { staleTime: 5 * 60 * 1000 },
+  );
   const [showModal, setShowModal]     = useState(false);
   const [editId, setEditId]           = useState<number | null>(null);
   const [form, setForm]               = useState<SellerForm>(EMPTY);
@@ -317,6 +324,12 @@ export default function SellersPage() {
           <p className="text-sm text-white/40 mt-0.5">{filtered.length} cadastrado(s)</p>
         </div>
         <div className="flex items-center gap-2">
+          {sellersWithoutUnit.length > 0 && (
+            <button onClick={() => navigate('/sellers/corrigir')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-amber-300 bg-amber-900/25 border border-amber-500/30 hover:bg-amber-900/35 rounded-lg transition">
+              <Wrench size={14} /> Corrigir pendências ({sellersWithoutUnit.length})
+            </button>
+          )}
           <button onClick={() => setShowPasteModal(true)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/70 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
             <ClipboardList size={14} /> Colar em massa

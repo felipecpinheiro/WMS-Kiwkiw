@@ -693,6 +693,12 @@ class InactiveSellerInfo(BaseModel):
     nf_numbers: List[str] = []
 
 
+class UnmatchedSellerInfo(BaseModel):
+    """Nome de seller no arquivo que não bateu com nenhum cadastro (ativo ou inativo)."""
+    seller_name: str
+    nf_numbers: List[str] = []
+
+
 class ImportResult(BaseModel):
     """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
     success: bool = False
@@ -707,3 +713,4 @@ class ImportResult(BaseModel):
     requires_confirmation: bool = False
     duplicates: List[DuplicateOrderInfo] = []
     inactive_sellers: List[InactiveSellerInfo] = []
+    unmatched_sellers: List[UnmatchedSellerInfo] = []

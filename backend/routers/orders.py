@@ -40,6 +40,9 @@ async def import_orders(
     inactive_seller_decisions: Optional[str] = Form(
         None, description='JSON {"<seller_id>": "reactivate"|"ignore"} — decisões para sellers inativos encontrados no arquivo'
     ),
+    seller_link_decisions: Optional[str] = Form(
+        None, description='JSON {"<seller_name>": {"action": "create", "unit_id": int} | {"action": "link", "seller_id": int}} — decisões para nomes de seller não reconhecidos no arquivo'
+    ),
     current_user: models.User = Depends(require_admin),  # SOMENTE ADMIN importa pedidos
     db: Session = Depends(get_db),
 ):
@@ -58,6 +61,11 @@ async def import_orders(
     `requires_confirmation=true` e a lista em `inactive_sellers`; o frontend
     deve repetir a chamada enviando `inactive_seller_decisions` com a decisão
     ("reactivate" ou "ignore") para cada `seller_id` listado.
+
+    Se o arquivo referenciar nomes de seller que não batem com nenhum
+    cadastro, a resposta vem com `requires_confirmation=true` e a lista em
+    `unmatched_sellers`; o frontend deve repetir a chamada enviando
+    `seller_link_decisions` com a decisão para cada nome listado.
     """
     if not file.filename.endswith((".xlsx", ".xlsm", ".xls")):
         raise HTTPException(status_code=400, detail="Apenas arquivos Excel são aceitos (.xlsx, .xlsm, .xls)")
@@ -83,6 +91,15 @@ async def import_orders(
         except (ValueError, TypeError, AttributeError):
             raise HTTPException(status_code=400, detail="inactive_seller_decisions inválido — esperado JSON {seller_id: decisão}")
 
+    # Decisões de sellers não reconhecidos vêm como JSON
+    # {"<seller_name>": {"action": "create", "unit_id": int} | {"action": "link", "seller_id": int}}
+    seller_link_decisions_dict = {}
+    if seller_link_decisions:
+        try:
+            seller_link_decisions_dict = json.loads(seller_link_decisions)
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(status_code=400, detail="seller_link_decisions inválido — esperado JSON {seller_name: decisão}")
+
     # Importa pedidos — passa as configs de nível de sessão
     result = await import_excel_orders(
         file_path=file_path,
@@ -93,6 +110,7 @@ async def import_orders(
         for_billing=for_billing,
         force_duplicates=force_duplicates,
         inactive_seller_decisions=decisions_dict,
+        seller_link_decisions=seller_link_decisions_dict,
     )
 
     if getattr(result, "requires_confirmation", False):

@@ -227,6 +227,15 @@ export interface InactiveSellerInfo {
   nf_numbers: string[];
 }
 
+export interface UnmatchedSellerInfo {
+  seller_name: string;
+  nf_numbers: string[];
+}
+
+export type SellerLinkDecision =
+  | { action: 'create'; unit_id: number }
+  | { action: 'link'; seller_id: number };
+
 export interface ImportResult {
   success: boolean;
   message: string;
@@ -239,6 +248,7 @@ export interface ImportResult {
   requires_confirmation: boolean;
   duplicates: DuplicateOrderInfo[];
   inactive_sellers: InactiveSellerInfo[];
+  unmatched_sellers: UnmatchedSellerInfo[];
 }
 
 export interface ScanRequest {
@@ -332,6 +342,7 @@ export const ordersApi = {
       generate_sep_pdf?: boolean;
       generate_exp_pdf?: boolean;
       inactive_seller_decisions?: Record<number, 'reactivate' | 'ignore'>;
+      seller_link_decisions?: Record<string, SellerLinkDecision>;
     } = {},
   ) => {
     const form = new FormData();
@@ -342,6 +353,9 @@ export const ordersApi = {
     form.append('force_duplicates', String(opts.force_duplicates ?? false));
     if (opts.inactive_seller_decisions && Object.keys(opts.inactive_seller_decisions).length > 0) {
       form.append('inactive_seller_decisions', JSON.stringify(opts.inactive_seller_decisions));
+    }
+    if (opts.seller_link_decisions && Object.keys(opts.seller_link_decisions).length > 0) {
+      form.append('seller_link_decisions', JSON.stringify(opts.seller_link_decisions));
     }
     return api.post<ImportResult>('/orders/import', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -521,7 +535,7 @@ export const inventoryApi = {
 // ============================================================
 
 export const cadastrosApi = {
-  sellers: () => api.get('/cadastros/sellers'),
+  sellers: (activeOnly = false) => api.get('/cadastros/sellers', { params: { active_only: activeOnly } }),
   createSeller: (data: Record<string, any>) => api.post('/cadastros/sellers', data),
   updateSeller: (id: number, data: Record<string, any>) => api.put(`/cadastros/sellers/${id}`, data),
   deleteSeller: (id: number) => api.delete(`/cadastros/sellers/${id}`),
@@ -531,7 +545,17 @@ export const cadastrosApi = {
   deleteUnit: (id: number) => api.delete(`/cadastros/units/${id}`),
   assignSellersToUnit: (unitId: number, sellerIds: number[]) =>
     api.patch(`/cadastros/units/${unitId}/sellers`, { seller_ids: sellerIds }),
-  sellersWithoutUnit: () => api.get('/cadastros/sellers/without-unit'),
+  sellersWithoutUnit: () =>
+    api.get<{ id: number; trade_name: string; order_count: number }[]>('/cadastros/sellers/without-unit'),
+  mergeSellerOrders: (fromSellerId: number, toSellerId: number) =>
+    api.post<{ migrated_orders: number; from_seller_id: number; to_seller_id: number }>(
+      `/cadastros/sellers/${fromSellerId}/merge-orders-into/${toSellerId}`,
+    ),
+  assignSellerUnit: (sellerId: number, unitId: number) =>
+    api.post<{ seller_id: number; unit_id: number }>(
+      `/cadastros/sellers/${sellerId}/assign-unit`,
+      { unit_id: unitId },
+    ),
   sellerStats: (sellerId: number) =>
     api.get<{ seller_id: number; total_skus: number; skus_with_stock: number; skus_zero_stock: number; total_stock_value: number }>(
       `/cadastros/sellers/${sellerId}/stats`

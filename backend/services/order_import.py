@@ -167,6 +167,21 @@ def _resolve_seller_name(raw_name: str, alias_map: dict) -> str:
     return raw_name.strip()
 
 
+def _is_valid_seller_link_decision(decision) -> bool:
+    """
+    Valida o formato de uma decisão de seller_link_decisions:
+      {"action": "create", "unit_id": int} ou {"action": "link", "seller_id": int}
+    """
+    if not isinstance(decision, dict):
+        return False
+    action = decision.get("action")
+    if action == "create":
+        return isinstance(decision.get("unit_id"), int)
+    if action == "link":
+        return isinstance(decision.get("seller_id"), int)
+    return False
+
+
 def get_or_create_seller(
     db: Session,
     seller_name: str,
@@ -485,6 +500,7 @@ async def import_excel_orders(
     for_billing: bool = True,
     force_duplicates: bool = False,
     inactive_seller_decisions: Optional[dict] = None,
+    seller_link_decisions: Optional[dict] = None,
 ) -> schemas.ImportResult:
     """
     Importa arquivo Excel de pedidos (gerado pelo robô de captura dos ERPs).
@@ -504,11 +520,19 @@ async def import_excel_orders(
         lista em `inactive_sellers` para o usuário decidir. "reactivate"
         reativa o seller (active=True) antes de importar seus pedidos;
         "ignore" pula apenas os pedidos daquele seller, sem tocar nos demais.
+      - seller_link_decisions: dict {seller_name: {"action": "create", "unit_id": int}
+        | {"action": "link", "seller_id": int}}. Se o arquivo referenciar um nome de
+        seller que não bate com nenhum cadastro (ativo ou inativo) e este dict não
+        cobrir todos eles, a importação aborta e retorna `requires_confirmation=True`
+        com a lista em `unmatched_sellers` para o usuário decidir. Nunca cria um
+        seller novo silenciosamente — "create" exige unit_id explícito; "link"
+        associa os pedidos a um seller já cadastrado.
     """
     errors = []
     warnings = []
     duplicates_info: List[schemas.DuplicateOrderInfo] = []
     inactive_seller_decisions = inactive_seller_decisions or {}
+    seller_link_decisions = seller_link_decisions or {}
     orders_imported = 0
     kits_expanded = 0
 
@@ -724,6 +748,76 @@ async def import_excel_orders(
                         warnings.append(
                             f"NF {order_data['nf_number']} do seller '{order_data['seller_name']}' ignorada — seller inativo (confirmado pelo usuário)"
                         )
+
+        # ── PRÉ-CHECAGEM DE SELLERS NÃO RECONHECIDOS ────────────────
+        # Nome de seller no arquivo que não bateu com nenhum cadastro (ativo
+        # nem inativo). Nunca cria um seller novo silenciosamente — exige
+        # decisão explícita do usuário: vincular a um seller já cadastrado ou
+        # criar um novo (com unidade obrigatória).
+        unmatched_sellers_found: dict[str, schemas.UnmatchedSellerInfo] = {}
+        for order_key, order_data in orders_dict.items():
+            if order_key in ignored_order_keys or order_key_seller_map.get(order_key):
+                continue
+            name = order_data["seller_name"]
+            norm_key = name.strip().lower()
+            info = unmatched_sellers_found.setdefault(
+                norm_key,
+                schemas.UnmatchedSellerInfo(seller_name=name, nf_numbers=[]),
+            )
+            info.nf_numbers.append(order_data["nf_number"])
+
+        missing_seller_link_decisions = [
+            norm_key for norm_key, info in unmatched_sellers_found.items()
+            if not _is_valid_seller_link_decision(seller_link_decisions.get(info.seller_name))
+        ]
+        if unmatched_sellers_found and missing_seller_link_decisions:
+            # Aborta sem criar nada — frontend vai perguntar ao usuário
+            return schemas.ImportResult(
+                success=False,
+                message=(
+                    f"{len(unmatched_sellers_found)} nome(s) de seller neste arquivo não batem com "
+                    f"nenhum cadastro. Confirme se deve vincular a um seller existente ou criar um novo."
+                ),
+                total_rows=total_rows,
+                orders_imported=0,
+                orders_with_kits=0,
+                errors=[],
+                warnings=warnings,
+                requires_confirmation=True,
+                unmatched_sellers=list(unmatched_sellers_found.values()),
+            )
+
+        # Aplica as decisões: cria (unidade obrigatória) ou vincula a seller existente
+        for norm_key, info in unmatched_sellers_found.items():
+            decision = seller_link_decisions.get(info.seller_name)
+            if decision.get("action") == "create":
+                seller_obj = models.Seller(
+                    name=info.seller_name,
+                    trade_name=info.seller_name,
+                    unit_id=decision["unit_id"],
+                )
+                db.add(seller_obj)
+                db.flush()
+                db.add(models.AuditLog(
+                    entity_type="Seller",
+                    entity_id=seller_obj.id,
+                    action="CREATE",
+                    detail=(
+                        f"Seller '{info.seller_name}' criado durante import de pedidos "
+                        f"(arquivo {os.path.basename(file_path)}), unidade confirmada pelo usuário"
+                    ),
+                    user_id=created_by_id,
+                ))
+            else:  # "link"
+                seller_obj = db.query(models.Seller).filter(
+                    models.Seller.id == decision["seller_id"]
+                ).first()
+                if not seller_obj:
+                    errors.append(f"Seller id {decision['seller_id']} não encontrado para vincular '{info.seller_name}'")
+                    continue
+            for order_key, order_data in orders_dict.items():
+                if order_key not in order_key_seller_map and order_data["seller_name"].strip().lower() == norm_key:
+                    order_key_seller_map[order_key] = seller_obj
 
         # ── PRÉ-CHECAGEM DE DUPLICATAS ──────────────────────────────
         # Antes de criar qualquer coisa, verifica se alguma NF deste arquivo

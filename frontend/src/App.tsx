@@ -21,6 +21,7 @@ import KitsPage from './pages/Kits';
 import BoxAlgorithmPage from './pages/BoxAlgorithm';
 import UsersPage from './pages/Users';
 import SellersPage from './pages/Sellers';
+import SellerFixesPage from './pages/SellerFixes';
 import UnitsPage from './pages/Units';
 import BillingPage from './pages/Billing';
 import AuditPage from './pages/Audit';
@@ -263,6 +264,14 @@ export default function App() {
               <Route path="box-algorithm" element={<BoxAlgorithmPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="sellers" element={<SellersPage />} />
+              <Route
+                path="sellers/corrigir"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <SellerFixesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="units" element={<UnitsPage />} />
               <Route path="billing" element={<BillingPage />} />
               <Route path="audit" element={<AuditPage />} />

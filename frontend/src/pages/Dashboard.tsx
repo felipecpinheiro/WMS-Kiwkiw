@@ -346,15 +346,17 @@ export default function DashboardPage() {
         if (generateSepPdf) {
           try {
             await ordersApi.downloadSessionPdf(session_id, 'separation');
-          } catch {
-            toast.error('PDF de Separação não gerado. Use o botão no histórico para tentar novamente.');
+          } catch (err: any) {
+            const detail = err?.response?.data?.detail;
+            toast.error(detail ? `PDF de Separação: ${detail}` : 'PDF de Separação não gerado. Use o botão no histórico para tentar novamente.');
           }
         }
         if (generateExpPdf) {
           try {
             await ordersApi.downloadSessionPdf(session_id, 'expedition');
-          } catch {
-            toast.error('PDF de Expedição não gerado. Use o botão no histórico para tentar novamente.');
+          } catch (err: any) {
+            const detail = err?.response?.data?.detail;
+            toast.error(detail ? `PDF de Expedição: ${detail}` : 'PDF de Expedição não gerado. Use o botão no histórico para tentar novamente.');
           }
         }
       }
@@ -919,7 +921,7 @@ export default function DashboardPage() {
                       <button
                         onClick={() =>
                           ordersApi.downloadSessionPdf(sess.session_id, 'separation')
-                            .catch(() => toast.error('Erro ao baixar PDF de Separação'))
+                            .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Separação'))
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 hover:bg-emerald-900/35' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
@@ -928,7 +930,7 @@ export default function DashboardPage() {
                       <button
                         onClick={() =>
                           ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
-                            .catch(() => toast.error('Erro ao baixar PDF de Expedição'))
+                            .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Expedição'))
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-blue-300 bg-blue-900/25 border border-blue-500/20 hover:bg-blue-900/40' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >

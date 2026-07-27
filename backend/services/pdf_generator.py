@@ -206,7 +206,7 @@ def generate_expedition_report(
         rows = []
         for i, (sku, info) in enumerate(skus_sorted):
             rows.append([
-                Paragraph(sname if i == 0 else "", s_sell if i == 0 else s_cell),
+                Paragraph(sname, s_sell),
                 Paragraph(sku, s_bold),
                 Paragraph(str(info["qty"]), s_bold),
                 Paragraph(info["name"], s_cell),
@@ -238,11 +238,9 @@ def generate_expedition_report(
             ("BOX",            (0, 0), (-1, -1),             1.0, ACCENT),
             ("LINEABOVE",      (0, total_row_idx), (-1, total_row_idx), 0.8, ACCENT),
         ])
-        # Span da coluna Seller em todas as linhas do seller
-        if len(rows) > 1:
-            ts.add("SPAN",   (0, 1), (0, total_row_idx - 1))
-            ts.add("VALIGN", (0, 1), (0, total_row_idx - 1), "MIDDLE")
-
+        # Nome do seller repete em cada linha (sem SPAN vertical): uma célula
+        # mesclada cobrindo dezenas de linhas impede o ReportLab de paginar a
+        # tabela no meio do bloco, derrubando a geração com sellers de muitos SKUs.
         t = Table(tdata, colWidths=C, repeatRows=1)
         t.setStyle(ts)
         story.append(t)

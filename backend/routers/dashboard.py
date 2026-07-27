@@ -144,7 +144,9 @@ def master_dashboard(
     # ── Base: orders importados no dia alvo ─────────────────────
     # Filtragem por unidade via seller.unit_id — não usa Order.unit_id
     # (campo denormalizado que pode estar desatualizado em pedidos históricos)
-    base_filter = [_imported_on(target)]
+    # Pedido cancelado (ex.: duplicata de upload removida) nunca entra nas
+    # estatísticas do cockpit — só fica rastreável na Trilha de Auditoria.
+    base_filter = [_imported_on(target), models.Order.status != models.OrderStatus.CANCELLED]
     if unit_id:
         unit_seller_filter = [models.Seller.unit_id == unit_id]
         if not include_inactive_sellers:
@@ -388,11 +390,15 @@ def master_dashboard(
 
     sessions_today_list = []
     for sess in sessions_today_raw:
-        # Sellers distintos nesta sessão
-        sess_sellers = db.query(models.Seller.trade_name).join(
+        # Sellers distintos nesta sessão (com pedido ainda ativo, não cancelado)
+        sess_sellers = db.query(models.Seller.id, models.Seller.trade_name).join(
             models.Order, models.Order.seller_id == models.Seller.id
-        ).filter(models.Order.session_id == sess.id).distinct().all()
-        snames = [r[0] for r in sess_sellers]
+        ).filter(
+            models.Order.session_id == sess.id,
+            models.Order.status != models.OrderStatus.CANCELLED,
+        ).distinct().all()
+        snames = [r[1] for r in sess_sellers]
+        sellers_in_session = [{"seller_id": r[0], "seller_name": r[1]} for r in sess_sellers]
 
         # PDF: armazenado como caminho completo — pega só o nome do arquivo
         sep_pdf = os.path.basename(sess.separation_pdf) if sess.separation_pdf else None
@@ -406,6 +412,7 @@ def master_dashboard(
             "total_orders": sess.total_orders,
             "created_at": sess.created_at.strftime("%H:%M") if sess.created_at else None,
             "seller_names": snames,
+            "sellers_in_session": sellers_in_session,
             "file_type": ft,
             "separation_pdf": sep_pdf,
             "expedition_pdf": exp_pdf,

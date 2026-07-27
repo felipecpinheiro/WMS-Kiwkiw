@@ -230,6 +230,10 @@ def list_orders(
         joinedload(models.Order.seller),
     )
 
+    # Pedido cancelado (ex.: duplicata de upload removida) nunca aparece
+    # nesta tela, pra ninguém — só fica rastreável na Trilha de Auditoria.
+    query = query.filter(models.Order.status != models.OrderStatus.CANCELLED)
+
     # Restrição por role: seller só vê os próprios pedidos
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
     if user_role == "client" and current_user.seller_id:

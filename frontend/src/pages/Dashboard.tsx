@@ -11,9 +11,9 @@ import {
 } from 'recharts';
 import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
-  ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste,
+  ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision } from '../api';
+import { dashboardApi, ordersApi, scanningApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -230,6 +230,12 @@ export default function DashboardPage() {
   const [unmatchedSellers, setUnmatchedSellers] = useState<UnmatchedSellerInfo[]>([]);
   const [unmatchedModalOpen, setUnmatchedModalOpen] = useState(false);
   const [unmatchedDecisions, setUnmatchedDecisions] = useState<Record<string, SellerLinkDecision>>({});
+
+  // Modal de cancelamento de pedidos duplicados (por sessão + sellers selecionados)
+  const [cancelDupSession, setCancelDupSession] = useState<{ session_id: number; sellers: { seller_id: number; seller_name: string }[] } | null>(null);
+  const [cancelDupSelected, setCancelDupSelected] = useState<number[]>([]);
+  const [cancelDupPreview, setCancelDupPreview] = useState<any[] | null>(null);
+  const [cancelDupLoading, setCancelDupLoading] = useState(false);
 
   // Toggle "mostrar sellers inativos" no filtro por unidade do cockpit
   const [includeInactiveSellers, setIncludeInactiveSellers] = useState(false);
@@ -470,6 +476,63 @@ export default function DashboardPage() {
     setUnmatchedSellers([]);
     setUnmatchedDecisions({});
     setPendingFile(null);
+  };
+
+  // ── Cancelar pedidos duplicados de uma sessão (corrige upload repetido) ──
+  const openCancelDupModal = (session_id: number, sellers: { seller_id: number; seller_name: string }[]) => {
+    setCancelDupSession({ session_id, sellers });
+    setCancelDupSelected([]);
+    setCancelDupPreview(null);
+  };
+
+  const closeCancelDupModal = () => {
+    if (cancelDupLoading) return;
+    setCancelDupSession(null);
+    setCancelDupSelected([]);
+    setCancelDupPreview(null);
+  };
+
+  const toggleCancelDupSeller = (sellerId: number) => {
+    setCancelDupSelected(prev =>
+      prev.includes(sellerId) ? prev.filter(id => id !== sellerId) : [...prev, sellerId]
+    );
+  };
+
+  const handleCancelDupContinue = async () => {
+    if (!cancelDupSession || cancelDupSelected.length === 0) return;
+    setCancelDupLoading(true);
+    try {
+      const res = await scanningApi.cancelDuplicateOrders(cancelDupSession.session_id, cancelDupSelected, false);
+      if (res.data.requires_confirmation) {
+        setCancelDupPreview(res.data.preview || []);
+      } else {
+        toast.success(res.data.message);
+        closeCancelDupModal();
+        refetch();
+        qc.invalidateQueries('sellers-without-unit');
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao cancelar pedidos');
+    } finally {
+      setCancelDupLoading(false);
+    }
+  };
+
+  const handleCancelDupConfirm = async () => {
+    if (!cancelDupSession) return;
+    setCancelDupLoading(true);
+    try {
+      const res = await scanningApi.cancelDuplicateOrders(cancelDupSession.session_id, cancelDupSelected, true);
+      toast.success(res.data.message);
+      (res.data.summary || []).slice(0, 5).forEach((line: string) => toast(line, { icon: 'ℹ️', duration: 6000 }));
+      closeCancelDupModal();
+      refetch();
+      qc.invalidateQueries('sellers-without-unit');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao cancelar pedidos');
+    } finally {
+      setCancelDupLoading(false);
+    }
   };
 
   const handleCarrierSave = async (updates: Record<number, string>) => {
@@ -992,6 +1055,14 @@ export default function DashboardPage() {
                       >
                         <FileText size={11} /> Separação{sess.expedition_pdf ? ' ✓' : ''}
                       </button>
+                      {sess.sellers_in_session?.length > 0 && (
+                        <button
+                          onClick={() => openCancelDupModal(sess.session_id, sess.sellers_in_session)}
+                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition text-red-300 bg-red-900/20 border border-red-500/20 hover:bg-red-900/35"
+                        >
+                          <Trash2 size={11} /> Excluir sellers
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1341,6 +1412,81 @@ export default function DashboardPage() {
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelDupSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeCancelDupModal}>
+          <div
+            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-red-900/30">
+                <Trash2 size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">
+                  Excluir sellers da Sessão #{cancelDupSession.session_id}
+                </h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  {cancelDupPreview === null
+                    ? 'Escolha quais sellers desta sessão devem ter os pedidos cancelados (ex: upload duplicado). Os demais sellers da sessão não são afetados.'
+                    : 'Confira antes de confirmar — alguns pedidos já têm bipagem registrada.'}
+                </p>
+              </div>
+            </div>
+
+            {cancelDupPreview === null ? (
+              <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+                {cancelDupSession.sellers.map((s) => (
+                  <label key={s.seller_id} className="px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-white/5">
+                    <input
+                      type="checkbox"
+                      checked={cancelDupSelected.includes(s.seller_id)}
+                      onChange={() => toggleCancelDupSeller(s.seller_id)}
+                      className="accent-red-500"
+                    />
+                    <span className="text-sm text-white/90">{s.seller_name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+                {cancelDupPreview.map((p) => (
+                  <div key={p.order_id} className="px-3 py-2.5">
+                    <p className="text-sm text-white/90">NF {p.nf_number} — {p.seller_name}</p>
+                    {p.bucket === 'stock_reversal' && (
+                      <p className="text-xs text-red-300 mt-0.5">⚠ Pedido já concluído — estoque será revertido</p>
+                    )}
+                    {p.bucket === 'partial_scan' && (
+                      <p className="text-xs text-amber-300 mt-0.5">⚠ Bipagem parcial em andamento será descartada (sem impacto de estoque)</p>
+                    )}
+                    {p.bucket === 'pending' && (
+                      <p className="text-xs text-white/35 mt-0.5">Pendente — sem impacto</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end mt-2">
+              <button
+                onClick={closeCancelDupModal}
+                disabled={cancelDupLoading}
+                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={cancelDupPreview === null ? handleCancelDupContinue : handleCancelDupConfirm}
+                disabled={cancelDupLoading || (cancelDupPreview === null && cancelDupSelected.length === 0)}
+                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40 bg-red-600 hover:bg-red-500"
+              >
+                {cancelDupLoading ? 'Processando...' : cancelDupPreview === null ? 'Continuar' : 'Confirmar cancelamento'}
               </button>
             </div>
           </div>

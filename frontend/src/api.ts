@@ -431,6 +431,20 @@ export const scanningApi = {
       `/scanning/sessions/${sessionId}/cancel-handling`,
       { seller_id: sellerId },
     ),
+  /** [Admin/Manager] Cancela pedidos duplicados de um ou mais sellers numa sessão.
+   *  confirm=false devolve um preview sem alterar nada; confirm=true executa. */
+  cancelDuplicateOrders: (sessionId: number, sellerIds: number[], confirm: boolean) =>
+    api.post<{
+      requires_confirmation: boolean;
+      preview?: { order_id: number; nf_number: string; seller_id: number; seller_name: string | null; status: string; bucket: 'pending' | 'partial_scan' | 'stock_reversal' }[];
+      cancelled?: number;
+      stock_reversed?: number;
+      summary?: string[];
+      message: string;
+    }>(
+      `/scanning/sessions/${sessionId}/cancel-duplicate-orders`,
+      { seller_ids: sellerIds, confirm },
+    ),
   suggestedBox: (orderId: number) =>
     api.get<{ order_id: number; suggested: string | null; box_used: string | null; effective: string | null }>(
       `/scanning/orders/${orderId}/suggested-box`

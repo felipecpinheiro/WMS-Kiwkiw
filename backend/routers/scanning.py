@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
 from ..database import get_db
-from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin
-from ..timezone_utils import now_brasilia, end_of_day
+from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin, get_user_seller_ids
+from ..timezone_utils import now_brasilia, today_brasilia, end_of_day
+from ..services.stock_manager import update_stock_position
 from .. import models, schemas
 
 router = APIRouter(prefix="/scanning", tags=["Bipagem"])
@@ -117,7 +118,8 @@ def get_session_orders(
         joinedload(models.Order.items).joinedload(models.OrderItem.product),
         joinedload(models.Order.seller),
     ).filter(
-        models.Order.session_id == session_id
+        models.Order.session_id == session_id,
+        models.Order.status != models.OrderStatus.CANCELLED,
     )
     if seller_id:
         orders_query = orders_query.filter(models.Order.seller_id == seller_id)
@@ -918,6 +920,208 @@ def cancel_handling_session(
         "success": True,
         "cancelled": cancelled,
         "message": f"{cancelled} pedido(s) de {seller_name} cancelados. Estoque não alterado.",
+    }
+
+
+@router.post("/sessions/{session_id}/cancel-duplicate-orders")
+def cancel_duplicate_orders(
+    session_id: int,
+    body: dict,
+    current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancela (soft — status vira CANCELLED, nada é apagado) os pedidos de um
+    ou mais sellers dentro de uma sessão. Usado pra corrigir upload duplicado
+    de arquivo (ex.: cliente subiu o mesmo Excel duas vezes).
+
+    Diferente de /cancel-handling (admin, "manuseio desnecessário"):
+    - Aceita manager (restrito aos sellers que ele atende, via user_seller_ids).
+    - Aceita vários sellers de uma vez.
+    - Cobre também pedidos JÁ concluídos/interrompidos: reverte o estoque
+      sensibilizado criando um novo movimento de estorno (nunca apaga ou
+      edita o movimento original — auditável nos dois lados).
+    - Fluxo de 2 passos: sem `confirm=true`, só devolve um preview (nada é
+      alterado); precisa reenviar com `confirm=true` pra executar, caso
+      exista pedido já bipado (parcial ou concluído) entre os selecionados.
+
+    Body: { "seller_ids": [int, ...], "confirm": bool = False }
+    """
+    seller_ids = body.get("seller_ids") or []
+    confirm = bool(body.get("confirm", False))
+    if not seller_ids:
+        raise HTTPException(status_code=400, detail="Informe ao menos um seller_id")
+
+    if user_seller_ids is not None:
+        not_allowed = [sid for sid in seller_ids if sid not in user_seller_ids]
+        if not_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Você não tem acesso ao(s) seller(s): {not_allowed}",
+            )
+
+    session = db.query(models.PickingSession).filter(
+        models.PickingSession.id == session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.seller),
+    ).filter(
+        models.Order.session_id == session_id,
+        models.Order.seller_id.in_(seller_ids),
+        models.Order.status != models.OrderStatus.CANCELLED,
+    ).all()
+
+    if not orders:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum pedido ativo encontrado para os sellers informados nesta sessão",
+        )
+
+    # ── Classifica cada pedido: pendente / bipagem parcial / estoque sensibilizado ──
+    preview = []
+    any_needs_confirmation = False
+    for order in orders:
+        stock_touched = order.status in (
+            models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED,
+        )
+        has_real_scans = db.query(models.ScanningLog.id).filter(
+            models.ScanningLog.order_id == order.id,
+            models.ScanningLog.is_error == False,
+        ).first() is not None
+
+        if stock_touched:
+            bucket = "stock_reversal"
+            any_needs_confirmation = True
+        elif has_real_scans:
+            bucket = "partial_scan"
+            any_needs_confirmation = True
+        else:
+            bucket = "pending"
+
+        preview.append({
+            "order_id": order.id,
+            "nf_number": order.nf_number,
+            "seller_id": order.seller_id,
+            "seller_name": order.seller.trade_name if order.seller else None,
+            "status": order.status.value if hasattr(order.status, "value") else order.status,
+            "bucket": bucket,
+        })
+
+    if any_needs_confirmation and not confirm:
+        return {
+            "requires_confirmation": True,
+            "preview": preview,
+            "message": "Alguns pedidos já têm bipagem registrada. Confira antes de confirmar.",
+        }
+
+    # ── Executa ──────────────────────────────────────────────────────────────
+    now = now_brasilia()
+    cancelled = 0
+    stock_reversed_count = 0
+    summary_lines = []
+    bucket_by_order = {p["order_id"]: p["bucket"] for p in preview}
+
+    for order in orders:
+        bucket = bucket_by_order.get(order.id, "pending")
+
+        if bucket == "stock_reversal":
+            original_movements = db.query(models.StockMovement).filter(
+                models.StockMovement.order_id == order.id
+            ).all()
+            for mv in original_movements:
+                reverse_type = (
+                    models.MovementType.OUT
+                    if mv.movement_type == models.MovementType.IN
+                    else models.MovementType.IN
+                )
+                db.add(models.StockMovement(
+                    seller_id=mv.seller_id,
+                    sku=mv.sku,
+                    product_name=mv.product_name,
+                    movement_date=today_brasilia(),
+                    movement_type=reverse_type,
+                    quantity=mv.quantity,
+                    adjusted_quantity=mv.quantity,
+                    nf_number=mv.nf_number,
+                    nature=mv.nature,
+                    order_id=order.id,
+                    session_id=session_id,
+                    operator_id=current_user.id,
+                    observation=(
+                        f"ESTORNO — NF {order.nf_number} cancelada (duplicata) por "
+                        f"{current_user.name} em {now.strftime('%d/%m/%Y %H:%M')}. "
+                        f"Reverte a movimentação original (movimento #{mv.id}) deste pedido."
+                    ),
+                ))
+                update_stock_position(
+                    seller_id=mv.seller_id,
+                    sku=mv.sku,
+                    product_name=mv.product_name or mv.sku,
+                    movement_type=reverse_type,
+                    quantity=mv.quantity,
+                    db=db,
+                )
+            stock_reversed_count += 1
+            summary_lines.append(
+                f"NF {order.nf_number} foi cancelada — estoque revertido ({len(original_movements)} SKU(s))"
+            )
+        elif bucket == "partial_scan":
+            summary_lines.append(f"NF {order.nf_number}: bipagem parcial descartada (sem impacto de estoque)")
+        else:
+            summary_lines.append(f"NF {order.nf_number}: cancelada (pendente, sem impacto)")
+
+        order.status = models.OrderStatus.CANCELLED
+
+        db.add(models.ScanningLog(
+            session_id=session_id,
+            order_id=order.id,
+            sku="CANCELLED",
+            barcode_scanned="CANCELLED",
+            quantity=0,
+            operator_id=current_user.id,
+            is_error=False,
+            is_interrupted=False,
+            error_message=f"Cancelado por {current_user.name} — pedido duplicado",
+        ))
+
+        db.add(models.AuditLog(
+            entity_type="Order",
+            entity_id=order.id,
+            action="CANCEL_DUPLICATE",
+            detail=(
+                f"Pedido NF {order.nf_number} ({order.customer_name}) cancelado por duplicidade de upload. "
+                f"Seller: {order.seller.trade_name if order.seller else order.seller_id}. Sessão: {session_id}. "
+                + ("Estoque revertido via movimento de estorno." if bucket == "stock_reversal"
+                   else "Estoque não impactado (pedido não havia sido concluído).")
+            ),
+            user_id=current_user.id,
+        ))
+        cancelled += 1
+
+    db.add(models.AuditLog(
+        entity_type="PickingSession",
+        entity_id=session_id,
+        action="CANCEL_DUPLICATE_BATCH",
+        detail=(
+            f"Cancelamento de pedidos duplicados em lote | Usuário: {current_user.name} | "
+            f"Sellers: {seller_ids} | Pedidos cancelados: {cancelled} | "
+            f"Com reversão de estoque: {stock_reversed_count} | Sessão: {session_id}"
+        ),
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+
+    return {
+        "requires_confirmation": False,
+        "cancelled": cancelled,
+        "stock_reversed": stock_reversed_count,
+        "summary": summary_lines,
+        "message": f"{cancelled} pedido(s) cancelado(s) — {stock_reversed_count} com reversão de estoque.",
     }
 
 

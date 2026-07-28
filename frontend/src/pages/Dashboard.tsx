@@ -277,6 +277,13 @@ export default function DashboardPage() {
     { staleTime: 5 * 60 * 1000 },
   );
 
+  // Warning: componentes de kit sem produto cadastrado — entram no pedido como não cadastrados
+  const { data: kitUnlinked = [] } = useQuery(
+    'kit-unlinked',
+    () => import('../api').then(m => m.cadastrosApi.kitUnlinkedComponents().then(r => r.data)),
+    { staleTime: 5 * 60 * 1000, enabled: user.role === 'admin' || user.role === 'manager' },
+  );
+
   // Lista de sellers ativos p/ o dropdown de vínculo do modal de sellers não reconhecidos
   const { data: activeSellersForLink = [] } = useQuery(
     'active-sellers-for-link',
@@ -586,6 +593,27 @@ export default function DashboardPage() {
             </p>
           </div>
           <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
+        </div>
+      )}
+
+      {/* ⚠️ Warning: componentes de kit sem produto cadastrado */}
+      {(kitUnlinked as any[]).length > 0 && (
+        <div className="flex items-start gap-3 bg-amber-900/25 border border-amber-500/30 rounded-xl px-4 py-3">
+          <span className="text-amber-400 mt-0.5 flex-shrink-0">⚠</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-300">
+              Componentes de kit sem produto cadastrado ({(kitUnlinked as any[]).length})
+            </p>
+            <p className="text-xs text-amber-400/80 mt-0.5">
+              Quando um kit desses for explodido, o item entra no pedido como produto não cadastrado
+              e trava a bipagem.
+            </p>
+            <p className="text-xs text-amber-400/60 mt-1">
+              {(kitUnlinked as any[]).slice(0, 6).map((c: any) => `${c.component_sku} (${c.seller_name})`).join(', ')}
+              {(kitUnlinked as any[]).length > 6 ? ` e mais ${(kitUnlinked as any[]).length - 6}...` : ''}
+            </p>
+          </div>
+          <a href="/kits/vincular" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Vincular →</a>
         </div>
       )}
 

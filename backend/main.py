@@ -75,6 +75,17 @@ def run_light_migrations():
                 migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT FALSE NOT NULL")
             if not col_exists("stock_movements", "nf_date"):
                 migrations.append("ALTER TABLE stock_movements ADD COLUMN nf_date DATE")
+            if not col_exists("kit_items", "product_id"):
+                migrations.append("ALTER TABLE kit_items ADD COLUMN product_id INTEGER REFERENCES products(id)")
+            # Índice checado à parte da coluna: se a coluna existir sem o índice
+            # (criação parcial), ele ainda precisa ser criado. A condição olha o
+            # índice de verdade para não reexecutar nada em toda inicialização.
+            idx = db.execute(text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename='kit_items' AND indexname='ix_kit_items_product_id'"
+            )).fetchone()
+            if idx is None:
+                migrations.append("CREATE INDEX IF NOT EXISTS ix_kit_items_product_id ON kit_items (product_id)")
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
@@ -113,6 +124,15 @@ def run_light_migrations():
             if "nf_date" not in existing_mov:
                 migrations.append("ALTER TABLE stock_movements ADD COLUMN nf_date DATE")
 
+            rows_ki = db.execute(text("PRAGMA table_info(kit_items)")).fetchall()
+            existing_ki = {r[1] for r in rows_ki}
+            if "product_id" not in existing_ki:
+                migrations.append("ALTER TABLE kit_items ADD COLUMN product_id INTEGER REFERENCES products(id)")
+            # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
+            idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
+            if "ix_kit_items_product_id" not in idx_ki:
+                migrations.append("CREATE INDEX IF NOT EXISTS ix_kit_items_product_id ON kit_items (product_id)")
+
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
                     user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
@@ -125,6 +145,28 @@ def run_light_migrations():
             db.execute(text(sql))
             print(f"✅ Migração aplicada: {sql}")
         db.commit()
+
+        # ── Backfill do vínculo componente de kit → produto ────────────────────
+        # Preenche apenas onde ainda está NULL e o SKU casa exatamente com um
+        # produto ativo do MESMO seller do kit. Nunca altera component_sku.
+        # O que não casar segue NULL e aparece na tela /kits/vincular.
+        # "AND p.active" (sem = TRUE / = 1) funciona nos dois bancos.
+        res = db.execute(text("""
+            UPDATE kit_items
+               SET product_id = (
+                   SELECT p.id
+                     FROM products p
+                     JOIN kits k ON k.id = kit_items.kit_id
+                    WHERE p.seller_id = k.seller_id
+                      AND p.sku = kit_items.component_sku
+                      AND p.active
+                    LIMIT 1
+               )
+             WHERE product_id IS NULL
+        """))
+        db.commit()
+        if res.rowcount:
+            print(f"✅ Backfill kit_items.product_id: {res.rowcount} linha(s) avaliada(s)")
     except Exception as e:
         print(f"⚠️  Aviso em migrações leves: {e}")
     finally:

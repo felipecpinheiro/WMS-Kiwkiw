@@ -15,13 +15,15 @@ def expand_kit_items(
     product_name: str,
     quantity: int,
     db: Session,
-) -> List[Tuple[str, str, int, bool, str]]:
+) -> List[Tuple[str, str, int, bool, str, int]]:
     """
     Verifica se o SKU é um kit e expande para seus componentes.
 
     Retorna lista de tuplas:
-      (sku, product_name, quantity, is_kit_component, original_kit_sku)
+      (sku, product_name, quantity, is_kit_component, original_kit_sku, product_id)
 
+    product_id vem do vínculo do componente com o cadastro (KitItem.product_id) e
+    pode ser None — componente sem vínculo continua valendo pelo SKU.
     Se não for kit, retorna o próprio item sem modificação.
     """
     # Busca o kit no banco de dados
@@ -33,7 +35,7 @@ def expand_kit_items(
 
     if not kit or not kit.items:
         # Não é um kit, retorna o item original
-        return [(sku, product_name, quantity, False, None)]
+        return [(sku, product_name, quantity, False, None, None)]
 
     # É um kit: expande para os componentes, multiplicando pela quantidade do kit
     expanded = []
@@ -45,6 +47,7 @@ def expand_kit_items(
             item.quantity * quantity,   # Multiplica pela qtd de kits
             True,                        # is_kit_component = True
             sku,                         # original_kit_sku
+            item.product_id,             # vínculo com o cadastro (pode ser None)
         ))
 
     return expanded
@@ -72,37 +75,14 @@ def process_order_items(
             db=db,
         )
 
-        for (sku, name, qty, is_kit, original_sku) in expanded:
+        for (sku, name, qty, is_kit, original_sku, product_id) in expanded:
             processed.append({
                 "sku": sku,
                 "product_name": name,
                 "quantity": qty,
                 "is_kit_component": is_kit,
                 "original_kit_sku": original_sku,
+                "product_id": product_id,
             })
 
     return processed
-
-
-def get_kit_summary(seller_id: int, db: Session) -> List[dict]:
-    """Retorna resumo de todos os kits de um seller."""
-    kits = db.query(models.Kit).filter(
-        models.Kit.seller_id == seller_id,
-        models.Kit.active == True,
-    ).all()
-
-    return [
-        {
-            "kit_sku": k.kit_sku,
-            "kit_name": k.kit_name,
-            "components": [
-                {
-                    "sku": i.component_sku,
-                    "name": i.component_name,
-                    "quantity": i.quantity,
-                }
-                for i in k.items
-            ],
-        }
-        for k in kits
-    ]

@@ -5,17 +5,28 @@
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import { format } from 'date-fns';
-import { Plus, Pencil, Trash2, X, Check, Package, ChevronDown, ChevronUp, ClipboardList, History } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, Package, ChevronDown, ChevronUp, ClipboardList, History, Link2, AlertTriangle, Search, Upload } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
 
-const KIT_MAX_COMPONENTS = 10;
-const KIT_COLS = 2 + KIT_MAX_COMPONENTS * 2; // seller + sku_kit + 10*(sku+qty)
+// 11 é o que a planilha de tratamento comporta e um kit real usa todos (ZAYAZ
+// "thefullselfcarekit"). Com o limite antigo de 10 o 11º componente era descartado
+// em silêncio na colagem. Folga até 15 para não repetir o problema.
+const KIT_MAX_COMPONENTS = 15;
+const KIT_COLS = 2 + KIT_MAX_COMPONENTS * 2; // seller + sku_kit + N*(sku+qty)
 
 export default function KitsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  // Criar/editar/excluir kit exige manager+ no backend (require_manager_or_above).
+  // Operator só visualiza — sem isto os botões apareciam e devolviam 403.
+  const userStr = localStorage.getItem('wms_user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  const canManageKits = user?.role === 'admin' || user?.role === 'manager';
+
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -27,11 +38,29 @@ export default function KitsPage() {
   const [activeTab, setActiveTab] = useState<'kits' | 'log'>('kits');
   const [logSeller, setLogSeller] = useState<number | ''>('');
 
+  // Filtros da listagem (M5) — antes a tela carregava todos os kits de todos os sellers
+  const [search, setSearch] = useState('');
+  const [listSeller, setListSeller] = useState<number | ''>('');
+
   // Paste modal state
   const [showKitPasteModal, setShowKitPasteModal] = useState(false);
   const [kitGrid, setKitGrid] = useState<string[][]>(Array(5).fill(null).map(() => Array(KIT_COLS).fill('')));
 
+  // Import por arquivo (planilha CADASTRO KITS) — 2 passos
+  const [showFileModal, setShowFileModal] = useState(false);
+  const [kitFile, setKitFile] = useState<File | null>(null);
+  const [analysis, setAnalysis] = useState<any>(null);
+  // valor: seller_id (vincular), 'skip' (não importar) ou 'reactivate' (religar o seller)
+  const [sellerDecisions, setSellerDecisions] =
+    useState<Record<string, number | 'skip' | 'reactivate'>>({});
+  const [importing, setImporting] = useState(false);
+
   const { data: kits = [] } = useQuery('kits', () => cadastrosApi.kits().then(r => r.data));
+  const { data: unlinked = [] } = useQuery(
+    'kit-unlinked',
+    () => cadastrosApi.kitUnlinkedComponents().then(r => r.data),
+    { enabled: canManageKits },
+  );
   const { data: expansionLog = [] } = useQuery(
     ['kit-expansion-log', logSeller],
     () => cadastrosApi.kitExpansionLog(logSeller || undefined).then(r => r.data),
@@ -58,6 +87,19 @@ export default function KitsPage() {
     setShowModal(true);
   };
 
+  // Quantos kits realmente serão gravados, descontando os clientes marcados como
+  // "não importar" — o botão precisa refletir isso, senão promete o que não cumpre.
+  const kitsAImportar = ((analysis?.by_seller ?? []) as any[])
+    .filter(s => sellerDecisions[s.seller_name] !== 'skip')
+    .reduce((soma, s) => soma + s.kits, 0);
+
+  const termo = search.trim().toLowerCase();
+  const filteredKits = (kits as any[]).filter((k: any) => {
+    if (listSeller && k.seller_id !== listSeller) return false;
+    if (!termo) return true;
+    return `${k.kit_sku ?? k.sku ?? ''} ${k.kit_name ?? k.name ?? ''}`.toLowerCase().includes(termo);
+  });
+
   const addItem = () => setItems(prev => [...prev, { sku: '', quantity: 1 }]);
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i));
   const updateItem = (i: number, field: 'sku' | 'quantity', value: string | number) =>
@@ -69,9 +111,23 @@ export default function KitsPage() {
     try {
       const mappedItems = items.filter(i => i.sku.trim()).map(i => ({ component_sku: i.sku.trim(), quantity: i.quantity }));
       const payload = { kit_sku: kitSku, kit_name: kitName, seller_id: Number(sellerId), items: mappedItems };
-      if (editId) { await cadastrosApi.updateKit(editId, payload); toast.success('Kit atualizado!'); }
-      else { await cadastrosApi.createKit(payload); toast.success('Kit criado!'); }
+      const res = editId
+        ? await cadastrosApi.updateKit(editId, payload)
+        : await cadastrosApi.createKit(payload);
+      toast.success(editId ? 'Kit atualizado!' : 'Kit criado!');
+
+      // Avisos que não impedem o salvamento (M1/M2)
+      const w = (res?.data as any)?.warnings;
+      if (w?.missing_skus?.length) {
+        toast(`Sem produto cadastrado: ${w.missing_skus.join(', ')} — vincule em Kits › Vincular componentes.`,
+          { icon: '⚠️', duration: 8000 });
+      }
+      if (w?.nested_kits?.length) {
+        toast(`${w.nested_kits.join(', ')} também é um kit e NÃO será explodido — use os SKUs finais.`,
+          { icon: '⚠️', duration: 8000 });
+      }
       qc.invalidateQueries('kits');
+      qc.invalidateQueries('kit-unlinked');
       setShowModal(false);
     } catch (err: any) { toast.error(err.response?.data?.detail || 'Erro ao salvar kit'); }
   };
@@ -80,6 +136,57 @@ export default function KitsPage() {
     if (!confirm('Excluir este kit?')) return;
     try { await cadastrosApi.deleteKit(id); toast.success('Kit excluído'); qc.invalidateQueries('kits'); }
     catch { toast.error('Erro ao excluir'); }
+  };
+
+  // ── Import por arquivo ────────────────────────────────────────────────────
+  const handleAnalyzeFile = async (f: File) => {
+    setKitFile(f); setAnalysis(null); setSellerDecisions({}); setImporting(true);
+    try {
+      const res = await cadastrosApi.analyzeKitFile(f);
+      setAnalysis(res.data);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Não consegui ler a planilha');
+      setKitFile(null);
+    } finally { setImporting(false); }
+  };
+
+  const handleExecuteFile = async () => {
+    if (!kitFile) return;
+    const faltando = (analysis?.unmatched_sellers ?? [])
+      .filter((n: string) => !sellerDecisions[n]);
+    if (faltando.length) {
+      toast.error(`Decida o que fazer com: ${faltando.join(', ')} (vincular ou não importar)`);
+      return;
+    }
+    if (kitsAImportar === 0) { toast.error('Todos os clientes foram marcados como "não importar"'); return; }
+    setImporting(true);
+    try {
+      const res = await cadastrosApi.executeKitFile(kitFile, sellerDecisions);
+      const d: any = res.data;
+      if (d.requires_confirmation) { toast.error(d.message); return; }
+      toast.success(`${d.created} kit(s) criado(s), ${d.updated} atualizado(s)`);
+      if (d.reactivated_sellers?.length) {
+        toast(`Seller(s) reativado(s): ${d.reactivated_sellers.join(', ')}`,
+          { icon: '↻', duration: 7000 });
+      }
+      if (d.skipped_sellers?.length) {
+        const txt = d.skipped_sellers.map((s: any) => `${s.seller_name} (${s.kits})`).join(', ');
+        toast(`Não importado por sua escolha: ${txt}`, { icon: '⏭️', duration: 7000 });
+      }
+      if (d.blocked?.length) {
+        toast(`${d.blocked.length} linha(s) não importada(s) — veja o motivo no relatório.`,
+          { icon: '⚠️', duration: 7000 });
+      }
+      if (d.missing_skus?.length) {
+        toast(`${d.missing_skus.length} componente(s) sem produto cadastrado — resolva em "Vincular componentes".`,
+          { icon: '⚠️', duration: 8000 });
+      }
+      qc.invalidateQueries('kits');
+      qc.invalidateQueries('kit-unlinked');
+      setShowFileModal(false); setKitFile(null); setAnalysis(null); setSellerDecisions({});
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao importar');
+    } finally { setImporting(false); }
   };
 
   // Kit paste handlers
@@ -141,7 +248,16 @@ export default function KitsPage() {
               <History size={11} /> Log Explosões
             </button>
           </div>
-          {activeTab === 'kits' && <>
+          {activeTab === 'kits' && canManageKits && <>
+          {unlinked.length > 0 && (
+            <button onClick={() => navigate('/kits/vincular')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-amber-300 bg-amber-900/20 border border-amber-500/30 hover:bg-amber-900/30 rounded-lg transition">
+              <Link2 size={14} /> Vincular componentes ({unlinked.length})
+            </button>
+          )}
+          <button onClick={() => setShowFileModal(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
+            <Upload size={14} /> Importar Kits (Excel)
+          </button>
           <button onClick={() => setShowKitPasteModal(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
             <ClipboardList size={14} /> Colar Kits
           </button>
@@ -153,14 +269,36 @@ export default function KitsPage() {
       </div>
 
       {activeTab === 'kits' && (<>
+      {/* Filtros (M5) */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por SKU ou nome do kit..."
+            className="w-full border border-white/12 rounded-lg pl-9 pr-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+          />
+        </div>
+        <select value={listSeller} onChange={e => setListSeller(e.target.value ? Number(e.target.value) : '')}
+          className="border border-white/12 rounded-lg px-3 py-1.5 text-sm text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+          style={{ background: '#14122A', colorScheme: 'dark' }}>
+          <option value="">Todos os sellers</option>
+          {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
+        </select>
+        <span className="text-xs text-white/35">{filteredKits.length} de {kits.length} kit(s)</span>
+      </div>
+
       <div className="space-y-3">
-        {kits.length === 0 && (
+        {filteredKits.length === 0 && (
           <div className="bg-gray-900 border border-dashed border-white/12 rounded-xl p-10 text-center">
             <Package size={32} className="text-white/25 mx-auto mb-2" />
-            <p className="text-sm text-white/35">Nenhum kit cadastrado</p>
+            <p className="text-sm text-white/35">
+              {kits.length === 0 ? 'Nenhum kit cadastrado' : 'Nenhum kit encontrado com esse filtro'}
+            </p>
           </div>
         )}
-        {kits.map((k: any) => (
+        {filteredKits.map((k: any) => (
           <div key={k.id} className="bg-gray-900 rounded-xl border border-white/8 shadow-none">
             <div className="p-4 flex items-center gap-3">
               <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -183,8 +321,10 @@ export default function KitsPage() {
                 >
                   {expandedId === k.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </button>
-                <button onClick={() => openEdit(k)} className="text-white/35 hover:text-violet-400 transition"><Pencil size={14} /></button>
-                <button onClick={() => handleDelete(k.id)} className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                {canManageKits && (<>
+                  <button onClick={() => openEdit(k)} className="text-white/35 hover:text-violet-400 transition"><Pencil size={14} /></button>
+                  <button onClick={() => handleDelete(k.id)} className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                </>)}
               </div>
             </div>
 
@@ -195,11 +335,20 @@ export default function KitsPage() {
                   {k.items?.map((item: any, i: number) => {
                     const prod = products.find((p: any) => p.sku === item.component_sku && (!k.seller_id || p.seller_id === k.seller_id));
                     const displayName = prod?.name || item.component_name || item.component_sku;
+                    const semVinculo = item.product_found === false;
                     return (
                       <div key={i} className="flex items-center gap-3 text-sm">
                         <span className="w-6 h-6 bg-gray-100 rounded text-center text-xs font-bold text-white/50 flex items-center justify-center">{item.quantity}x</span>
                         <span className="font-mono text-xs text-white/50">{item.component_sku}</span>
                         <span className="text-white/60 text-xs truncate">{displayName}</span>
+                        {semVinculo && (
+                          <span
+                            title="Este SKU não existe no cadastro de produtos deste seller"
+                            className="flex items-center gap-1 text-[10px] text-amber-300 bg-amber-900/25 border border-amber-500/25 rounded px-1.5 py-0.5 flex-shrink-0"
+                          >
+                            <AlertTriangle size={10} /> sem produto
+                          </span>
+                        )}
                       </div>
                     );
                   })}
@@ -224,17 +373,31 @@ export default function KitsPage() {
                 <div>
                   <label className="block text-xs text-white/50 mb-1">SKU do Kit *</label>
                   <input value={kitSku} onChange={e => setKitSku(e.target.value)}
-                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+                    disabled={!!editId}
+                    title={editId ? 'O SKU do kit não pode ser alterado' : undefined}
+                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50 disabled:cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-xs text-white/50 mb-1">Seller *</label>
                   <select value={sellerId} onChange={e => setSellerId(Number(e.target.value))}
-                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
+                    disabled={!!editId}
+                    title={editId ? 'O seller do kit não pode ser alterado' : undefined}
+                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50 disabled:cursor-not-allowed">
                     <option value="">Selecione...</option>
                     {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
                   </select>
                 </div>
               </div>
+              {editId && (
+                <p className="text-[11px] text-white/40">
+                  SKU e seller não podem ser alterados — para trocá-los, crie um novo kit.
+                </p>
+              )}
+              {/* M4 — a expansão acontece no import; kit novo/editado não reprocessa pedidos antigos */}
+              <p className="flex items-start gap-1.5 text-[11px] text-amber-300/80">
+                <AlertTriangle size={12} className="flex-shrink-0 mt-px" />
+                Vale só para importações futuras — pedidos já importados não são reprocessados.
+              </p>
               <div>
                 <label className="block text-xs text-white/50 mb-1">Nome do Kit *</label>
                 <input value={kitName} onChange={e => setKitName(e.target.value)}
@@ -343,6 +506,151 @@ export default function KitsPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Import por arquivo — 2 passos, nada é gravado na análise */}
+      {showFileModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-auto">
+          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-3xl my-8 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-white text-lg">Importar Kits (Excel)</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Lê a aba <span className="font-mono">CADASTRO KITS</span> — colunas CLIENTE | SKU Kit | Nome,
+                  depois trincas SKU | NOME | QUANTIDADE.
+                </p>
+              </div>
+              <button onClick={() => { setShowFileModal(false); setKitFile(null); setAnalysis(null); setSellerDecisions({}); }}
+                className="text-white/35 hover:text-white/60"><X size={20} /></button>
+            </div>
+
+            {!analysis ? (
+              <div className="border border-dashed border-white/15 rounded-xl p-8 text-center">
+                <Upload size={28} className="text-white/25 mx-auto mb-3" />
+                <input
+                  type="file" accept=".xlsx,.xlsm,.xls"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleAnalyzeFile(f); }}
+                  className="text-sm text-white/70 mx-auto block"
+                />
+                {importing && <p className="text-xs text-violet-300 mt-3">Lendo a planilha...</p>}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-white/4 rounded-xl p-3 text-xs text-white/70">
+                  Aba <span className="font-mono text-white/90">{analysis.sheet}</span> · cabeçalho na linha{' '}
+                  {analysis.header_row} · {analysis.component_columns} componentes por kit ·{' '}
+                  <span className="text-white/90 font-semibold">{analysis.total_kits} kit(s)</span> prontos
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-white/70 uppercase tracking-wide mb-1.5">Por cliente</p>
+                  <div className="space-y-1.5">
+                    {(analysis.by_seller ?? []).map((s: any) => {
+                      const decisao = sellerDecisions[s.seller_name];
+                      const pulado = decisao === 'skip';
+                      const reconhecido = s.status === 'matched';
+                      const inativo = s.status === 'inactive';
+                      return (
+                        <div key={s.seller_name}
+                          className={`flex items-center gap-2 text-xs ${pulado ? 'opacity-45' : ''}`}>
+                          <span className={`w-40 truncate ${pulado ? 'text-white/50 line-through' : 'text-white/80'}`}>
+                            {s.seller_name}
+                          </span>
+                          <span className="text-white/40 w-16">{s.kits} kit(s)</span>
+                          {inativo && !pulado && (
+                            <span className="text-amber-300 whitespace-nowrap">
+                              cadastrado, porém INATIVO
+                            </span>
+                          )}
+                          <select
+                            value={decisao ?? (reconhecido ? s.matched_seller_id : '')}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setSellerDecisions(prev => ({
+                                ...prev,
+                                [s.seller_name]:
+                                  v === 'skip' || v === 'reactivate' ? v : Number(v),
+                              }));
+                            }}
+                            className={`flex-1 border rounded-lg px-2 py-1 text-xs text-white/80 outline-none ${
+                              reconhecido || pulado ? 'border-white/12' : 'border-amber-500/40'}`}
+                            style={{ background: '#14122A', colorScheme: 'dark' }}
+                          >
+                            {reconhecido ? (
+                              <option value={s.matched_seller_id}>→ {s.matched_seller_name} (importar)</option>
+                            ) : (
+                              <option value="">
+                                {inativo ? '⚠ Inativo — reative em Sellers ou não importe' : '⚠ Não reconhecido — aponte o seller...'}
+                              </option>
+                            )}
+                            {inativo && (
+                              <option value="reactivate">
+                                ↻ Reativar "{s.matched_seller_name}" e importar
+                              </option>
+                            )}
+                            {!reconhecido && sellers
+                              .filter((x: any) => x.active !== false)
+                              .map((x: any) => (
+                                <option key={x.id} value={x.id}>{x.trade_name || x.name}</option>
+                              ))}
+                            <option value="skip">✕ Não importar (pular este cliente)</option>
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-white/40 mt-2">
+                    Nenhum seller é criado por aqui — só é possível apontar para um cadastro
+                    existente ou deixar as linhas do cliente de fora.
+                  </p>
+                </div>
+
+                {(analysis.blocked ?? []).length > 0 && (
+                  <div className="bg-red-900/20 border border-red-500/25 rounded-xl p-3">
+                    <p className="text-xs font-semibold text-red-300 mb-1.5">
+                      {analysis.blocked.length} linha(s) NÃO serão importadas
+                    </p>
+                    <div className="space-y-1 max-h-32 overflow-auto">
+                      {analysis.blocked.map((b: any) => (
+                        <p key={b.row} className="text-[11px] text-red-200/80">
+                          Linha {b.row} · <span className="font-mono">{b.kit_sku || '(sem SKU)'}</span> — {b.reason}
+                        </p>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-red-200/60 mt-1.5">
+                      Corrija na planilha e importe de novo — o resto pode ser importado agora.
+                    </p>
+                  </div>
+                )}
+
+                {(analysis.missing_skus ?? []).length > 0 && (
+                  <div className="bg-amber-900/20 border border-amber-500/25 rounded-xl p-3">
+                    <p className="text-xs font-semibold text-amber-300">
+                      {analysis.missing_skus.length} componente(s) sem produto cadastrado
+                    </p>
+                    <p className="text-[11px] text-amber-200/70 mt-1">
+                      Os kits são importados mesmo assim; depois resolva em "Vincular componentes".
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button onClick={() => { setKitFile(null); setAnalysis(null); setSellerDecisions({}); }}
+                    className="px-4 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4">
+                    Trocar arquivo
+                  </button>
+                  <button onClick={handleExecuteFile} disabled={importing || kitsAImportar === 0}
+                    className="px-4 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg font-medium disabled:opacity-50">
+                    {importing ? 'Importando...' : `Importar ${kitsAImportar} kit(s)`}
+                    {!importing && kitsAImportar !== analysis.total_kits && (
+                      <span className="text-white/60"> de {analysis.total_kits}</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

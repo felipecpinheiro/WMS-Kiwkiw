@@ -3,14 +3,21 @@ WMS Kiwkiw - Router de Cadastros
 Produtos, Kits, Algoritmo de Caixa, Sellers, Unidades e Usuários.
 """
 
-import os, shutil
+import os, shutil, json
+from datetime import date, datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..auth import get_current_user, require_manager_or_above, require_admin, require_internal
+from ..auth import (
+    get_current_user, require_manager_or_above, require_admin, require_internal,
+    get_user_seller_ids,
+)
+from ..timezone_utils import end_of_day
+from ..services.kit_import import parse_kit_workbook, match_sellers, _norm as _norm_seller
+from ..services.order_import import _build_seller_alias_map
 from .. import models, schemas
 
 router = APIRouter(prefix="/cadastros", tags=["Cadastros"])
@@ -257,10 +264,97 @@ async def upload_product_photo(
 # KITS
 # ============================================================
 
+def _assert_kit_seller_scope(seller_id: int, user_seller_ids: Optional[List[int]]):
+    """
+    Manager/operator só enxergam e mexem nos kits dos sellers que atendem.
+    user_seller_ids None = admin (sem filtro), conforme get_user_seller_ids.
+    """
+    if user_seller_ids is not None and seller_id not in (user_seller_ids or []):
+        raise HTTPException(
+            status_code=403,
+            detail="Você não atende este seller — kit fora do seu escopo",
+        )
+
+
+def _resolve_kit_components(seller_id: int, items: List[schemas.KitItemCreate], db: Session):
+    """
+    Liga cada componente ao produto do seller (product_id) e completa o nome
+    a partir do cadastro. Devolve (componentes, missing_skus, nested_kits).
+
+    Componente cujo SKU não existe no cadastro NÃO bloqueia o salvamento:
+    fica sem vínculo e é devolvido em missing_skus para a tela avisar.
+    A resolução por nome (aba ACERTO SKU da planilha) não faz parte disto.
+    """
+    skus = [(i.component_sku or "").strip() for i in items]
+
+    produtos = db.query(models.Product).filter(
+        models.Product.seller_id == seller_id,
+        models.Product.sku.in_(skus or [""]),
+        models.Product.active == True,
+    ).all()
+    por_sku = {p.sku: p for p in produtos}
+
+    # Componente que também é kit não é explodido (a expansão é de 1 nível só).
+    kits_do_seller = {
+        row[0] for row in db.query(models.Kit.kit_sku).filter(
+            models.Kit.seller_id == seller_id,
+            models.Kit.active == True,
+        ).all()
+    }
+
+    componentes, missing, nested = [], [], []
+    for item in items:
+        sku = (item.component_sku or "").strip()
+        prod = por_sku.get(sku)
+        if not prod:
+            missing.append(sku)
+        if sku in kits_do_seller:
+            nested.append(sku)
+        componentes.append({
+            "component_sku": sku,
+            "component_name": (item.component_name or (prod.name if prod else None) or sku),
+            "quantity": item.quantity,
+            "product_id": prod.id if prod else None,
+        })
+    return componentes, missing, nested
+
+
+def _kit_items_payload(k: models.Kit) -> List[dict]:
+    return [
+        {
+            "id": i.id,
+            "component_sku": i.component_sku,
+            "component_name": i.component_name,
+            "quantity": i.quantity,
+            "product_id": i.product_id,
+            "product_found": i.product_id is not None,
+        }
+        for i in k.items
+    ]
+
+
+def _kit_to_dict(k: models.Kit, missing_skus=None, nested_kits=None) -> dict:
+    """Resposta de create/update. Dict manual — kits já deram problema com ORM mode."""
+    return {
+        "id": k.id,
+        "seller_id": k.seller_id,
+        "seller_name": k.seller.trade_name if k.seller else None,
+        "kit_sku": k.kit_sku,
+        "kit_name": k.kit_name,
+        "active": k.active,
+        "items": _kit_items_payload(k),
+        "warnings": {
+            "missing_skus": missing_skus or [],
+            "nested_kits": nested_kits or [],
+        },
+    }
+
+
 @router.get("/kits")
 def list_kits(
     seller_id: Optional[int] = None,
     current_user: models.User = Depends(get_current_user),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
     query = (
@@ -268,6 +362,8 @@ def list_kits(
         .options(joinedload(models.Kit.items), joinedload(models.Kit.seller))
         .filter(models.Kit.active == True)
     )
+    if user_seller_ids is not None:
+        query = query.filter(models.Kit.seller_id.in_(user_seller_ids or [-1]))
     if seller_id:
         query = query.filter(models.Kit.seller_id == seller_id)
     kits = query.order_by(models.Kit.kit_sku).all()
@@ -279,87 +375,620 @@ def list_kits(
             "kit_sku": k.kit_sku,
             "kit_name": k.kit_name,
             "active": k.active,
-            "items": [
-                {
-                    "id": i.id,
-                    "component_sku": i.component_sku,
-                    "component_name": i.component_name,
-                    "quantity": i.quantity,
-                }
-                for i in k.items
-            ],
+            "items": _kit_items_payload(k),
         }
         for k in kits
     ]
 
 
-@router.post("/kits", response_model=schemas.KitResponse)
+# Sentinelas de seller_decisions (o resto dos valores é um seller_id para vincular)
+SKIP = "skip"              # não importar as linhas deste cliente
+REACTIVATE = "reactivate"  # reativar o seller desativado e importar nele
+
+
+def _analisa_planilha_kits(file: UploadFile, db: Session, user_seller_ids: Optional[List[int]]):
+    """
+    Trabalho comum de analyze e execute: lê a planilha e resolve os sellers.
+    Não grava nada. Devolve (parsed, matched, unmatched, fora_de_escopo, inativos).
+
+    `inativos` = nomes que EXISTEM no cadastro mas estão desativados. Eles caem em
+    `unmatched` (o match só olha sellers ativos), mas precisam ser identificados
+    para a tela não sugerir vinculá-los ao seller errado por engano.
+    """
+    try:
+        parsed = parse_kit_workbook(file.file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Não consegui ler a planilha: {e}")
+
+    alias_map = _build_seller_alias_map(db, active=True)
+    matched, unmatched = match_sellers(parsed["kits"], alias_map)
+
+    alias_inativos = _build_seller_alias_map(db, active=False)
+    inativos = {}
+    for nome in unmatched:
+        s = alias_inativos.get(nome.strip().lower())
+        if s:
+            inativos[_norm_seller(nome)] = s
+
+    fora_escopo = []
+    if user_seller_ids is not None:
+        for chave, seller in list(matched.items()):
+            if seller.id not in (user_seller_ids or []):
+                fora_escopo.append(seller.trade_name)
+                matched.pop(chave)
+    return parsed, matched, unmatched, fora_escopo, inativos
+
+
+@router.post("/kits/import-file/analyze")
+def analyze_kit_import_file(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Passo 1 do import de kits por arquivo: lê a planilha e devolve o que será feito.
+    NÃO grava nada — nem kit, nem seller, nem produto.
+    """
+    parsed, matched, unmatched, fora_escopo, inativos = _analisa_planilha_kits(
+        file, db, user_seller_ids)
+
+    # Agrupa por cliente da planilha
+    por_seller: dict[str, dict] = {}
+    for k in parsed["kits"]:
+        info = por_seller.setdefault(k["seller_name"], {
+            "seller_name": k["seller_name"], "kits": 0, "status": "unmatched",
+            "matched_seller_id": None, "matched_seller_name": None,
+        })
+        info["kits"] += 1
+
+    for nome, info in por_seller.items():
+        chave = _norm_seller(nome)
+        seller = matched.get(chave)
+        if seller:
+            info["status"] = "matched"
+            info["matched_seller_id"] = seller.id
+            info["matched_seller_name"] = seller.trade_name
+        elif chave in inativos:
+            # Existe no cadastro, mas está desativado: não dá para vincular sem
+            # reativar antes. A tela mostra isso e oferece pular.
+            info["status"] = "inactive"
+            info["matched_seller_id"] = inativos[chave].id
+            info["matched_seller_name"] = inativos[chave].trade_name
+
+    # SKUs de componente que não existem no cadastro do seller (não bloqueiam)
+    missing_skus = []
+    for k in parsed["kits"]:
+        seller = matched.get(_norm_seller(k["seller_name"]))
+        if not seller:
+            continue
+        skus = [c["sku"] for c in k["components"]]
+        existentes = {
+            p.sku for p in db.query(models.Product).filter(
+                models.Product.seller_id == seller.id,
+                models.Product.sku.in_(skus or [""]),
+                models.Product.active == True,
+            ).all()
+        }
+        for sku in skus:
+            if sku not in existentes:
+                missing_skus.append({
+                    "seller_name": k["seller_name"], "kit_sku": k["kit_sku"],
+                    "component_sku": sku,
+                })
+
+    return {
+        "sheet": parsed["sheet"],
+        "header_row": parsed["header_row"],
+        "component_columns": parsed["component_columns"],
+        "total_kits": len(parsed["kits"]),
+        "by_seller": sorted(por_seller.values(), key=lambda x: -x["kits"]),
+        "unmatched_sellers": unmatched,
+        "out_of_scope_sellers": fora_escopo,
+        "blocked": parsed["blocked"],
+        "missing_skus": missing_skus,
+        "warnings": parsed["warnings"],
+        "requires_confirmation": bool(unmatched),
+    }
+
+
+@router.post("/kits/import-file/execute")
+def execute_kit_import_file(
+    file: UploadFile = File(...),
+    seller_decisions: Optional[str] = Form(
+        None,
+        description=(
+            'JSON {"nome na planilha": seller_id | "skip"}. Só vincula a seller '
+            'existente — nunca cria. "skip" deixa as linhas daquele cliente de fora.'
+        ),
+    ),
+    current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Passo 2: grava os kits. Linhas bloqueadas na análise NUNCA entram.
+    Se sobrar algum nome de seller sem decisão, aborta sem gravar nada.
+    """
+    decisoes = {}
+    if seller_decisions:
+        try:
+            decisoes = json.loads(seller_decisions)
+        except Exception:
+            raise HTTPException(status_code=400, detail="seller_decisions inválido — esperado JSON")
+
+    parsed, matched, unmatched, fora_escopo, inativos = _analisa_planilha_kits(
+        file, db, user_seller_ids)
+
+    def sentinela(v, alvo) -> bool:
+        return isinstance(v, str) and v.strip().lower() == alvo
+
+    # ── "Pular": vale para QUALQUER cliente da planilha, reconhecido ou não ────
+    # Remove do mapa de resolvidos para que as linhas dele não sejam gravadas.
+    pulados = set()
+    for nome, escolha in decisoes.items():
+        if sentinela(escolha, SKIP):
+            pulados.add(_norm_seller(nome))
+            matched.pop(_norm_seller(nome), None)
+
+    # ── "Reativar": só para cliente que existe no cadastro mas está desativado ─
+    # Religa o seller (active=True) e importa nele. Mexe no cadastro do seller a
+    # partir da tela de kits, então fica registrado na trilha de auditoria.
+    reativados = []
+    for nome, escolha in decisoes.items():
+        chave = _norm_seller(nome)
+        if not sentinela(escolha, REACTIVATE) or chave in pulados:
+            continue
+        seller = inativos.get(chave)
+        if not seller:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{nome}' não corresponde a nenhum seller desativado — nada a reativar.",
+            )
+        if user_seller_ids is not None and seller.id not in (user_seller_ids or []):
+            raise HTTPException(status_code=403, detail=f"Seller '{nome}' está fora do seu escopo")
+        seller.active = True
+        db.add(models.AuditLog(
+            entity_type="Seller",
+            entity_id=seller.id,
+            action="REACTIVATE",
+            detail=(
+                f"Seller reativado durante importação de kits: {seller.trade_name} "
+                f"(nome na planilha: '{nome}')"
+            ),
+            user_id=current_user.id,
+        ))
+        matched[chave] = seller
+        reativados.append(seller.trade_name)
+
+    # ── Vínculo a seller já cadastrado (nunca cria) ───────────────────────────
+    pendentes = []
+    for nome in unmatched:
+        chave = _norm_seller(nome)
+        if chave in pulados or chave in matched:
+            continue
+        escolha = decisoes.get(nome)
+        if escolha is None or escolha == "":
+            pendentes.append(nome)
+            continue
+        try:
+            seller_id_escolhido = int(escolha)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Decisão inválida para '{nome}' — esperado um seller_id, "
+                    '"skip" ou "reactivate"'
+                ),
+            )
+        seller = db.query(models.Seller).filter(models.Seller.id == seller_id_escolhido).first()
+        if not seller:
+            raise HTTPException(status_code=400, detail=f"Seller escolhido para '{nome}' não existe")
+        if not seller.active:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"O seller escolhido para '{nome}' está inativo. Escolha "
+                    '"reativar e importar" ou "não importar" para deixar essas linhas de fora.'
+                ),
+            )
+        if user_seller_ids is not None and seller.id not in (user_seller_ids or []):
+            raise HTTPException(status_code=403, detail=f"Seller escolhido para '{nome}' está fora do seu escopo")
+        matched[chave] = seller
+
+    if pendentes:
+        # Mesmo padrão do import de pedidos: pausa e devolve o que falta decidir.
+        return {
+            "requires_confirmation": True,
+            "unmatched_sellers": pendentes,
+            "message": (
+                f"{len(pendentes)} nome(s) de cliente da planilha não batem com nenhum seller "
+                "cadastrado. Aponte cada um para o seller correto antes de importar."
+            ),
+            "created": 0, "updated": 0, "skipped": 0,
+        }
+
+    resultado = {
+        "requires_confirmation": False,
+        "created": 0, "updated": 0, "skipped": 0,
+        "blocked": parsed["blocked"],
+        "skipped_sellers": [],
+        "reactivated_sellers": reativados,
+        "missing_skus": [],
+        "nested_kits": [],
+        "errors": [],
+    }
+    pulados_contagem: dict[str, int] = {}
+
+    for k in parsed["kits"]:
+        chave = _norm_seller(k["seller_name"])
+        if chave in pulados:
+            # Escolha explícita do usuário: não importar as linhas deste cliente.
+            resultado["skipped"] += 1
+            pulados_contagem[k["seller_name"]] = pulados_contagem.get(k["seller_name"], 0) + 1
+            continue
+
+        seller = matched.get(chave)
+        if not seller:
+            resultado["skipped"] += 1
+            resultado["errors"].append(
+                f"{k['kit_sku']}: seller '{k['seller_name']}' fora do escopo ou sem decisão"
+            )
+            continue
+
+        itens = [
+            schemas.KitItemCreate(component_sku=c["sku"], component_name=c["name"], quantity=c["quantity"])
+            for c in k["components"]
+        ]
+        if any(c["sku"].strip() == k["kit_sku"].strip() for c in k["components"]):
+            resultado["skipped"] += 1
+            resultado["errors"].append(f"{k['kit_sku']}: kit tem ele mesmo como componente")
+            continue
+
+        existing = db.query(models.Kit).filter(
+            models.Kit.seller_id == seller.id,
+            models.Kit.kit_sku == k["kit_sku"],
+        ).first()
+
+        if existing:
+            db.query(models.KitItem).filter(models.KitItem.kit_id == existing.id).delete()
+            kit = existing
+            kit.kit_name = k["kit_name"]
+            kit.active = True          # reimportar um kit excluído volta a ativá-lo
+            resultado["updated"] += 1
+            acao = "UPDATE"
+        else:
+            kit = models.Kit(seller_id=seller.id, kit_sku=k["kit_sku"], kit_name=k["kit_name"])
+            db.add(kit)
+            db.flush()
+            resultado["created"] += 1
+            acao = "CREATE"
+
+        componentes, missing, nested = _resolve_kit_components(seller.id, itens, db)
+        for c in componentes:
+            db.add(models.KitItem(kit_id=kit.id, **c))
+
+        for sku in missing:
+            resultado["missing_skus"].append({
+                "seller_name": seller.trade_name, "kit_sku": k["kit_sku"], "component_sku": sku,
+            })
+        for sku in nested:
+            resultado["nested_kits"].append({
+                "seller_name": seller.trade_name, "kit_sku": k["kit_sku"], "component_sku": sku,
+            })
+
+        comps_txt = ", ".join("{}×{}".format(c["sku"], c["quantity"]) for c in k["components"])
+        db.add(models.AuditLog(
+            entity_type="Kit",
+            entity_id=kit.id,
+            action=acao,
+            detail=(
+                f"Kit importado da planilha (linha {k['row']}): SKU={k['kit_sku']} | "
+                f"Nome={k['kit_name']} | Seller={seller.trade_name} | Componentes: {comps_txt}"
+            ),
+            user_id=current_user.id,
+        ))
+
+    resultado["skipped_sellers"] = [
+        {"seller_name": nome, "kits": qtd} for nome, qtd in sorted(pulados_contagem.items())
+    ]
+    pulados_txt = ", ".join(f"{n} ({q})" for n, q in sorted(pulados_contagem.items())) or "—"
+
+    db.add(models.AuditLog(
+        entity_type="Kit",
+        entity_id=None,
+        action="IMPORT",
+        detail=(
+            f"Importação de kits por arquivo: {file.filename} | "
+            f"Criados={resultado['created']} | Atualizados={resultado['updated']} | "
+            f"Bloqueados={len(parsed['blocked'])} | Ignorados={resultado['skipped']} | "
+            f"Clientes pulados por escolha do usuário: {pulados_txt} | "
+            f"Sellers reativados: {', '.join(reativados) or '—'}"
+        ),
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return resultado
+
+
+@router.get("/kits/unlinked-components")
+def list_unlinked_kit_components(
+    seller_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Componentes de kit sem vínculo com o cadastro de produtos (product_id NULL).
+    Alimenta a tela /kits/vincular e o aviso do Dashboard.
+    """
+    query = (
+        db.query(models.KitItem, models.Kit, models.Seller)
+        .join(models.Kit, models.KitItem.kit_id == models.Kit.id)
+        .join(models.Seller, models.Kit.seller_id == models.Seller.id)
+        .filter(models.KitItem.product_id.is_(None), models.Kit.active == True)
+    )
+    if user_seller_ids is not None:
+        query = query.filter(models.Kit.seller_id.in_(user_seller_ids or [-1]))
+    if seller_id:
+        query = query.filter(models.Kit.seller_id == seller_id)
+
+    rows = query.order_by(models.Seller.trade_name, models.Kit.kit_sku).all()
+    return [
+        {
+            "item_id": it.id,
+            "kit_id": k.id,
+            "kit_sku": k.kit_sku,
+            "kit_name": k.kit_name,
+            "seller_id": k.seller_id,
+            "seller_name": s.trade_name,
+            "component_sku": it.component_sku,
+            "component_name": it.component_name,
+            "quantity": it.quantity,
+        }
+        for (it, k, s) in rows
+    ]
+
+
+@router.post("/kits/items/{item_id}/link")
+def link_kit_component(
+    item_id: int,
+    product_id: int = Body(..., embed=True),
+    current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Vincula um componente de kit a um produto já cadastrado.
+    O produto precisa ser do MESMO seller do kit — vincular ao seller errado
+    faria o pedido apontar para o estoque de outro cliente.
+    """
+    item = db.query(models.KitItem).filter(models.KitItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Componente não encontrado")
+
+    kit = db.query(models.Kit).filter(models.Kit.id == item.kit_id).first()
+    _assert_kit_seller_scope(kit.seller_id, user_seller_ids)
+
+    product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if product.seller_id != kit.seller_id:
+        raise HTTPException(
+            status_code=400,
+            detail="O produto escolhido é de outro seller — só é possível vincular a um produto do mesmo seller do kit.",
+        )
+
+    sku_antigo = item.component_sku
+    item.product_id = product.id
+    item.component_sku = product.sku
+    item.component_name = product.name
+
+    db.add(models.AuditLog(
+        entity_type="Kit",
+        entity_id=kit.id,
+        action="LINK_COMPONENT",
+        detail=(
+            f"Componente vinculado ao produto: kit={kit.kit_sku} | "
+            f"SKU {sku_antigo} → {product.sku} (produto #{product.id})"
+        ),
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return {
+        "item_id": item.id,
+        "product_id": product.id,
+        "component_sku": item.component_sku,
+        "component_name": item.component_name,
+    }
+
+
+@router.get("/kits/expansion-log")
+def kit_expansion_log(
+    seller_id: Optional[int] = None,
+    kit_sku: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = 500,
+    current_user: models.User = Depends(get_current_user),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Histórico de explosões de kit — alimenta a aba "Log Explosões" da tela de Kits.
+
+    Cada linha é um OrderItem que nasceu do split de um kit na importação
+    (is_kit_component=True), com o SKU do kit de origem em original_kit_sku.
+    Pedido cancelado não aparece, como em toda a operação.
+
+    ⚠️ Rota estática declarada ANTES das rotas /kits/{kit_id}: se um dia existir um
+    GET /kits/{kit_id} registrado acima, ele capturaria "expansion-log" como id.
+    """
+    limit = max(1, min(limit, 2000))
+
+    query = (
+        db.query(models.OrderItem, models.Order, models.Seller)
+        .join(models.Order, models.OrderItem.order_id == models.Order.id)
+        .join(models.Seller, models.Order.seller_id == models.Seller.id)
+        .filter(
+            models.OrderItem.is_kit_component == True,
+            models.OrderItem.original_kit_sku.isnot(None),
+            models.Order.status != models.OrderStatus.CANCELLED,
+        )
+    )
+
+    # None = admin (sem filtro). Lista = manager/operator restrito aos seus sellers.
+    if user_seller_ids is not None:
+        query = query.filter(models.Order.seller_id.in_(user_seller_ids or [-1]))
+    if seller_id:
+        query = query.filter(models.Order.seller_id == seller_id)
+    if kit_sku:
+        query = query.filter(models.OrderItem.original_kit_sku == kit_sku)
+    if date_from:
+        query = query.filter(models.Order.imported_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(models.Order.imported_at <= end_of_day(date_to))
+
+    rows = (
+        query.order_by(models.Order.imported_at.desc(), models.OrderItem.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "order_id": o.id,
+            "created_at": o.imported_at.isoformat() if o.imported_at else None,
+            "order_date": o.order_date.isoformat() if o.order_date else None,
+            "seller_id": o.seller_id,
+            "seller_name": s.trade_name,
+            "nf_number": o.nf_number,
+            "customer_name": o.customer_name,
+            "kit_sku": it.original_kit_sku,
+            "component_sku": it.sku,
+            "component_name": it.product_name,
+            "quantity": it.quantity,
+        }
+        for (it, o, s) in rows
+    ]
+
+
+@router.post("/kits")
 def create_kit(
     kit: schemas.KitCreate,
     current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
+    _assert_kit_seller_scope(kit.seller_id, user_seller_ids)
+
+    # Componente igual ao próprio kit geraria referência circular na expansão.
+    if any((i.component_sku or "").strip() == kit.kit_sku.strip() for i in kit.items):
+        raise HTTPException(
+            status_code=400,
+            detail=f"O kit '{kit.kit_sku}' não pode ter ele mesmo como componente.",
+        )
+
+    # A busca NÃO filtra active de propósito: a UniqueConstraint (seller_id, kit_sku)
+    # do banco ignora o soft-delete. Filtrando por active, um kit excluído homônimo
+    # passava na validação e o INSERT estourava IntegrityError (500).
+    # Kit ativo → erro claro. Kit excluído → reativa com a composição nova.
     existing = db.query(models.Kit).filter(
         models.Kit.seller_id == kit.seller_id,
         models.Kit.kit_sku == kit.kit_sku,
-        models.Kit.active == True,
     ).first()
-    if existing:
+    if existing and existing.active:
         raise HTTPException(status_code=400, detail=f"Kit '{kit.kit_sku}' já cadastrado")
 
-    k = models.Kit(
-        seller_id=kit.seller_id,
-        kit_sku=kit.kit_sku,
-        kit_name=kit.kit_name,
-    )
-    db.add(k)
-    db.flush()
-
-    for item in kit.items:
-        ki = models.KitItem(
-            kit_id=k.id,
-            component_sku=item.component_sku,
-            component_name=item.component_name,
-            quantity=item.quantity,
-        )
-        db.add(ki)
-
-    # ── Trilha de auditoria ──────────────────────────────────────────────────
     seller = db.query(models.Seller).filter(models.Seller.id == kit.seller_id).first()
     comps = ", ".join(f"{i.component_sku}×{i.quantity}" for i in kit.items)
+    seller_label = seller.trade_name if seller else kit.seller_id
+
+    if existing:
+        k = existing
+        k.active = True
+        k.kit_name = kit.kit_name
+        db.query(models.KitItem).filter(models.KitItem.kit_id == k.id).delete()
+        action = "REACTIVATE"
+        detail = (
+            f"Kit reativado (recriado com o mesmo SKU): SKU={kit.kit_sku} | "
+            f"Nome={kit.kit_name} | Seller={seller_label} | Componentes: {comps}"
+        )
+    else:
+        k = models.Kit(
+            seller_id=kit.seller_id,
+            kit_sku=kit.kit_sku,
+            kit_name=kit.kit_name,
+        )
+        db.add(k)
+        db.flush()
+        action = "CREATE"
+        detail = (
+            f"Kit criado: SKU={kit.kit_sku} | Nome={kit.kit_name} | "
+            f"Seller={seller_label} | Componentes: {comps}"
+        )
+
+    componentes, missing, nested = _resolve_kit_components(kit.seller_id, kit.items, db)
+    for c in componentes:
+        db.add(models.KitItem(kit_id=k.id, **c))
+
+    # ── Trilha de auditoria ──────────────────────────────────────────────────
     db.add(models.AuditLog(
         entity_type="Kit",
         entity_id=k.id,
-        action="CREATE",
-        detail=f"Kit criado: SKU={kit.kit_sku} | Nome={kit.kit_name} | Seller={seller.trade_name if seller else kit.seller_id} | Componentes: {comps}",
+        action=action,
+        detail=detail,
         user_id=current_user.id,
     ))
 
     db.commit()
     db.refresh(k)
-    return k
+    return _kit_to_dict(k, missing, nested)
 
 
-@router.put("/kits/{kit_id}", response_model=schemas.KitResponse)
+@router.put("/kits/{kit_id}")
 def update_kit(
     kit_id: int,
     kit: schemas.KitCreate,
     current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
     existing = db.query(models.Kit).filter(models.Kit.id == kit_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail="Kit não encontrado")
+    _assert_kit_seller_scope(existing.seller_id, user_seller_ids)
+
+    if any((i.component_sku or "").strip() == existing.kit_sku.strip() for i in kit.items):
+        raise HTTPException(
+            status_code=400,
+            detail=f"O kit '{existing.kit_sku}' não pode ter ele mesmo como componente.",
+        )
+
+    # kit_sku e seller_id são imutáveis. Antes vinham no payload e eram descartados
+    # em silêncio: a tela mostrava "Kit atualizado!" sem ter alterado coisa alguma.
+    if kit.kit_sku and kit.kit_sku.strip() != existing.kit_sku:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Não é possível alterar o SKU de um kit ('{existing.kit_sku}' → "
+                f"'{kit.kit_sku.strip()}'). Crie um novo kit com o SKU desejado."
+            ),
+        )
+    if kit.seller_id and kit.seller_id != existing.seller_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível trocar o seller de um kit. Crie um novo kit no seller desejado.",
+        )
+
     existing.kit_name = kit.kit_name
     db.query(models.KitItem).filter(models.KitItem.kit_id == kit_id).delete()
-    for item in kit.items:
-        ki = models.KitItem(
-            kit_id=kit_id,
-            component_sku=item.component_sku,
-            component_name=item.component_name,
-            quantity=item.quantity,
-        )
-        db.add(ki)
+
+    componentes, missing, nested = _resolve_kit_components(existing.seller_id, kit.items, db)
+    for c in componentes:
+        db.add(models.KitItem(kit_id=kit_id, **c))
 
     # ── Trilha de auditoria ──────────────────────────────────────────────────
     comps = ", ".join(f"{i.component_sku}×{i.quantity}" for i in kit.items)
@@ -373,18 +1002,22 @@ def update_kit(
 
     db.commit()
     db.refresh(existing)
-    return existing
+    return _kit_to_dict(existing, missing, nested)
 
 
 @router.delete("/kits/{kit_id}")
 def delete_kit(
     kit_id: int,
     current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
     kit = db.query(models.Kit).filter(models.Kit.id == kit_id).first()
     if not kit:
         raise HTTPException(status_code=404, detail="Kit não encontrado")
+    _assert_kit_seller_scope(kit.seller_id, user_seller_ids)
+    if not kit.active:
+        raise HTTPException(status_code=400, detail="Kit já está inativo")
     kit.active = False
 
     # ── Trilha de auditoria ──────────────────────────────────────────────────
@@ -663,6 +1296,7 @@ async def bulk_upload_products(
 def bulk_import_kits(
     payload: schemas.KitBulkImport,
     current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
     """Import em massa de kits."""
@@ -678,7 +1312,7 @@ def bulk_import_kits(
     for p in all_products:
         prod_cache[(p.seller_id, p.sku)] = p
 
-    results = {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "unresolved": []}
 
     for item in payload.items:
         seller = sellers_cache.get(item.seller_name.lower())
@@ -688,6 +1322,10 @@ def bulk_import_kits(
             continue
         if not seller.active:
             results["errors"].append(f"Seller '{item.seller_name}' está inativo — reative-o em Sellers antes de importar")
+            results["skipped"] += 1
+            continue
+        if user_seller_ids is not None and seller.id not in (user_seller_ids or []):
+            results["errors"].append(f"Seller '{item.seller_name}' está fora do seu escopo de atendimento")
             results["skipped"] += 1
             continue
 
@@ -710,6 +1348,10 @@ def bulk_import_kits(
             db.query(models.KitItem).filter(models.KitItem.kit_id == existing.id).delete()
             kit = existing
             kit.kit_name = kit_name
+            # Reimportar um kit que havia sido excluído volta a ativá-lo. Sem isso
+            # o kit era atualizado, contava como "updated", mas seguia active=False:
+            # não aparecia na listagem nem era expandido na importação de pedidos.
+            kit.active = True
             results["updated"] += 1
         else:
             kit = models.Kit(
@@ -723,11 +1365,20 @@ def bulk_import_kits(
 
         for comp in item.components:
             comp_prod = prod_cache.get((seller.id, comp.sku))
+            if not comp_prod:
+                # Não bloqueia: o kit é salvo e o componente fica sem vínculo,
+                # aparecendo depois na tela /kits/vincular.
+                results["unresolved"].append({
+                    "seller_name": seller.trade_name,
+                    "kit_sku": item.kit_sku,
+                    "component_sku": comp.sku,
+                })
             ki = models.KitItem(
                 kit_id=kit.id,
                 component_sku=comp.sku,
                 component_name=comp_prod.name if comp_prod else comp.sku,
                 quantity=comp.quantity,
+                product_id=comp_prod.id if comp_prod else None,
             )
             db.add(ki)
 

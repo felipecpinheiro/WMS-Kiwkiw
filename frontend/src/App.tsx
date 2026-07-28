@@ -18,6 +18,7 @@ import ScannerPage from './pages/Scanner';
 import InventoryPage from './pages/Inventory';
 import ProductsPage from './pages/Products';
 import KitsPage from './pages/Kits';
+import KitFixesPage from './pages/KitFixes';
 import BoxAlgorithmPage from './pages/BoxAlgorithm';
 import UsersPage from './pages/Users';
 import SellersPage from './pages/Sellers';
@@ -261,6 +262,14 @@ export default function App() {
               <Route path="inventory" element={<InventoryPage />} />
               <Route path="products" element={<ProductsPage />} />
               <Route path="kits" element={<KitsPage />} />
+              <Route
+                path="kits/vincular"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <KitFixesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="box-algorithm" element={<BoxAlgorithmPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="sellers" element={<SellersPage />} />

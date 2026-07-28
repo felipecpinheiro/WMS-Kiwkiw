@@ -238,8 +238,13 @@ class KitItem(Base):
     component_sku = Column(String(100), nullable=False)    # SKU do componente real
     component_name = Column(String(300), nullable=True)
     quantity = Column(Integer, default=1, nullable=False)  # Quantidade por kit
+    # Vínculo com o cadastro de produtos. NULLABLE de propósito: kit antigo cujo SKU
+    # não casa com nenhum produto continua funcionando — component_sku segue sendo a
+    # chave que vai para o pedido. Os não vinculados aparecem em /kits/vincular.
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
 
     kit = relationship("Kit", back_populates="items")
+    product = relationship("Product")
 
 
 class BoxAlgorithm(Base):

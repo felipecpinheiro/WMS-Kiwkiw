@@ -3,7 +3,7 @@
  * Lista sessões de picking e pedidos com filtros, status e acesso à bipagem.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -253,13 +253,28 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
                   </tr>
                 </thead>
                 <tbody>
-                  {order.items.map(item => {
+                  {order.items.map((item, idx) => {
                     const scanned = item.scanned_qty ?? 0;
                     const done = scanned >= item.quantity;
                     const partial = scanned > 0 && !done;
+                    // M6 — agrupa visualmente os componentes vindos do mesmo kit:
+                    // o cabeçalho aparece só no primeiro item de cada kit_sku.
+                    const kitSku = item.original_kit_sku;
+                    const anterior = order.items[idx - 1];
+                    const abreGrupo = !!kitSku && anterior?.original_kit_sku !== kitSku;
+                    const doKit = !!kitSku;
                     return (
-                      <tr key={item.id} className="border-b border-white/5">
-                        <td className="py-2.5 px-4 text-xs font-mono text-white/60">{item.sku}</td>
+                      <Fragment key={item.id}>
+                      {abreGrupo && (
+                        <tr className="bg-violet-950/20">
+                          <td colSpan={4} className="py-1.5 px-4 text-[10px] uppercase tracking-wide text-violet-300">
+                            Kit <span className="font-mono">{kitSku}</span> — explodido em{' '}
+                            {order.items.filter(i => i.original_kit_sku === kitSku).length} componente(s)
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-b border-white/5">
+                        <td className={`py-2.5 px-4 text-xs font-mono text-white/60 ${doKit ? 'pl-8' : ''}`}>{item.sku}</td>
                         <td className="py-2.5 px-4 text-xs text-white/80">
                           {item.product_name}
                           {item.is_kit_component && (
@@ -273,6 +288,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
                           </span>
                         </td>
                       </tr>
+                      </Fragment>
                     );
                   })}
                   {order.items.length === 0 && (

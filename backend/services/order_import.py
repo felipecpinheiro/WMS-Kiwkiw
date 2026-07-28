@@ -959,15 +959,19 @@ async def import_excel_orders(
 
                 # Cria os itens (com kits já expandidos)
                 for item in processed_items:
-                    # Tenta vincular ao produto cadastrado
-                    product = db.query(models.Product).filter(
-                        models.Product.seller_id == seller.id,
-                        models.Product.sku == item["sku"],
-                    ).first()
+                    # Componente de kit já vem com o product_id resolvido do cadastro.
+                    # Para os demais (e para kit sem vínculo), busca pelo SKU.
+                    product_id = item.get("product_id")
+                    if product_id is None:
+                        product = db.query(models.Product).filter(
+                            models.Product.seller_id == seller.id,
+                            models.Product.sku == item["sku"],
+                        ).first()
+                        product_id = product.id if product else None
 
                     order_item = models.OrderItem(
                         order_id=order.id,
-                        product_id=product.id if product else None,
+                        product_id=product_id,
                         sku=item["sku"],
                         product_name=item["product_name"],
                         quantity=item["quantity"],

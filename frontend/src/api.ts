@@ -620,6 +620,32 @@ export const cadastrosApi = {
   updateKit: (id: number, data: any) => api.put(`/cadastros/kits/${id}`, data),
   deleteKit: (id: number) => api.delete(`/cadastros/kits/${id}`),
   bulkImportKits: (payload: { items: any[] }) => api.post('/cadastros/kits/bulk-import', payload),
+  // Componentes de kit sem vínculo com o cadastro de produtos (tela /kits/vincular)
+  kitUnlinkedComponents: (sellerId?: number) =>
+    api.get('/cadastros/kits/unlinked-components', { params: { seller_id: sellerId } }),
+  linkKitComponent: (itemId: number, productId: number) =>
+    api.post(`/cadastros/kits/items/${itemId}/link`, { product_id: productId }),
+  // Import da planilha de kits (aba CADASTRO KITS) — 2 passos, igual ao histórico de estoque
+  analyzeKitFile: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('/cadastros/kits/import-file/analyze', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300000,
+    });
+  },
+  // sellerDecisions: seller_id para vincular, 'skip' para não importar o cliente,
+  // ou 'reactivate' para religar um seller desativado e importar nele
+  executeKitFile: (
+    file: File,
+    sellerDecisions?: Record<string, number | 'skip' | 'reactivate'>,
+  ) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (sellerDecisions) fd.append('seller_decisions', JSON.stringify(sellerDecisions));
+    return api.post('/cadastros/kits/import-file/execute', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300000,
+    });
+  },
   boxRules: (sellerId: number) => api.get(`/cadastros/box-algorithm/${sellerId}`),
   createBoxRule: (data: Record<string, any>) => api.post('/cadastros/box-algorithm', data),
   deleteBoxRule: (id: number) => api.delete(`/cadastros/box-algorithm/${id}`),

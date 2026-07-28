@@ -624,6 +624,7 @@ async def import_excel_orders(
             expedition_date = parse_date_safe(get(row, "expedition_date"))
             nature          = str(get(row, "nature")).strip() if get(row, "nature") else None
             nf_key_raw      = get(row, "nf_key")
+            nf_key_is_auto  = not bool(nf_key_raw)
             nf_key          = str(nf_key_raw).strip() if nf_key_raw else (
                 f"{nf_number}_{seller_name}" if nf_number and seller_name else None
             )
@@ -650,6 +651,7 @@ async def import_excel_orders(
                     "nature": nature,
                     "danfe_key": danfe_key,
                     "nf_key": nf_key,
+                    "nf_key_auto": nf_key_is_auto,
                     "items": [],
                 }
 
@@ -818,6 +820,11 @@ async def import_excel_orders(
             for order_key, order_data in orders_dict.items():
                 if order_key not in order_key_seller_map and order_data["seller_name"].strip().lower() == norm_key:
                     order_key_seller_map[order_key] = seller_obj
+                    # nf_key foi montado com o nome bruto do arquivo (fallback, sem
+                    # coluna própria) — agora que sabemos o seller de verdade, troca
+                    # pelo trade_name curto para não estourar o VARCHAR(50)
+                    if order_data.get("nf_key_auto"):
+                        order_data["nf_key"] = f"{order_data['nf_number']}_{seller_obj.trade_name}"
 
         # ── PRÉ-CHECAGEM DE DUPLICATAS ──────────────────────────────
         # Antes de criar qualquer coisa, verifica se alguma NF deste arquivo

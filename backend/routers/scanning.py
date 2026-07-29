@@ -1418,6 +1418,12 @@ def session_cards(
     # NÃO usa PickingSession.unit_id pois pode estar desatualizado (importado pelo admin)
     from sqlalchemy import exists as _exists
 
+    # Quando o filtro por unidade é usado (ramo abaixo), guarda o conjunto de
+    # seller_ids da unidade para re-aplicar o filtro por CARD (não só por sessão) —
+    # uma sessão/upload pode conter sellers de unidades diferentes misturados,
+    # e sem isso o card de um seller de outra unidade vaza para este filtro.
+    allowed_seller_ids_for_unit: Optional[set] = None
+
     if user_role in ("operator", "manager") and my_seller_ids:
         q = q.filter(
             _exists().where(
@@ -1430,11 +1436,12 @@ def session_cards(
         unit_seller_filter = [models.Seller.unit_id == unit_id]
         if not include_inactive_sellers:
             unit_seller_filter.append(models.Seller.active == True)
-        sellers_in_unit = db.query(models.Seller.id).filter(*unit_seller_filter).subquery()
+        seller_ids_in_unit = [row[0] for row in db.query(models.Seller.id).filter(*unit_seller_filter).all()]
+        allowed_seller_ids_for_unit = set(seller_ids_in_unit)
         q = q.filter(
             _exists().where(
                 (models.Order.session_id == models.PickingSession.id) &
-                (models.Order.seller_id.in_(sellers_in_unit))
+                (models.Order.seller_id.in_(seller_ids_in_unit))
             )
         )
 
@@ -1458,6 +1465,13 @@ def session_cards(
             if user_role in ("operator", "manager"):
                 if not my_seller_ids or sid not in my_seller_ids:
                     continue
+            # ───────────────────────────────────────────────────────────────────
+
+            # ── Filtra por unidade no nível do card (não só da sessão) ──────────
+            # Sessão pode ter sellers de unidades diferentes no mesmo upload —
+            # o card só deve valer para o filtro se o PRÓPRIO seller é da unidade.
+            if allowed_seller_ids_for_unit is not None and sid not in allowed_seller_ids_for_unit:
+                continue
             # ───────────────────────────────────────────────────────────────────
 
             if sid not in seller_orders:

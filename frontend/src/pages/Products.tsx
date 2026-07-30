@@ -27,11 +27,14 @@ interface ProductForm {
   unit_value: number;
   is_input: boolean;
   seller_id: number | '';
+  // Vem do próprio produto: a lista de sellers só traz ativos, então procurar o
+  // nome nela deixaria o campo vazio ao editar produto de seller inativo.
+  seller_name: string;
 }
 
 const EMPTY_FORM: ProductForm = {
   sku: '', name: '', barcode_seller: '',
-  box_type: '', unit_value: 0, is_input: false, seller_id: '',
+  box_type: '', unit_value: 0, is_input: false, seller_id: '', seller_name: '',
 };
 
 // Colunas da tabela de colagem: SKU · Seller · Nome · Val. Unit. · Caixa · Cód. Barras Seller
@@ -145,6 +148,7 @@ export default function ProductsPage() {
       unit_value: p.unit_value || 0,
       is_input: p.is_input || false,
       seller_id: p.seller_id,
+      seller_name: p.seller_name || '',
     });
     setEditId(p.id);
     setPhotoFile(null);
@@ -515,7 +519,9 @@ export default function ProductsPage() {
                   <label className="block text-xs text-white/50 mb-1">Seller *</label>
                   {editId ? (
                     <p className="w-full border border-white/8 bg-white/4 rounded-lg px-3 py-2 text-sm text-white/35">
-                      {(sellers as any[]).find((s: any) => s.id === form.seller_id)?.trade_name || '—'}
+                      {form.seller_name
+                        || (sellers as any[]).find((s: any) => s.id === form.seller_id)?.trade_name
+                        || '—'}
                     </p>
                   ) : (
                     <select value={form.seller_id} onChange={e => setForm(prev => ({ ...prev, seller_id: Number(e.target.value) }))}

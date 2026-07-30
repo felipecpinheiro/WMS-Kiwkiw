@@ -216,7 +216,6 @@ def list_orders(
     session_id: Optional[int] = None,
     seller_id: Optional[int] = None,
     unit_id: Optional[int] = None,
-    include_inactive_sellers: bool = Query(False, description="Se True, o filtro por unidade também considera sellers inativos"),
     status: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
@@ -236,6 +235,11 @@ def list_orders(
     # nesta tela, pra ninguém — só fica rastreável na Trilha de Auditoria.
     query = query.filter(models.Order.status != models.OrderStatus.CANCELLED)
 
+    # Pedido de seller inativo também não aparece, pra ninguém — mesma lógica.
+    # Ver CLAUDE.md → "Seller inativo — onde pode e onde não pode aparecer".
+    active_sellers = db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
+    query = query.filter(models.Order.seller_id.in_(active_sellers))
+
     # Restrição por role: seller só vê os próprios pedidos
     user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
     if user_role == "client" and current_user.seller_id:
@@ -248,10 +252,10 @@ def list_orders(
     if unit_id:
         # Filtra por Seller.unit_id (não Order.unit_id, campo denormalizado que
         # pode estar desatualizado em pedidos históricos — ver CLAUDE.md).
-        sellers_in_unit_filter = [models.Seller.unit_id == unit_id]
-        if not include_inactive_sellers:
-            sellers_in_unit_filter.append(models.Seller.active == True)
-        sellers_in_unit = db.query(models.Seller.id).filter(*sellers_in_unit_filter).subquery()
+        # O recorte de seller ativo já foi aplicado acima, para toda a query.
+        sellers_in_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit_id,
+        ).scalar_subquery()
         query = query.filter(models.Order.seller_id.in_(sellers_in_unit))
     if status:
         query = query.filter(models.Order.status == status)

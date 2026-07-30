@@ -237,9 +237,6 @@ export default function DashboardPage() {
   const [cancelDupPreview, setCancelDupPreview] = useState<any[] | null>(null);
   const [cancelDupLoading, setCancelDupLoading] = useState(false);
 
-  // Toggle "mostrar sellers inativos" no filtro por unidade do cockpit
-  const [includeInactiveSellers, setIncludeInactiveSellers] = useState(false);
-
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { unit_id: null };
 
@@ -261,11 +258,10 @@ export default function DashboardPage() {
   );
 
   const { data, isLoading, refetch } = useQuery(
-    ['dashboard', targetDate, activeUnitId, includeInactiveSellers],
+    ['dashboard', targetDate, activeUnitId],
     () => dashboardApi.master({
       target_date: targetDate,
       unit_id: activeUnitId,
-      include_inactive_sellers: includeInactiveSellers,
     }).then(r => r.data),
     { refetchInterval: 60000 }, // atualiza a cada 1 minuto
   );
@@ -642,19 +638,6 @@ export default function DashboardPage() {
                 ))}
               </select>
             </div>
-          )}
-
-          {/* Toggle: incluir sellers inativos no filtro por unidade */}
-          {(user.role === 'admin' || user.role === 'manager') && activeUnitId && (
-            <label className="flex items-center gap-1.5 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg text-xs text-white/60 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={includeInactiveSellers}
-                onChange={e => setIncludeInactiveSellers(e.target.checked)}
-                className="accent-violet-500"
-              />
-              Mostrar sellers inativos
-            </label>
           )}
 
           {/* Seletor de data */}

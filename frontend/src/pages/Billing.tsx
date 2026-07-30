@@ -48,7 +48,14 @@ export default function BillingPage() {
     finally { setExporting(false); }
   };
 
-  const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  // Exceção à regra de esconder seller inativo (ver CLAUDE.md): o Faturamento
+  // precisa listar inativos para permitir fechar a última fatura de quem saiu.
+  // Chave própria: a lista completa NÃO pode dividir cache com a chave 'sellers',
+  // usada pelas telas que só enxergam ativos. O prefixo mantém os
+  // invalidateQueries('sellers') existentes funcionando.
+  const { data: sellers = [] } = useQuery(['sellers', 'billing'], () =>
+    cadastrosApi.sellers(false).then(r => r.data)
+  );
 
   const { data: billingConfig } = useQuery(
     ['billing-config', sellerId],

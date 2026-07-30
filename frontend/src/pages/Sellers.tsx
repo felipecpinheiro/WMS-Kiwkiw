@@ -118,8 +118,12 @@ export default function SellersPage() {
   const [saving, setSaving]           = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const { data: sellers = [] } = useQuery('sellers', () =>
-    cadastrosApi.sellers().then(r => r.data)
+  // Única tela do sistema que exibe sellers inativos (com o badge "Inativo"),
+  // por isso pede activeOnly=false explicitamente. Ver CLAUDE.md.
+  // Chave própria pelo mesmo motivo do Faturamento: lista completa não divide
+  // cache com a chave 'sellers' (só ativos). O prefixo preserva os invalidates.
+  const { data: sellers = [] } = useQuery(['sellers', 'all'], () =>
+    cadastrosApi.sellers(false).then(r => r.data)
   );
   const { data: units = [] } = useQuery('units', () =>
     cadastrosApi.units().then(r => r.data)
@@ -256,7 +260,18 @@ export default function SellersPage() {
   const handleDelete = async (id: number, name: string) => {
     if (!confirm(`Deseja inativar o seller "${name}"?\n\nO seller será marcado como inativo mas permanecerá no histórico.`)) return;
     try {
-      await cadastrosApi.deleteSeller(id);
+      // 1ª chamada sem confirm: se houver pedido em aberto, o backend só avisa
+      // e não altera nada — seller inativo some de Pedidos, Manuseios e Scanner.
+      const res = await cadastrosApi.deleteSeller(id);
+      if (res.data?.requires_confirmation) {
+        const ok = confirm(
+          `${name} tem ${res.data.open_orders} pedido(s) em aberto.\n\n` +
+          'Ao inativar, esses pedidos somem de Pedidos, Manuseios e Scanner, e ninguém ' +
+          'consegue bipá-los até o seller ser reativado.\n\nInativar mesmo assim?'
+        );
+        if (!ok) return;
+        await cadastrosApi.deleteSeller(id, true);
+      }
       toast.success(`Seller "${name}" inativado com sucesso`);
       qc.invalidateQueries('sellers');
     } catch (err: any) {

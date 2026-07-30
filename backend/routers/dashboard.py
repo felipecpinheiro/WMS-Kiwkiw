@@ -124,7 +124,6 @@ def debug_state(
 def master_dashboard(
     target_date: Optional[date] = None,
     unit_id: Optional[int] = None,
-    include_inactive_sellers: bool = False,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -146,12 +145,18 @@ def master_dashboard(
     # (campo denormalizado que pode estar desatualizado em pedidos históricos)
     # Pedido cancelado (ex.: duplicata de upload removida) nunca entra nas
     # estatísticas do cockpit — só fica rastreável na Trilha de Auditoria.
-    base_filter = [_imported_on(target), models.Order.status != models.OrderStatus.CANCELLED]
+    # Pedido de seller inativo também não entra nas estatísticas — mesma lógica
+    # do cancelado (ver CLAUDE.md → "Seller inativo — onde pode e onde não pode aparecer").
+    active_sellers = db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
+    base_filter = [
+        _imported_on(target),
+        models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.seller_id.in_(active_sellers),
+    ]
     if unit_id:
-        unit_seller_filter = [models.Seller.unit_id == unit_id]
-        if not include_inactive_sellers:
-            unit_seller_filter.append(models.Seller.active == True)
-        sellers_in_unit = db.query(models.Seller.id).filter(*unit_seller_filter).subquery()
+        sellers_in_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit_id,
+        ).scalar_subquery()
         base_filter.append(models.Order.seller_id.in_(sellers_in_unit))
     if manager_seller_ids:
         base_filter.append(models.Order.seller_id.in_(manager_seller_ids))
@@ -196,11 +201,12 @@ def master_dashboard(
             })
             continue
 
-        # Sellers que pertencem a esta unidade
-        unit_of_seller_filter = [models.Seller.unit_id == unit.id]
-        if not include_inactive_sellers:
-            unit_of_seller_filter.append(models.Seller.active == True)
-        sellers_of_unit = db.query(models.Seller.id).filter(*unit_of_seller_filter).subquery()
+        # Sellers ATIVOS que pertencem a esta unidade. Este bloco monta o próprio
+        # filtro (não reaproveita base_filter), então o recorte precisa ser explícito.
+        sellers_of_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit.id,
+            models.Seller.active == True,
+        ).scalar_subquery()
 
         unit_filter = [
             _imported_on(target),

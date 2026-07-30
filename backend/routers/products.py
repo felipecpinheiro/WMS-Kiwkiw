@@ -1509,7 +1509,10 @@ def calculate_box(
 
 @router.get("/sellers", response_model=List[schemas.SellerResponse])
 def list_sellers(
-    active_only: bool = False,   # False = retorna todos; True = só ativos (para dropdowns)
+    # Padrão = True: seller inativo não aparece em nenhuma lista de seleção do sistema
+    # (ver CLAUDE.md → "Seller inativo — onde pode e onde não pode aparecer").
+    # Só a tela de cadastro (/sellers) e o Faturamento pedem active_only=false.
+    active_only: bool = True,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1668,18 +1671,68 @@ def update_seller(
     return seller
 
 
+# Status de pedido que ainda demandam operação — usados na trava de inativação.
+# COMPLETED/INTERRUPTED já sensibilizaram estoque e CANCELLED está fora da operação.
+_OPEN_ORDER_STATUSES = [
+    models.OrderStatus.PENDING,
+    models.OrderStatus.VALIDATED,
+    models.OrderStatus.SEPARATING,
+    models.OrderStatus.SCANNING,
+]
+
+
 @router.delete("/sellers/{seller_id}")
 def delete_seller(
     seller_id: int,
+    confirm: bool = False,
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """
+    Inativa um seller (soft-delete).
+
+    Fluxo em 2 passos quando o seller ainda tem pedido em aberto: sem confirm=true
+    devolve só um aviso, sem alterar nada. Inativar esconde o seller de toda a
+    operação (listas, Pedidos, Manuseios, Scanner e Dashboard), então um pedido
+    não concluído ficaria invisível e sem ninguém para bipar.
+    """
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     if not seller:
         raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    open_orders = db.query(models.Order).filter(
+        models.Order.seller_id == seller_id,
+        models.Order.status.in_(_OPEN_ORDER_STATUSES),
+    ).count()
+
+    if open_orders > 0 and not confirm:
+        return {
+            "requires_confirmation": True,
+            "seller_id": seller.id,
+            "seller_name": seller.trade_name,
+            "open_orders": open_orders,
+            "message": (
+                f"{seller.trade_name} tem {open_orders} pedido(s) em aberto. "
+                "Ao inativar, esses pedidos somem de Pedidos, Manuseios e Scanner "
+                "e ninguém consegue bipá-los até o seller ser reativado."
+            ),
+        }
+
     seller.active = False
+
+    db.add(models.AuditLog(
+        entity_type="Seller",
+        entity_id=seller_id,
+        action="DELETE",
+        detail=(
+            f"Seller inativado: {seller.trade_name}"
+            + (f" | {open_orders} pedido(s) em aberto no momento da inativação" if open_orders else "")
+        ),
+        user_id=current_user.id,
+    ))
+
     db.commit()
-    return {"message": "Seller desativado"}
+    return {"message": "Seller desativado", "open_orders": open_orders}
 
 
 # ============================================================

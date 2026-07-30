@@ -381,9 +381,6 @@ export default function HandlingPage() {
     else localStorage.removeItem(unitPrefKey);
   };
 
-  // Toggle "mostrar sellers inativos" no filtro por unidade
-  const [includeInactiveSellers, setIncludeInactiveSellers] = useState(false);
-
   const { data: units = [] } = useQuery('units', () =>
     import('../api').then(m => m.cadastrosApi.units().then(r => r.data))
   );
@@ -396,12 +393,11 @@ export default function HandlingPage() {
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
   const { data: serverCards = [], isLoading, refetch } = useQuery(
-    ['session-cards', dateFrom, dateTo, activeUnitId, includeInactiveSellers],
+    ['session-cards', dateFrom, dateTo, activeUnitId],
     () => scanningApi.sessionCards({
       date_from: dateFrom,
       date_to: dateTo,
       unit_id: activeUnitId,
-      include_inactive_sellers: includeInactiveSellers,
     }).then(r => r.data),
     { refetchInterval: 30000 }
   );
@@ -530,18 +526,6 @@ export default function HandlingPage() {
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </select>
-        )}
-
-        {(isAdmin || isManager) && activeUnitId && (
-          <label className="flex items-center gap-1.5 text-xs text-white/40 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={includeInactiveSellers}
-              onChange={e => setIncludeInactiveSellers(e.target.checked)}
-              className="accent-violet-500"
-            />
-            Mostrar sellers inativos
-          </label>
         )}
 
         {isAdmin && allSellers.length > 1 && (

@@ -120,6 +120,10 @@ def get_session_orders(
     ).filter(
         models.Order.session_id == session_id,
         models.Order.status != models.OrderStatus.CANCELLED,
+        # Seller inativo não aparece na operação — ver CLAUDE.md.
+        models.Order.seller_id.in_(
+            db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
+        ),
     )
     if seller_id:
         orders_query = orders_query.filter(models.Order.seller_id == seller_id)
@@ -1397,7 +1401,6 @@ def _build_progress(order: models.Order, db: Session) -> dict:
 @router.get("/session-cards")
 def session_cards(
     unit_id: Optional[int] = None,
-    include_inactive_sellers: bool = False,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     current_user: models.User = Depends(get_current_user),
@@ -1444,10 +1447,12 @@ def session_cards(
         )
     elif unit_id:
         # Admin filtrou por unidade explicitamente: restringe via sellers da unidade
-        unit_seller_filter = [models.Seller.unit_id == unit_id]
-        if not include_inactive_sellers:
-            unit_seller_filter.append(models.Seller.active == True)
-        seller_ids_in_unit = [row[0] for row in db.query(models.Seller.id).filter(*unit_seller_filter).all()]
+        seller_ids_in_unit = [
+            row[0] for row in db.query(models.Seller.id).filter(
+                models.Seller.unit_id == unit_id,
+                models.Seller.active == True,
+            ).all()
+        ]
         allowed_seller_ids_for_unit = set(seller_ids_in_unit)
         q = q.filter(
             _exists().where(
@@ -1469,6 +1474,13 @@ def session_cards(
         seller_orders: dict = {}
         for order in session.orders:
             sid = order.seller_id
+
+            # ── Seller inativo não aparece na operação ──────────────────────────
+            # Ver CLAUDE.md. Pedido sem seller (anomalia de dados) segue visível
+            # como "Sem seller" — escondê-lo tornaria a anomalia invisível.
+            if order.seller is not None and not order.seller.active:
+                continue
+            # ───────────────────────────────────────────────────────────────────
 
             # ── Filtra por sellers vinculados (operador e gerente) ──────────────
             # Se my_seller_ids está vazio e o usuário é operador/gerente, não exibe nada

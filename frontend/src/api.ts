@@ -314,7 +314,7 @@ export const authApi = {
 // ============================================================
 
 export const dashboardApi = {
-  master: (params?: { target_date?: string; unit_id?: number; include_inactive_sellers?: boolean }) =>
+  master: (params?: { target_date?: string; unit_id?: number }) =>
     api.get<DashboardStats>('/dashboard/master', { params }),
   seller: (params?: { date_from?: string; date_to?: string; seller_id?: number }) =>
     api.get('/dashboard/seller', { params }),
@@ -549,10 +549,23 @@ export const inventoryApi = {
 // ============================================================
 
 export const cadastrosApi = {
-  sellers: (activeOnly = false) => api.get('/cadastros/sellers', { params: { active_only: activeOnly } }),
+  // Padrão = só ativos. Seller inativo só aparece na tela de cadastro (/sellers)
+  // e no Faturamento, que passam activeOnly=false explicitamente. Ver CLAUDE.md.
+  sellers: (activeOnly = true) => api.get('/cadastros/sellers', { params: { active_only: activeOnly } }),
   createSeller: (data: Record<string, any>) => api.post('/cadastros/sellers', data),
   updateSeller: (id: number, data: Record<string, any>) => api.put(`/cadastros/sellers/${id}`, data),
-  deleteSeller: (id: number) => api.delete(`/cadastros/sellers/${id}`),
+  /**
+   * Inativa um seller. Sem `confirm`, o backend só devolve um aviso
+   * (`requires_confirmation` + `open_orders`) quando o seller ainda tem pedido
+   * em aberto — nada é alterado. Reenviar com `confirm=true` para inativar.
+   */
+  deleteSeller: (id: number, confirm = false) =>
+    api.delete<{
+      message?: string;
+      requires_confirmation?: boolean;
+      seller_name?: string;
+      open_orders?: number;
+    }>(`/cadastros/sellers/${id}`, { params: { confirm } }),
   units: (includeInactive = false) => api.get('/cadastros/units', { params: { include_inactive: includeInactive } }),
   createUnit: (data: Record<string, any>) => api.post('/cadastros/units', data),
   updateUnit: (id: number, data: Record<string, any>) => api.put(`/cadastros/units/${id}`, data),

@@ -1237,23 +1237,34 @@ def operator_productivity(
 ):
     """
     Relatório de produtividade por operador.
-    Conta bipagens, erros e pedidos concluídos por operador.
+
+    Conta apenas BIPAGENS REAIS: registros de erro (código que não pertence ao
+    pedido) e o marcador de interrupção (sku='INTERRUPT', quantity=0) ficam de
+    fora — senão errar muito aumentaria a "produtividade" do operador. É o mesmo
+    par de filtros usado para contar bipagem no process_scan.
     """
     query = db.query(
         models.User.name.label("operator"),
         func.count(models.ScanningLog.id).label("total_scans"),
         func.sum(models.ScanningLog.quantity).label("total_items"),
-        func.sum(
-            func.cast(models.ScanningLog.is_error, models.Integer if False else models.ScanningLog.is_error.__class__)
-        ).label("errors"),
     ).join(
         models.ScanningLog, models.User.id == models.ScanningLog.operator_id
+    ).filter(
+        models.ScanningLog.is_error == False,
+        models.ScanningLog.is_interrupted == False,
     ).group_by(models.User.id, models.User.name)
+
+    # Manager enxerga só os operadores da própria unidade; admin vê todas.
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    if user_role != "admin":
+        query = query.filter(models.User.unit_id == current_user.unit_id)
 
     if date_from:
         query = query.filter(models.ScanningLog.timestamp >= date_from)
     if date_to:
-        query = query.filter(models.ScanningLog.timestamp <= date_to)
+        # end_of_day é obrigatório: a tela abre com date_to = hoje, e
+        # 'timestamp <= hoje 00:00:00' excluiria todas as bipagens do dia.
+        query = query.filter(models.ScanningLog.timestamp <= end_of_day(date_to))
 
     results = query.all()
 

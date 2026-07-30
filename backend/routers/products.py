@@ -231,8 +231,9 @@ def reactivate_product(
     )
 
 
+# Síncrono de propósito: gravação em disco é bloqueante (ver comentário em orders.py).
 @router.post("/products/{product_id}/photo")
-async def upload_product_photo(
+def upload_product_photo(
     product_id: int,
     file: UploadFile = File(...),
     current_user: models.User = Depends(require_manager_or_above),
@@ -251,8 +252,7 @@ async def upload_product_photo(
     file_path = os.path.join(MEDIA_DIR, f"product_{product_id}.{ext}")
 
     with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+        f.write(file.file.read())
 
     product.photo_url = f"/media/products/product_{product_id}.{ext}"
     db.commit()
@@ -1094,8 +1094,9 @@ def bulk_paste_products(
     return results
 
 
+# Síncrono de propósito: planilha de 20k+ linhas com commit em lotes.
 @router.post("/products/bulk-upload")
-async def bulk_upload_products(
+def bulk_upload_products(
     file: UploadFile = File(...),
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
@@ -1112,7 +1113,7 @@ async def bulk_upload_products(
     if not file.filename.lower().endswith(('.xlsx', '.xlsm', '.xls')):
         raise HTTPException(status_code=400, detail="Apenas arquivos Excel (.xlsx) são aceitos")
 
-    content = await file.read()
+    content = file.file.read()
 
     try:
         # read_only=True: streaming — 3-5× mais rápido para arquivos grandes

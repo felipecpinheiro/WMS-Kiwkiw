@@ -25,13 +25,24 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Argumentos específicos por banco
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+is_sqlite = DATABASE_URL.startswith("sqlite")
+connect_args = {"check_same_thread": False} if is_sqlite else {}
+
+# Pool: o padrão do SQLAlchemy (5 + 10) ficava pequeno para o threadpool do
+# FastAPI, e requisições esperavam conexão livre por até pool_timeout (30 s).
+# Não se aplica ao SQLite, que usa um pool sem esses parâmetros.
+pool_kwargs = {} if is_sqlite else {
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_recycle": 1800,   # recicla conexão antes de o servidor derrubá-la
+}
 
 engine = create_engine(
     DATABASE_URL,
     connect_args=connect_args,
     pool_pre_ping=True,   # Reconecta automaticamente se a conexão cair
     echo=False,
+    **pool_kwargs,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

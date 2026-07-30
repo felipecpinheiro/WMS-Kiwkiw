@@ -11,7 +11,7 @@ from typing import Optional, List
 import os
 import re
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from .kit_handler import process_order_items
 from ..timezone_utils import now_brasilia, today_brasilia
@@ -382,20 +382,16 @@ def import_orders_from_excel_sync(
     unit_id: Optional[int] = None,
 ) -> int:
     """
-    Wrapper síncrono de import_excel_orders para uso no folder_watcher.
-    Roda em thread sem event loop via asyncio.new_event_loop().
+    Wrapper de import_excel_orders para uso no folder_watcher.
+
+    Mantido como função separada por causa do tratamento de erro rico
+    (WatcherImportError com reason + details) que o painel do robô consome.
+    O import em si já é síncrono — não há event loop envolvido.
 
     Retorna a quantidade de pedidos importados ou lança WatcherImportError
     com mensagens ricas (reason + details) para exibição no painel do robô.
     """
-    import asyncio
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(
-            import_excel_orders(file_path=file_path, unit_id=unit_id, db=db)
-        )
-    finally:
-        loop.close()
+    result = import_excel_orders(file_path=file_path, unit_id=unit_id, db=db)
 
     # ── Falha definitiva (não é confirmação de duplicata) ──────────────────────
     if not result.success and not result.requires_confirmation:
@@ -491,7 +487,7 @@ def import_orders_from_excel_sync(
     return result.orders_imported
 
 
-async def import_excel_orders(
+def import_excel_orders(
     file_path: str,
     unit_id: Optional[int] = None,
     db: Session = None,
@@ -891,6 +887,48 @@ async def import_excel_orders(
         # Conjunto de chaves de duplicatas para log
         duplicate_keys = {(d.nf_number, d.seller_name) for d in duplicates_info}
 
+        # ── Caches por seller (evitam o N+1 do laço de persistência) ──────────
+        # Antes: 1 query de kit + 1 query de produto POR ITEM do arquivo.
+        # Agora: 2 queries por seller, na primeira vez que ele aparece.
+        # Preenchidos sob demanda de propósito — um seller pode ser criado
+        # dentro do próprio laço, e aí nasce sem kit e sem produto.
+        kits_cache: dict = {}
+        products_cache: dict = {}
+
+        def _kits_of(sid: int) -> dict:
+            """{kit_sku: Kit} dos kits ATIVOS do seller, com os itens já carregados."""
+            cached = kits_cache.get(sid)
+            if cached is None:
+                kits = (
+                    db.query(models.Kit)
+                    .options(joinedload(models.Kit.items))
+                    .filter(models.Kit.seller_id == sid, models.Kit.active == True)
+                    .all()
+                )
+                # UniqueConstraint (seller_id, kit_sku) garante 1 kit por SKU
+                cached = {k.kit_sku: k for k in kits}
+                kits_cache[sid] = cached
+            return cached
+
+        def _products_of(sid: int) -> dict:
+            """
+            {sku: product_id} do seller. SEM filtro de active — reproduz
+            exatamente o lookup item a item que existia aqui.
+            """
+            cached = products_cache.get(sid)
+            if cached is None:
+                cached = {}
+                rows = (
+                    db.query(models.Product.sku, models.Product.id)
+                    .filter(models.Product.seller_id == sid)
+                    .order_by(models.Product.id)
+                    .all()
+                )
+                for _sku, _pid in rows:
+                    cached.setdefault(_sku, _pid)
+                products_cache[sid] = cached
+            return cached
+
         # Persiste os pedidos
         for order_key, order_data in orders_dict.items():
             if order_key in ignored_order_keys:
@@ -922,6 +960,7 @@ async def import_excel_orders(
                     seller_id=seller.id,
                     raw_items=order_data["items"],
                     db=db,
+                    kits_by_sku=_kits_of(seller.id),
                 )
 
                 # Conta kits expandidos
@@ -958,16 +997,13 @@ async def import_excel_orders(
                 db.flush()
 
                 # Cria os itens (com kits já expandidos)
+                seller_products = _products_of(seller.id)
                 for item in processed_items:
                     # Componente de kit já vem com o product_id resolvido do cadastro.
                     # Para os demais (e para kit sem vínculo), busca pelo SKU.
                     product_id = item.get("product_id")
                     if product_id is None:
-                        product = db.query(models.Product).filter(
-                            models.Product.seller_id == seller.id,
-                            models.Product.sku == item["sku"],
-                        ).first()
-                        product_id = product.id if product else None
+                        product_id = seller_products.get(item["sku"])
 
                     order_item = models.OrderItem(
                         order_id=order.id,

@@ -948,8 +948,9 @@ def _parse_history_excel(file_bytes: bytes):
     return rows
 
 
+# Síncrono de propósito: leitura de Excel é bloqueante e travaria o event loop.
 @router.post("/import-history/{seller_id}/analyze")
-async def analyze_history(
+def analyze_history(
     seller_id: int,
     file: UploadFile = File(...),
     current_user: models.User = Depends(require_manager_or_above),
@@ -959,7 +960,7 @@ async def analyze_history(
     Fase 1: analisa o Excel e retorna SKUs não cadastrados.
     Não importa nada — apenas lê e informa o que precisa ser cadastrado.
     """
-    file_bytes = await file.read()
+    file_bytes = file.file.read()
     try:
         rows = _parse_history_excel(file_bytes)
     except HTTPException:
@@ -998,8 +999,10 @@ async def analyze_history(
     }
 
 
+# Síncrono de propósito: 150k linhas de Excel + gravação em blocos travariam
+# o event loop e, com ele, a API inteira.
 @router.post("/import-history/{seller_id}/execute")
-async def execute_history_import(
+def execute_history_import(
     seller_id: int,
     file: UploadFile = File(...),
     product_names: str = Form("{}"),
@@ -1016,7 +1019,7 @@ async def execute_history_import(
     - Cria produtos novos, depois importa todas as movimentações
     - Recalcula posições de estoque
     """
-    file_bytes = await file.read()
+    file_bytes = file.file.read()
     rows = _parse_history_excel(file_bytes)
 
     # Cadastra produtos novos
@@ -1202,8 +1205,9 @@ async def execute_history_import(
 # ============================================================
 
 
+# Síncrono de propósito: validação linha a linha + gravação em chunks.
 @router.post("/bulk-stock-upload")
-async def bulk_stock_upload(
+def bulk_stock_upload(
     file: UploadFile = File(..., description="CSV: seller;data;tipo;sku;quantity;nf;observ"),
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -1234,7 +1238,7 @@ async def bulk_stock_upload(
         raise HTTPException(400, "Apenas arquivos .csv são aceitos")
 
     start = _time.perf_counter()
-    raw = await file.read()
+    raw = file.file.read()
 
     try:
         text_data = raw.decode("utf-8-sig")

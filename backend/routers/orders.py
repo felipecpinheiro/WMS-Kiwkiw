@@ -6,7 +6,6 @@ Importação, listagem e gestão de pedidos.
 import io
 import os
 import json
-import aiofiles
 from typing import Optional, List
 from datetime import date
 
@@ -30,8 +29,12 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "data", "uploads")
 EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports")
 
 
+# Endpoint SÍNCRONO de propósito: todo o trabalho aqui (leitura de Excel, laço de
+# persistência) é bloqueante. Declarado como `def`, o FastAPI o executa no
+# threadpool; como `async def` ele rodaria no event loop e travaria a API inteira
+# — bipagem, dashboard e login — durante toda a importação.
 @router.post("/import", response_model=schemas.ImportResult)
-async def import_orders(
+def import_orders(
     file: UploadFile = File(..., description="Arquivo Excel com pedidos do ERP"),
     unit_id: int = Form(..., description="ID da unidade"),
     file_type: str = Form("Saída", description="'Entrada' ou 'Saída' (aplica-se a TODOS os pedidos do arquivo)"),
@@ -78,9 +81,8 @@ async def import_orders(
     # Salva arquivo temporário — sanitizar nome para evitar path traversal
     safe_name = os.path.basename(file.filename or "upload.xlsx").replace("..", "")
     file_path = os.path.join(UPLOAD_DIR, f"{today_brasilia().strftime('%Y%m%d')}_{safe_name}")
-    async with aiofiles.open(file_path, "wb") as f:
-        content = await file.read()
-        await f.write(content)
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
 
     # Decisões de sellers inativos vêm como JSON {"<seller_id>": "reactivate"|"ignore"}
     decisions_dict = {}
@@ -101,7 +103,7 @@ async def import_orders(
             raise HTTPException(status_code=400, detail="seller_link_decisions inválido — esperado JSON {seller_name: decisão}")
 
     # Importa pedidos — passa as configs de nível de sessão
-    result = await import_excel_orders(
+    result = import_excel_orders(
         file_path=file_path,
         unit_id=unit_id,
         db=db,

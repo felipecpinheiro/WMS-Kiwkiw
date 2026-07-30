@@ -4,7 +4,7 @@ Faz o split de SKUs de kit nos seus componentes reais.
 Reproduz a lógica da planilha de tratamento de kits.
 """
 
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from .. import models
 
@@ -15,6 +15,7 @@ def expand_kit_items(
     product_name: str,
     quantity: int,
     db: Session,
+    kits_by_sku: Optional[Dict[str, "models.Kit"]] = None,
 ) -> List[Tuple[str, str, int, bool, str, int]]:
     """
     Verifica se o SKU é um kit e expande para seus componentes.
@@ -25,13 +26,21 @@ def expand_kit_items(
     product_id vem do vínculo do componente com o cadastro (KitItem.product_id) e
     pode ser None — componente sem vínculo continua valendo pelo SKU.
     Se não for kit, retorna o próprio item sem modificação.
+
+    kits_by_sku: mapa {kit_sku: Kit} dos kits ATIVOS daquele seller, já carregado
+    pelo chamador. Quando informado, evita uma consulta por item (o import chegava
+    a fazer uma query de kit para cada linha do arquivo). Quando None, mantém o
+    comportamento antigo de consultar o banco item a item.
     """
-    # Busca o kit no banco de dados
-    kit = db.query(models.Kit).filter(
-        models.Kit.seller_id == seller_id,
-        models.Kit.kit_sku == sku,
-        models.Kit.active == True,
-    ).first()
+    if kits_by_sku is not None:
+        kit = kits_by_sku.get(sku)
+    else:
+        # Busca o kit no banco de dados
+        kit = db.query(models.Kit).filter(
+            models.Kit.seller_id == seller_id,
+            models.Kit.kit_sku == sku,
+            models.Kit.active == True,
+        ).first()
 
     if not kit or not kit.items:
         # Não é um kit, retorna o item original
@@ -57,11 +66,13 @@ def process_order_items(
     seller_id: int,
     raw_items: List[dict],
     db: Session,
+    kits_by_sku: Optional[Dict[str, "models.Kit"]] = None,
 ) -> List[dict]:
     """
     Processa lista de itens de pedido, expandindo kits.
 
     raw_items: lista de dicts com {sku, product_name, quantity}
+    kits_by_sku: repassado para expand_kit_items — ver a docstring de lá.
     Retorna lista processada com kits expandidos.
     """
     processed = []
@@ -73,6 +84,7 @@ def process_order_items(
             product_name=item["product_name"],
             quantity=item["quantity"],
             db=db,
+            kits_by_sku=kits_by_sku,
         )
 
         for (sku, name, qty, is_kit, original_sku, product_id) in expanded:

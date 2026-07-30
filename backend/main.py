@@ -40,6 +40,26 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# Índices de performance (30/07/2026). Até então stock_movements (630k+ linhas)
+# e scanning_logs só tinham a PK, e o caminho quente da bipagem fazia varredura
+# completa da tabela a cada pedido concluído. O DDL é igual nos dois bancos —
+# só a forma de checar a existência do índice muda.
+PERF_INDEXES = [
+    # anti-duplicata do update_stock_from_order (stock_manager.py) + scanning.py
+    ("ix_stock_movements_order_id",
+     "CREATE INDEX IF NOT EXISTS ix_stock_movements_order_id ON stock_movements (order_id)"),
+    # get_stock_report, get_sku_history, export — e o prefixo seller_id sozinho
+    ("ix_stock_movements_seller_sku",
+     "CREATE INDEX IF NOT EXISTS ix_stock_movements_seller_sku ON stock_movements (seller_id, sku)"),
+    # progresso da bipagem — 7 pontos distintos consultam por pedido
+    ("ix_scanning_logs_order_id",
+     "CREATE INDEX IF NOT EXISTS ix_scanning_logs_order_id ON scanning_logs (order_id)"),
+    # scan-logs da sessão e trilha de auditoria
+    ("ix_scanning_logs_session_id",
+     "CREATE INDEX IF NOT EXISTS ix_scanning_logs_session_id ON scanning_logs (session_id)"),
+]
+
+
 def run_light_migrations():
     """
     Migração compatível com SQLite (dev) e PostgreSQL (produção).
@@ -50,6 +70,10 @@ def run_light_migrations():
     try:
         db_url = os.environ.get("DATABASE_URL", "")
         is_postgres = db_url.startswith("postgres")
+
+        # Índices de performance ficam numa lista à parte: são aplicados depois,
+        # num laço com print em texto puro (ver comentário no laço).
+        index_migrations = []
 
         if is_postgres:
             # PostgreSQL: usa information_schema em vez de PRAGMA
@@ -86,6 +110,17 @@ def run_light_migrations():
             )).fetchone()
             if idx is None:
                 migrations.append("CREATE INDEX IF NOT EXISTS ix_kit_items_product_id ON kit_items (product_id)")
+
+            # Índices de performance: checa o índice de verdade, não a coluna.
+            existing_perf_idx = {
+                r[0] for r in db.execute(text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE tablename IN ('stock_movements', 'scanning_logs')"
+                )).fetchall()
+            }
+            for idx_name, idx_sql in PERF_INDEXES:
+                if idx_name not in existing_perf_idx:
+                    index_migrations.append(idx_sql)
 
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
@@ -133,6 +168,16 @@ def run_light_migrations():
             if "ix_kit_items_product_id" not in idx_ki:
                 migrations.append("CREATE INDEX IF NOT EXISTS ix_kit_items_product_id ON kit_items (product_id)")
 
+            # Índices de performance: mesma checagem do ramo PostgreSQL, via PRAGMA.
+            existing_perf_idx = set()
+            for _tbl in ("stock_movements", "scanning_logs"):
+                existing_perf_idx |= {
+                    r[1] for r in db.execute(text(f"PRAGMA index_list({_tbl})")).fetchall()
+                }
+            for idx_name, idx_sql in PERF_INDEXES:
+                if idx_name not in existing_perf_idx:
+                    index_migrations.append(idx_sql)
+
             db.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_sellers (
                     user_id   INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
@@ -145,6 +190,15 @@ def run_light_migrations():
             db.execute(text(sql))
             print(f"✅ Migração aplicada: {sql}")
         db.commit()
+
+        # Índices de performance em laço à parte, com print em TEXTO PURO:
+        # emoji em migração estoura UnicodeEncodeError em console Windows (cp1252)
+        # e derruba o startup do backend — ver CLAUDE.md.
+        for sql in index_migrations:
+            db.execute(text(sql))
+            print(f"[migracao] indice criado: {sql}")
+        if index_migrations:
+            db.commit()
 
         # ── Backfill do vínculo componente de kit → produto ────────────────────
         # Preenche apenas onde ainda está NULL e o SKU casa exatamente com um

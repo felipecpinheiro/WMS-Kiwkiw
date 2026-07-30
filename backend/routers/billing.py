@@ -36,6 +36,11 @@ def upsert_billing_config(
     db: Session = Depends(get_db),
 ):
     """Cria ou atualiza configuração de cobrança (upsert por seller+chave)."""
+    # Sem esta checagem o INSERT viola a FK e o usuário recebe "Internal Server
+    # Error" sem explicação. Não filtra `active`: só verifica que existe.
+    if not db.query(models.Seller.id).filter(models.Seller.id == config.seller_id).first():
+        raise HTTPException(status_code=404, detail=f"Seller {config.seller_id} não encontrado")
+
     existing = db.query(models.BillingConfig).filter(
         models.BillingConfig.seller_id == config.seller_id,
         models.BillingConfig.config_key == config.config_key,

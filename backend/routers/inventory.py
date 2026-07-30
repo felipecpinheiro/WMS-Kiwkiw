@@ -308,6 +308,11 @@ def create_manual_movement(
             detail="seller_id, sku, movement_type e quantity (>0) são obrigatórios",
         )
 
+    # Sem esta checagem o INSERT viola a FK e o usuário recebe "Internal Server
+    # Error" sem explicação. Não filtra `active`: só verifica que existe.
+    if not db.query(models.Seller.id).filter(models.Seller.id == seller_id).first():
+        raise HTTPException(status_code=404, detail=f"Seller {seller_id} não encontrado")
+
     # Normaliza tipo: aceita "Saida" / "saida" / "Saída" / "Entrada" etc.
     _type_norm = {
         'entrada': 'Entrada',

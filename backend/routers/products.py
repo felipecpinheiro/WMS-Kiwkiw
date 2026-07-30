@@ -27,6 +27,52 @@ MEDIA_DIR = os.path.join(BASE_DIR, "data", "media", "products")
 
 
 # ============================================================
+# VALIDAÇÃO DE CHAVES ESTRANGEIRAS
+# ============================================================
+# Sem estas checagens o INSERT chega ao banco, viola a FK e o usuário recebe
+# um "Internal Server Error" sem explicação nenhuma. Mesmo padrão que
+# assign_seller_unit já usava: busca explícita e 404 com mensagem clara.
+#
+# NENHUMA delas filtra `active` de propósito — referenciar um seller ou uma
+# unidade desativada continua permitido, como era antes. Aqui só se verifica
+# que a entidade EXISTE.
+
+def _assert_seller_exists(db: Session, seller_id: Optional[int]) -> None:
+    """404 quando o seller referenciado não existe. None passa (campo opcional)."""
+    if seller_id is None:
+        return
+    if not db.query(models.Seller.id).filter(models.Seller.id == seller_id).first():
+        raise HTTPException(status_code=404, detail=f"Seller {seller_id} não encontrado")
+
+
+def _assert_unit_exists(db: Session, unit_id: Optional[int]) -> None:
+    """404 quando a unidade referenciada não existe. None passa (campo opcional)."""
+    if unit_id is None:
+        return
+    if not db.query(models.Unit.id).filter(models.Unit.id == unit_id).first():
+        raise HTTPException(status_code=404, detail=f"Unidade {unit_id} não encontrada")
+
+
+def _assert_sellers_exist(db: Session, seller_ids: Optional[List[int]]) -> None:
+    """
+    404 listando quais ids não existem. Vale para o vínculo M2M do usuário:
+    `_sync_sellers` resolve por `id.in_(...)` e descartaria um id inexistente
+    em silêncio — o admin salvaria achando que vinculou o seller.
+    """
+    if not seller_ids:
+        return
+    encontrados = {
+        row.id for row in db.query(models.Seller.id).filter(models.Seller.id.in_(seller_ids)).all()
+    }
+    faltando = sorted(set(seller_ids) - encontrados)
+    if faltando:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Seller(s) não encontrado(s): {', '.join(str(i) for i in faltando)}",
+        )
+
+
+# ============================================================
 # PRODUTOS
 # ============================================================
 
@@ -101,6 +147,8 @@ def create_product(
     current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
+    _assert_seller_exists(db, product.seller_id)
+
     existing = db.query(models.Product).filter(
         models.Product.seller_id == product.seller_id,
         models.Product.sku == product.sku,
@@ -883,6 +931,7 @@ def create_kit(
     db: Session = Depends(get_db),
 ):
     _assert_kit_seller_scope(kit.seller_id, user_seller_ids)
+    _assert_seller_exists(db, kit.seller_id)
 
     # Componente igual ao próprio kit geraria referência circular na expansão.
     if any((i.component_sku or "").strip() == kit.kit_sku.strip() for i in kit.items):
@@ -1408,6 +1457,8 @@ def create_box_rule(
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
+    _assert_seller_exists(db, rule.seller_id)
+
     existing = db.query(models.BoxAlgorithm).filter(
         models.BoxAlgorithm.seller_id == rule.seller_id,
         models.BoxAlgorithm.num_products == rule.num_products,
@@ -1534,6 +1585,7 @@ def create_seller(
     db: Session = Depends(get_db),
 ):
     data = seller.model_dump()
+    _assert_unit_exists(db, data.get("unit_id"))
     # trade_name não pode ser nulo no banco; usa name como fallback
     if not data.get('trade_name'):
         data['trade_name'] = data['name']
@@ -1598,6 +1650,7 @@ def update_seller(
     if not seller:
         raise HTTPException(status_code=404, detail="Seller não encontrado")
     changed = {f: v for f, v in data.model_dump(exclude_none=True).items()}
+    _assert_unit_exists(db, changed.get("unit_id"))
     for field, value in changed.items():
         setattr(seller, field, value)
 
@@ -1890,6 +1943,10 @@ def create_user(
     if existing:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
 
+    _assert_unit_exists(db, user.unit_id)
+    _assert_seller_exists(db, user.seller_id)
+    _assert_sellers_exist(db, user.seller_ids)
+
     u = models.User(
         name=user.name,
         email=user.email,
@@ -1937,6 +1994,10 @@ def update_user(
     # Campos simples
     update_data = data.model_dump(exclude_none=True)
     seller_ids_new = update_data.pop("seller_ids", None)   # trata separado
+
+    _assert_unit_exists(db, update_data.get("unit_id"))
+    _assert_seller_exists(db, update_data.get("seller_id"))
+    _assert_sellers_exist(db, seller_ids_new)
 
     if "password" in update_data:
         update_data["password_hash"] = hash_password(update_data.pop("password"))

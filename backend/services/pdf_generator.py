@@ -626,7 +626,7 @@ def generate_separation_bytes(
     filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
-        path = generate_separation_report(session, db, tmpdir, orders=orders)
+        path = generate_expedition_report(session, db, tmpdir, orders=orders)
         with open(path, 'rb') as f:
             data = f.read()
 
@@ -660,7 +660,7 @@ def generate_expedition_bytes(
     filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
-        path = generate_expedition_report(session, db, tmpdir, orders=orders)
+        path = generate_separation_report(session, db, tmpdir, orders=orders)
         with open(path, 'rb') as f:
             data = f.read()
 

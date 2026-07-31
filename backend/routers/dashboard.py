@@ -381,9 +381,14 @@ def master_dashboard(
 
     # ── Sellers ativos SEM pedidos hoje ─────────────────────
     # Para gerente: só mostra os sellers que ele gerencia sem pedidos
+    # Precisa respeitar o mesmo filtro de unidade usado em sellers_with_orders —
+    # senão um seller de outra unidade sempre cai aqui como "sem pedidos", mesmo
+    # tendo pedido hoje na unidade dele.
     sellers_query = db.query(models.Seller).filter(models.Seller.active == True)
     if manager_seller_ids:
         sellers_query = sellers_query.filter(models.Seller.id.in_(manager_seller_ids))
+    if unit_id:
+        sellers_query = sellers_query.filter(models.Seller.unit_id == unit_id)
     all_active_sellers = sellers_query.all()
     seller_ids_with_orders = {r["seller_id"] for r in sellers_with_orders}
     sellers_no_orders = [

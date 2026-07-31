@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case
 
 from ..database import get_db
@@ -176,9 +176,40 @@ def master_dashboard(
     # No Dashboard Master, interrompido conta como concluído para a logística interna
     # (não afeta o Portal do Seller, que tem sua própria contagem em seller_dashboard()).
     completed = status_counts.get(models.OrderStatus.COMPLETED.value, 0) + interrupted
-    scanning = status_counts.get(models.OrderStatus.SCANNING.value, 0)
     pending = total - completed
     completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+
+    # ── "Em Bipagem": pedidos ainda pendentes dentro de cards já em andamento ──
+    # O status "scanning" do pedido é transitório demais pra servir de KPI (some em
+    # segundos quando o pedido tem poucos itens). Em vez disso, replica a mesma regra
+    # de card do kanban de Manuseios (get_session_cards em scanning.py): um card
+    # (sessão + seller) está "em processo" quando pelo menos 1 pedido dele já foi
+    # concluído/interrompido mas nem todos. Soma os pedidos que ainda faltam bipar
+    # nesses cards — de propósito, de TODAS as unidades, ignorando o filtro de
+    # unidade selecionado no topo do Dashboard.
+    scanning_sessions = db.query(models.PickingSession).filter(
+        _session_created_on(target),
+    ).options(
+        joinedload(models.PickingSession.orders).joinedload(models.Order.seller)
+    ).all()
+
+    scanning = 0
+    for sess in scanning_sessions:
+        seller_orders: dict[int, list] = {}
+        for order in sess.orders:
+            if order.seller is not None and not order.seller.active:
+                continue
+            if order.status == models.OrderStatus.CANCELLED:
+                continue
+            seller_orders.setdefault(order.seller_id, []).append(order)
+        for sid, sorders in seller_orders.items():
+            s_total = len(sorders)
+            s_done = sum(
+                1 for o in sorders
+                if o.status in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED)
+            )
+            if 0 < s_done < s_total:
+                scanning += (s_total - s_done)
 
     # ── Sessões criadas no dia alvo ─────────────────────────────
     session_filter = [_session_created_on(target)]

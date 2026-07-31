@@ -191,7 +191,7 @@ def master_dashboard(
     # ── Resumo por unidade ──────────────────────────────────────
     # Deriva a unidade de cada pedido pelo seller (seller.unit_id),
     # evitando depender do campo denormalizado order.unit_id.
-    units = db.query(models.Unit).filter(models.Unit.active == True).all()
+    units = db.query(models.Unit).filter(models.Unit.active == True).order_by(models.Unit.id).all()
     units_summary = []
     for unit in units:
         if unit_id and unit_id != unit.id and user_role != "admin":

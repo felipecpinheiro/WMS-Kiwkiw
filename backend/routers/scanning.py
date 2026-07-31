@@ -1553,6 +1553,9 @@ def session_cards(
                 if first_order.seller and first_order.seller.unit:
                     unit_name_val = first_order.seller.unit.name
 
+            ft_val = session.file_type.value if hasattr(session.file_type, "value") else session.file_type
+            file_type_val = "entrada" if (ft_val or "").lower() == "entrada" else "saida"
+
             cards.append({
                 "card_id": f"{session.id}_{sid}",
                 "session_id": session.id,
@@ -1563,6 +1566,7 @@ def session_cards(
                 "unit_id": unit_id_val,
                 "unit_name": unit_name_val,
                 "status": status,
+                "file_type": file_type_val,
                 "total_orders": total,
                 "completed_orders": completed,
                 "in_progress_orders": in_prog,

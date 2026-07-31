@@ -177,7 +177,42 @@ function uploadTime(card: SessionCard) {
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
-function statusInfo(status: string) {
+function statusInfo(status: string, isEntrada = false) {
+  if (isEntrada) {
+    switch (status) {
+      case 'completed':
+        return {
+          label: 'Finalizado',
+          icon: <CheckCircle2 size={13} />,
+          color: 'text-cyan-300',
+          bg: 'bg-cyan-900/25',
+          border: 'border-cyan-500/25',
+          bar: 'bg-cyan-400',
+          headerBg: 'bg-cyan-900/30 border-cyan-500/25',
+        };
+      case 'in_progress':
+        return {
+          label: 'Em Processo',
+          icon: <PlayCircle size={13} />,
+          color: 'text-sky-300',
+          bg: 'bg-sky-900/25',
+          border: 'border-sky-500/25',
+          bar: 'bg-sky-400',
+          headerBg: 'bg-sky-900/30 border-sky-500/25',
+        };
+      default:
+        return {
+          label: 'A Iniciar',
+          icon: <Circle size={13} />,
+          color: 'text-blue-300/70',
+          bg: 'bg-blue-950/40',
+          border: 'border-blue-500/20',
+          bar: 'bg-blue-500/40',
+          headerBg: 'bg-blue-950/50 border-blue-500/20',
+        };
+    }
+  }
+
   switch (status) {
     case 'completed':
       return {
@@ -218,12 +253,14 @@ function HandlingCard({
   card,
   onClick,
   onCtxMenu,
+  isEntrada,
 }: {
   card: SessionCard;
   onClick: () => void;
   onCtxMenu?: (e: React.MouseEvent) => void;
+  isEntrada?: boolean;
 }) {
-  const info = statusInfo(card.status);
+  const info = statusInfo(card.status, isEntrada);
   const progress = pct(card);
   const pending = card.total_orders - card.completed_orders;
 
@@ -304,15 +341,16 @@ function HandlingCard({
 // ── Kanban Column ─────────────────────────────────────────────────────────────
 
 function KanbanColumn({
-  title, status, cards, onCardClick, onCardCtxMenu,
+  title, status, cards, onCardClick, onCardCtxMenu, isEntrada,
 }: {
   title: string;
   status: string;
   cards: SessionCard[];
   onCardClick: (card: SessionCard) => void;
   onCardCtxMenu?: (e: React.MouseEvent, card: SessionCard) => void;
+  isEntrada?: boolean;
 }) {
-  const info = statusInfo(status);
+  const info = statusInfo(status, isEntrada);
   const totalOrders = cards.reduce((a, c) => a + c.total_orders, 0);
   const doneOrders  = cards.reduce((a, c) => a + c.completed_orders, 0);
 
@@ -347,6 +385,7 @@ function KanbanColumn({
             card={c}
             onClick={() => onCardClick(c)}
             onCtxMenu={onCardCtxMenu ? (e) => onCardCtxMenu(e, c) : undefined}
+            isEntrada={isEntrada}
           />
         ))
       )}
@@ -367,6 +406,7 @@ export default function HandlingPage() {
   const [dateFrom, setDateFrom] = useState(todayBrasiliaStr);
   const [dateTo, setDateTo]     = useState(todayBrasiliaStr);
   const [sellerFilter, setSellerFilter] = useState('');
+  const [fileTypeView, setFileTypeView] = useState<'saida' | 'entrada'>('saida');
 
   // Preferência de unidade ativa — compartilhada com o Dashboard via localStorage
   const unitPrefKey = `wms_active_unit_${user?.id ?? 'anon'}`;
@@ -406,17 +446,23 @@ export default function HandlingPage() {
   useEffect(() => { setLocalCards(serverCards as SessionCard[]); }, [serverCards]);
   const cards = localCards;
 
+  // Interruptor Entrada/Saída — nunca mostra os dois juntos
+  const byFileType = useMemo(() =>
+    cards.filter(c => (c.file_type || 'saida') === fileTypeView),
+    [cards, fileTypeView]
+  );
+
   // Seller list for filter dropdown (admin only)
   const allSellers = useMemo(() => {
     const s = new Set<string>();
-    cards.forEach(c => { if (c.seller_name) s.add(c.seller_name); });
+    byFileType.forEach(c => { if (c.seller_name) s.add(c.seller_name); });
     return Array.from(s).sort();
-  }, [cards]);
+  }, [byFileType]);
 
   // Admin: filtro visual por seller. Operador/gerente já chegam pré-filtrados do backend.
   const filtered = useMemo(() =>
-    sellerFilter ? cards.filter(c => c.seller_name === sellerFilter) : cards,
-    [cards, sellerFilter]
+    sellerFilter ? byFileType.filter(c => c.seller_name === sellerFilter) : byFileType,
+    [byFileType, sellerFilter]
   );
 
   // Group by status
@@ -514,6 +560,26 @@ export default function HandlingPage() {
             className={inputCls} style={inputStyle} />
         </div>
 
+        {/* Interruptor Saída / Entrada */}
+        <div className="flex items-center rounded-lg border border-white/12 overflow-hidden text-xs font-medium">
+          <button
+            onClick={() => setFileTypeView('saida')}
+            className={`px-3 py-1.5 transition ${fileTypeView === 'saida'
+              ? 'bg-violet-600 text-white'
+              : 'text-white/40 hover:bg-white/5'}`}
+          >
+            Saída
+          </button>
+          <button
+            onClick={() => setFileTypeView('entrada')}
+            className={`px-3 py-1.5 transition ${fileTypeView === 'entrada'
+              ? 'bg-sky-600 text-white'
+              : 'text-white/40 hover:bg-white/5'}`}
+          >
+            Entrada
+          </button>
+        </div>
+
         {/* Seletor de unidade — admin e manager */}
         {(isAdmin || isManager) && (units as any[]).length > 1 && (
           <select
@@ -569,9 +635,9 @@ export default function HandlingPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} />
-          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} />
-          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} />
+          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
         </div>
       )}
 

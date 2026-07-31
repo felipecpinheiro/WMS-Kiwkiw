@@ -211,6 +211,7 @@ export interface SessionCard {
   completed_orders: number;
   status: string;
   all_checks_ok: boolean;
+  file_type?: string;
 }
 
 export interface DuplicateOrderInfo {

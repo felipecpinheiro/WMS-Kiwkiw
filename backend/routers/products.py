@@ -1992,7 +1992,10 @@ def create_user(
 ):
     """Cria novo usuário. Somente administrador."""
     from ..auth import hash_password
-    existing = db.query(models.User).filter(models.User.email == user.email).first()
+    from sqlalchemy import func as _func
+    existing = db.query(models.User).filter(
+        _func.lower(models.User.email) == user.email.lower()
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
 
@@ -2040,6 +2043,7 @@ def update_user(
 ):
     """Edita usuário. Somente administrador."""
     from ..auth import hash_password
+    from sqlalchemy import func as _func
     u = db.query(models.User).filter(models.User.id == user_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
@@ -2051,6 +2055,14 @@ def update_user(
     _assert_unit_exists(db, update_data.get("unit_id"))
     _assert_seller_exists(db, update_data.get("seller_id"))
     _assert_sellers_exist(db, seller_ids_new)
+
+    if "email" in update_data:
+        dup = db.query(models.User).filter(
+            _func.lower(models.User.email) == update_data["email"].lower(),
+            models.User.id != user_id,
+        ).first()
+        if dup:
+            raise HTTPException(status_code=400, detail="Email já cadastrado")
 
     if "password" in update_data:
         update_data["password_hash"] = hash_password(update_data.pop("password"))

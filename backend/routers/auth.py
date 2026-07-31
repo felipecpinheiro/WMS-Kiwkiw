@@ -4,6 +4,7 @@ Endpoints de login, logout e refresh de token.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 def login(request: schemas.LoginRequest, db: Session = Depends(get_db)):
     """Realiza login e retorna token JWT."""
     user = db.query(models.User).filter(
-        models.User.email == request.email,
+        func.lower(models.User.email) == func.lower(request.email),
         models.User.active == True,
     ).first()
 

@@ -123,6 +123,9 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
             Você está usando uma senha temporária.<br />
             Crie uma senha pessoal para continuar.
           </p>
+          <p className="text-xs text-amber-400/80 text-center mt-2">
+            A senha deve ter no mínimo 6 caracteres.
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -206,6 +209,7 @@ export default function App() {
       <BrowserRouter>
         <Toaster
           position="top-right"
+          containerStyle={{ zIndex: 10000 }}
           toastOptions={{
             duration: 4000,
             style: { background: '#1f2937', color: '#fff' },

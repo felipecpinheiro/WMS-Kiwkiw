@@ -207,6 +207,145 @@ function ScanAuditTab() {
 }
 
 
+// ── Subcomponente: aba Pedidos Interrompidos (admin only) ────────────────────
+function InterruptedOrdersTab() {
+  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
+  const [dateTo, setDateTo]     = useState(todayBrasiliaStr());
+  const [unitId, setUnitId]     = useState('');
+  const [sellerId, setSellerId] = useState('');
+  const [operatorId, setOperatorId] = useState('');
+  const [search, setSearch] = useState('');
+
+  const { data: logs = [], isLoading } = useQuery(
+    ['interrupted-orders', dateFrom, dateTo, unitId, sellerId, operatorId],
+    () => scanningApi.interruptedOrders({
+      date_from: dateFrom,
+      date_to: dateTo,
+      unit_id: unitId || undefined,
+      seller_id: sellerId || undefined,
+      operator_id: operatorId || undefined,
+    }).then(r => r.data),
+    { keepPreviousData: true }
+  );
+
+  const { data: units = [] } = useQuery('units-audit', () => cadastrosApi.units().then(r => r.data));
+  const { data: sellers = [] } = useQuery(['sellers', 'all'], () => cadastrosApi.sellers(false).then(r => r.data));
+  const { data: users = [] } = useQuery('users-audit', () => cadastrosApi.users().then(r => r.data));
+
+  const filtered = (logs as any[]).filter((l: any) =>
+    !search ||
+    l.order_nf?.includes(search) ||
+    l.order_customer?.toLowerCase().includes(search.toLowerCase()) ||
+    l.seller_name?.toLowerCase().includes(search.toLowerCase()) ||
+    l.operator?.toLowerCase().includes(search.toLowerCase()) ||
+    l.reason?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* Filtros */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 p-4 flex flex-wrap gap-3">
+        <div>
+          <label className="block text-xs text-white/50 mb-1">De</label>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A', colorScheme: 'dark' }} />
+        </div>
+        <div>
+          <label className="block text-xs text-white/50 mb-1">Até</label>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A', colorScheme: 'dark' }} />
+        </div>
+        <div>
+          <label className="block text-xs text-white/50 mb-1">Unidade</label>
+          <select value={unitId} onChange={e => setUnitId(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A' }}>
+            <option value="">Todas</option>
+            {(units as any[]).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-white/50 mb-1">Seller</label>
+          <select value={sellerId} onChange={e => setSellerId(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A' }}>
+            <option value="">Todos</option>
+            {(sellers as any[]).map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-white/50 mb-1">Operador</label>
+          <select value={operatorId} onChange={e => setOperatorId(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A' }}>
+            <option value="">Todos</option>
+            {(users as any[]).filter((u: any) => u.role === 'operator').map((u: any) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-xs text-white/50 mb-1">Buscar</label>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="NF, cliente, seller, operador, motivo..."
+              className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+              style={{ background: '#14122A' }} />
+          </div>
+        </div>
+      </div>
+
+      {/* KPI */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 p-4 flex items-center gap-3 w-fit">
+        <AlertTriangle size={20} className="text-amber-400" />
+        <div><p className="text-xs text-white/50">Total Interrompidos</p><p className="text-2xl font-bold text-amber-400">{filtered.length}</p></div>
+      </div>
+
+      {/* Log */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+        <div className="p-4 border-b border-white/8 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white/80">Pedidos Interrompidos</h2>
+          <span className="text-xs text-white/35">{filtered.length} registros</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-white/4 border-b border-white/8">
+                {['Horário', 'NF', 'Cliente', 'Seller', 'Unidade', 'Operador', 'Motivo'].map(h => (
+                  <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td colSpan={7} className="text-center py-10 text-sm text-white/35">Carregando...</td></tr>
+              ) : filtered.length > 0 ? filtered.map((l: any, i: number) => (
+                <tr key={i} className="border-b border-white/5 hover:bg-white/4 bg-amber-900/10">
+                  <td className="py-2 px-3 text-xs font-mono text-white/50 whitespace-nowrap">{l.timestamp}</td>
+                  <td className="py-2 px-3 text-xs font-mono text-white/50">{l.order_nf}</td>
+                  <td className="py-2 px-3 text-sm text-white/80">{l.order_customer || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-white/60">{l.seller_name || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-white/60">{l.unit_name || '—'}</td>
+                  <td className="py-2 px-3 text-sm text-white/80">{l.operator || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-white/50 max-w-xs truncate" title={l.reason}>{l.reason || '—'}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={7} className="text-center py-10">
+                  <AlertTriangle size={28} className="text-white/25 mx-auto mb-2" />
+                  <p className="text-sm text-white/35">Nenhum pedido interrompido para os filtros selecionados</p>
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ── Subcomponente: aba Ações do Sistema ──────────────────────────────────────
 function SystemAuditTab() {
   const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
@@ -369,7 +508,15 @@ function SystemAuditTab() {
 
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function AuditPage() {
-  const [activeTab, setActiveTab] = useState<'scans' | 'system'>('scans');
+  const [activeTab, setActiveTab] = useState<'scans' | 'interrupted' | 'system'>('scans');
+
+  const isAdmin = (() => { try { return JSON.parse(localStorage.getItem('wms_user') || '{}').role === 'admin'; } catch { return false; } })();
+
+  const tabs = [
+    { key: 'scans' as const,  label: '📋 Bipagens',              desc: 'Cada scan com operador e horário' },
+    ...(isAdmin ? [{ key: 'interrupted' as const, label: '⚠️ Pedidos Interrompidos', desc: 'Histórico de interrupções com motivo' }] : []),
+    { key: 'system' as const, label: '🗂 Ações do Sistema',       desc: 'Cadastros, uploads, estoque e configurações' },
+  ];
 
   return (
     <div className="p-6 space-y-6">
@@ -383,10 +530,7 @@ export default function AuditPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/8">
-        {([
-          { key: 'scans',  label: '📋 Bipagens',          desc: 'Cada scan com operador e horário' },
-          { key: 'system', label: '🗂 Ações do Sistema',   desc: 'Cadastros, uploads, estoque e configurações' },
-        ] as const).map(tab => (
+        {tabs.map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -402,8 +546,9 @@ export default function AuditPage() {
       </div>
 
       {/* Conteúdo */}
-      {activeTab === 'scans'  && <ScanAuditTab />}
-      {activeTab === 'system' && <SystemAuditTab />}
+      {activeTab === 'scans'       && <ScanAuditTab />}
+      {activeTab === 'interrupted' && isAdmin && <InterruptedOrdersTab />}
+      {activeTab === 'system'      && <SystemAuditTab />}
     </div>
   );
 }

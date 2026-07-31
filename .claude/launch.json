@@ -12,6 +12,12 @@
       "runtimeExecutable": "backend/venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "backend.main:app", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "backend-teste-hoje",
+      "runtimeExecutable": "backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["backend/run_local_teste_hoje.py"],
+      "port": 8000
     }
   ]
 }

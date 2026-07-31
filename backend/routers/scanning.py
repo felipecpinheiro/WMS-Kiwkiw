@@ -1180,6 +1180,53 @@ def get_audit_log(
     ]
 
 
+@router.get("/interrupted-orders")
+def get_interrupted_orders(
+    unit_id: Optional[int] = None,
+    seller_id: Optional[int] = None,
+    operator_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = Query(default=500, le=5000),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Retorna o histórico completo de pedidos interrompidos (marcador sku='INTERRUPT' em ScanningLog)."""
+    query = db.query(models.ScanningLog).options(
+        joinedload(models.ScanningLog.operator),
+        joinedload(models.ScanningLog.order).joinedload(models.Order.seller).joinedload(models.Seller.unit),
+    ).filter(models.ScanningLog.sku == "INTERRUPT")
+
+    if operator_id:
+        query = query.filter(models.ScanningLog.operator_id == operator_id)
+    if date_from:
+        query = query.filter(models.ScanningLog.timestamp >= date_from)
+    if date_to:
+        query = query.filter(models.ScanningLog.timestamp <= end_of_day(date_to))
+    if seller_id or unit_id:
+        query = query.join(models.ScanningLog.order)
+        if seller_id:
+            query = query.filter(models.Order.seller_id == seller_id)
+        if unit_id:
+            query = query.join(models.Order.seller).filter(models.Seller.unit_id == unit_id)
+
+    logs = query.order_by(models.ScanningLog.timestamp.desc()).limit(limit).all()
+
+    return [
+        {
+            "id": log.id,
+            "timestamp": log.timestamp.strftime("%d/%m/%Y %H:%M:%S"),
+            "order_nf": log.order.nf_number if log.order else None,
+            "order_customer": log.order.customer_name if log.order else None,
+            "seller_name": (log.order.seller.trade_name if log.order and log.order.seller else None),
+            "unit_name": (log.order.seller.unit.name if log.order and log.order.seller and log.order.seller.unit else None),
+            "operator": log.operator.name if log.operator else None,
+            "reason": log.error_message,
+        }
+        for log in logs
+    ]
+
+
 @router.get("/system-audit-log")
 def get_system_audit_log(
     date_from: Optional[date] = None,

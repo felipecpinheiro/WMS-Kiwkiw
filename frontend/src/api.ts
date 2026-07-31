@@ -410,6 +410,8 @@ export const scanningApi = {
     api.get('/scanning/system-audit-log', { params }),
   productivity: (params?: Record<string, any>) =>
     api.get('/scanning/productivity', { params }),
+  interruptedOrders: (params?: Record<string, any>) =>
+    api.get('/scanning/interrupted-orders', { params }),
   updateSessionConfig: (
     sessionId: number,
     data: { file_type?: 'Entrada' | 'Saída'; for_billing?: boolean },

@@ -172,9 +172,11 @@ def master_dashboard(
         ).scalar() or 0
         status_counts[status_enum.value] = c
 
-    completed = status_counts.get(models.OrderStatus.COMPLETED.value, 0)
-    scanning = status_counts.get(models.OrderStatus.SCANNING.value, 0)
     interrupted = status_counts.get(models.OrderStatus.INTERRUPTED.value, 0)
+    # No Dashboard Master, interrompido conta como concluído para a logística interna
+    # (não afeta o Portal do Seller, que tem sua própria contagem em seller_dashboard()).
+    completed = status_counts.get(models.OrderStatus.COMPLETED.value, 0) + interrupted
+    scanning = status_counts.get(models.OrderStatus.SCANNING.value, 0)
     pending = total - completed
     completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
 
@@ -218,7 +220,7 @@ def master_dashboard(
         u_total = db.query(func.count(models.Order.id)).filter(*unit_filter).scalar() or 0
         u_done  = db.query(func.count(models.Order.id)).filter(
             *unit_filter,
-            models.Order.status == models.OrderStatus.COMPLETED,
+            models.Order.status.in_([models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED]),
         ).scalar() or 0
         units_summary.append({
             "unit_id": unit.id,
@@ -229,9 +231,10 @@ def master_dashboard(
         })
 
     # ── Sellers com pedidos no dia alvo ─────────────────────────
-    # Usa case() para somar apenas pedidos com status COMPLETED — portável entre SQLite e PG
+    # Usa case() para somar pedidos COMPLETED ou INTERRUPTED (interrompido conta como
+    # concluído no Dashboard Master) — portável entre SQLite e PG
     completed_expr = func.sum(
-        case((models.Order.status == models.OrderStatus.COMPLETED, 1), else_=0)
+        case((models.Order.status.in_([models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED]), 1), else_=0)
     ).label("completed_count")
 
     sellers_rows = db.query(
@@ -453,7 +456,7 @@ def master_dashboard(
     for log in logs_today:
         if log.operator_id not in completed_by_op:
             completed_by_op[log.operator_id] = set()
-        if log.order and log.order.status == models.OrderStatus.COMPLETED:
+        if log.order and log.order.status in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED):
             completed_by_op[log.operator_id].add(log.order_id)
 
     operators_summary = []

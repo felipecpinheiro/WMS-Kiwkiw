@@ -5,11 +5,13 @@ Reproduz e aprimora a lógica da macro 'Worksheet_Change' do Scan Manuseio.
 """
 
 import csv
+import io
 import os
 from datetime import datetime, date
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
@@ -1225,6 +1227,216 @@ def get_interrupted_orders(
         }
         for log in logs
     ]
+
+
+# ============================================================
+# STATUS DAS NFs (aba "Status das NFs" da Auditoria)
+# ============================================================
+
+# Intervalo maximo aceito no filtro de datas. Existe para nao varrer
+# orders/order_items/scanning_logs de um periodo longo numa unica request.
+NF_STATUS_MAX_DAYS = 7
+# Teto de linhas. A TELA e o CSV usam o mesmo teto de proposito: o CSV tem
+# que ser exatamente o que o usuario esta vendo antes de mandar pro cliente.
+NF_STATUS_LIMIT = 500
+
+_NF_STATUS_SITUACAO = {
+    "COMPLETED": "1 - FINALIZADA",
+    "INTERRUPTED": "2 - INTERROMPIDA (conta como feita)",
+    "SCANNING": "3 - EM BIPAGEM (comecou, nao terminou)",
+}
+
+
+def _nf_status_rows(
+    db: Session,
+    seller_id: int,
+    date_from: date,
+    date_to: date,
+    limit: int = NF_STATUS_LIMIT,
+) -> tuple[list[dict], int]:
+    """
+    Monta a lista NF a NF de um seller num intervalo de upload (`imported_at`).
+
+    Devolve (linhas, total_sem_limite). Nao faz N+1: as somas de itens e de
+    bipagem saem de duas queries agrupadas por order_id.
+    """
+    base = db.query(models.Order).filter(
+        models.Order.seller_id == seller_id,
+        models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.imported_at >= date_from,
+        models.Order.imported_at <= end_of_day(date_to),
+    )
+
+    total = base.count()
+    orders = base.order_by(
+        models.Order.imported_at.desc(), models.Order.nf_number
+    ).limit(limit).all()
+
+    if not orders:
+        return [], total
+
+    order_ids = [o.id for o in orders]
+
+    # Itens previstos por pedido
+    itens_map = dict(
+        db.query(
+            models.OrderItem.order_id,
+            func.sum(models.OrderItem.quantity),
+        )
+        .filter(models.OrderItem.order_id.in_(order_ids))
+        .group_by(models.OrderItem.order_id)
+        .all()
+    )
+
+    # Bipagem real: exclui erro e o marcador de interrupcao (sku='INTERRUPT').
+    # coalesce porque registros antigos tem NULL nesses booleanos.
+    scan_ok = [
+        func.coalesce(models.ScanningLog.is_error, False) == False,        # noqa: E712
+        func.coalesce(models.ScanningLog.is_interrupted, False) == False,  # noqa: E712
+    ]
+
+    bip_map = {
+        row[0]: (row[1], row[2])
+        for row in db.query(
+            models.ScanningLog.order_id,
+            func.sum(models.ScanningLog.quantity),
+            func.max(models.ScanningLog.timestamp),
+        )
+        .filter(models.ScanningLog.order_id.in_(order_ids), *scan_ok)
+        .group_by(models.ScanningLog.order_id)
+        .all()
+    }
+
+    # Operador do ultimo scan de cada pedido: ordena crescente e deixa o
+    # ultimo sobrescrever, evitando uma subquery correlacionada por pedido.
+    operador_map: dict[int, str] = {}
+    for order_id, operator_name in (
+        db.query(models.ScanningLog.order_id, models.User.name)
+        .join(models.User, models.User.id == models.ScanningLog.operator_id)
+        .filter(models.ScanningLog.order_id.in_(order_ids), *scan_ok)
+        .order_by(models.ScanningLog.timestamp)
+        .all()
+    ):
+        operador_map[order_id] = operator_name
+
+    rows = []
+    for o in orders:
+        status_raw = (o.status.value if hasattr(o.status, "value") else o.status) or ""
+        status_raw = status_raw.upper()
+        bipado, ultimo_scan = bip_map.get(o.id, (None, None))
+        rows.append({
+            "order_id": o.id,
+            "nf": o.nf_number,
+            "situacao": _NF_STATUS_SITUACAO.get(status_raw, "4 - NAO BIPADA"),
+            "cliente_final": o.customer_name,
+            "transportadora": o.carrier,
+            "itens_previstos": int(itens_map.get(o.id) or 0),
+            "itens_bipados": int(bipado or 0),
+            "ultimo_scan": ultimo_scan.strftime("%d/%m/%Y %H:%M:%S") if ultimo_scan else None,
+            "operador": operador_map.get(o.id),
+            "chave_danfe": o.danfe_key,
+            "data_nf": o.order_date.strftime("%d/%m/%Y") if o.order_date else None,
+            "importado_em": o.imported_at.strftime("%d/%m/%Y %H:%M:%S") if o.imported_at else None,
+            "sessao": o.session_id,
+            "status_bruto": status_raw,
+        })
+
+    return rows, total
+
+
+def _nf_status_validate(
+    db: Session,
+    allowed_seller_ids: Optional[List[int]],
+    seller_id: int,
+    date_from: date,
+    date_to: date,
+) -> models.Seller:
+    """Valida intervalo e escopo do seller. Devolve o seller."""
+    if date_to < date_from:
+        raise HTTPException(
+            status_code=400,
+            detail="A data final nao pode ser anterior a data inicial.",
+        )
+    if (date_to - date_from).days > NF_STATUS_MAX_DAYS - 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Intervalo maximo de {NF_STATUS_MAX_DAYS} dias. Reduza o periodo.",
+        )
+
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail=f"Seller {seller_id} nao encontrado")
+
+    # None = admin (convencao do token). Lista = escopo restrito.
+    if allowed_seller_ids is not None and seller_id not in allowed_seller_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Voce nao tem acesso a este seller.",
+        )
+    return seller
+
+
+@router.get("/nf-status")
+def get_nf_status(
+    seller_id: int = Query(...),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    allowed_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Status NF a NF de um seller: quais ja foram bipadas/finalizadas e quais nao.
+
+    Filtra pela data de UPLOAD (`imported_at`), como o Dashboard — nao pela
+    data da NF. Pedido cancelado nao aparece.
+    """
+    _nf_status_validate(db, allowed_seller_ids, seller_id, date_from, date_to)
+    rows, total = _nf_status_rows(db, seller_id, date_from, date_to)
+    return {
+        "rows": rows,
+        "total": total,
+        "limit": NF_STATUS_LIMIT,
+        "truncated": total > len(rows),
+    }
+
+
+@router.get("/nf-status/export/csv")
+def export_nf_status_csv(
+    seller_id: int = Query(...),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    allowed_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """Exporta em CSV exatamente as mesmas linhas de `GET /scanning/nf-status`."""
+    seller = _nf_status_validate(db, allowed_seller_ids, seller_id, date_from, date_to)
+    rows, _ = _nf_status_rows(db, seller_id, date_from, date_to)
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow([
+        "NF", "Situacao", "Cliente Final", "Transportadora",
+        "Itens Previstos", "Itens Bipados", "Ultimo Scan", "Operador",
+        "Chave DANFE", "Data NF", "Importado em", "Sessao", "Status Bruto",
+    ])
+    for r in rows:
+        writer.writerow([
+            r["nf"], r["situacao"], r["cliente_final"] or "", r["transportadora"] or "",
+            r["itens_previstos"], r["itens_bipados"], r["ultimo_scan"] or "",
+            r["operador"] or "", r["chave_danfe"] or "", r["data_nf"] or "",
+            r["importado_em"] or "", r["sessao"] or "", r["status_bruto"],
+        ])
+
+    output.seek(0)
+    nome = (seller.trade_name or seller.name or str(seller_id)).replace(" ", "_")
+    filename = f"status_nfs_{nome}_{date_from.isoformat()}_a_{date_to.isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/system-audit-log")

@@ -412,6 +412,26 @@ export const scanningApi = {
     api.get('/scanning/productivity', { params }),
   interruptedOrders: (params?: Record<string, any>) =>
     api.get('/scanning/interrupted-orders', { params }),
+  /** Status NF a NF de um seller (por data de upload). Seller e datas obrigatórios. */
+  nfStatus: (params: { seller_id: number | string; date_from: string; date_to: string }) =>
+    api.get<{
+      rows: Record<string, any>[];
+      total: number;
+      limit: number;
+      truncated: boolean;
+    }>('/scanning/nf-status', { params }),
+  /** Mesmas linhas de nfStatus(), em CSV. Usa download autenticado (window.open daria 401). */
+  exportNfStatusCsv: (params: { seller_id: number | string; date_from: string; date_to: string }) => {
+    const qs = new URLSearchParams({
+      seller_id: String(params.seller_id),
+      date_from: params.date_from,
+      date_to: params.date_to,
+    }).toString();
+    return downloadAuthenticatedFile(
+      `/scanning/nf-status/export/csv?${qs}`,
+      `status_nfs_${params.date_from}_a_${params.date_to}.csv`,
+    );
+  },
   updateSessionConfig: (
     sessionId: number,
     data: { file_type?: 'Entrada' | 'Saída'; for_billing?: boolean },

@@ -11,8 +11,9 @@ import { useState } from 'react';
 import { useQuery } from 'react-query';
 import {
   Shield, Search, CheckCircle, XCircle, Activity,
-  Package, Users, Box, Upload, AlertTriangle,
+  Package, Users, Box, Upload, AlertTriangle, FileDown,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { scanningApi, cadastrosApi } from '../api';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
@@ -346,6 +347,198 @@ function InterruptedOrdersTab() {
 }
 
 
+// ── Subcomponente: aba Status das NFs ────────────────────────────────────────
+/**
+ * Lista NF a NF de um seller: quais já foram bipadas/finalizadas e quais não.
+ * Filtra pela data de UPLOAD (imported_at), igual ao Dashboard — não pela data da NF.
+ * Seller é obrigatório e o intervalo é limitado a 7 dias: sem isso a consulta
+ * varre orders/order_items/scanning_logs de um período longo de uma vez só.
+ */
+const NF_STATUS_MAX_DAYS = 7;
+
+/** Cor da linha/badge conforme o prefixo numérico da situação vinda do backend. */
+function situacaoStyle(situacao: string): { badge: string; row: string } {
+  if (situacao.startsWith('1')) return { badge: 'bg-violet-900/40 text-violet-300 border-violet-500/20', row: '' };
+  if (situacao.startsWith('2')) return { badge: 'bg-amber-900/40 text-amber-300 border-amber-500/20', row: 'bg-amber-900/10' };
+  if (situacao.startsWith('3')) return { badge: 'bg-blue-900/40 text-blue-300 border-blue-500/20', row: 'bg-blue-900/10' };
+  return { badge: 'bg-red-900/40 text-red-300 border-red-500/20', row: 'bg-red-900/10' };
+}
+
+function NfStatusTab() {
+  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
+  const [dateTo, setDateTo]     = useState(todayBrasiliaStr());
+  const [sellerId, setSellerId] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+
+  // Diferença em dias entre as duas datas (T00:00:00 evita o parse como UTC)
+  const diffDays = Math.round(
+    (new Date(`${dateTo}T00:00:00`).getTime() - new Date(`${dateFrom}T00:00:00`).getTime()) / 86400000
+  );
+  const rangeError =
+    diffDays < 0
+      ? 'A data final não pode ser anterior à data inicial.'
+      : diffDays > NF_STATUS_MAX_DAYS - 1
+        ? `Intervalo máximo de ${NF_STATUS_MAX_DAYS} dias. Reduza o período.`
+        : '';
+
+  const canQuery = !!sellerId && !rangeError;
+
+  const { data, isLoading, error } = useQuery(
+    ['nf-status', sellerId, dateFrom, dateTo],
+    () => scanningApi.nfStatus({ seller_id: sellerId, date_from: dateFrom, date_to: dateTo }).then(r => r.data),
+    { enabled: canQuery, keepPreviousData: true }
+  );
+
+  const rows: any[] = data?.rows ?? [];
+
+  const handleExport = async () => {
+    if (!canQuery) return;
+    setExporting(true);
+    try {
+      await scanningApi.exportNfStatusCsv({ seller_id: sellerId, date_from: dateFrom, date_to: dateTo });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Falha ao gerar o CSV');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Filtros */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 p-4 flex flex-wrap gap-3">
+        <div>
+          <label className="block text-xs text-white/50 mb-1">De</label>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A', colorScheme: 'dark' }} />
+        </div>
+        <div>
+          <label className="block text-xs text-white/50 mb-1">Até</label>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A', colorScheme: 'dark' }} />
+        </div>
+        <div className="min-w-[220px]">
+          <label className="block text-xs text-white/50 mb-1">Seller <span className="text-red-400">*</span></label>
+          <select value={sellerId} onChange={e => setSellerId(e.target.value)}
+            className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white"
+            style={{ background: '#14122A' }}>
+            <option value="">Selecione...</option>
+            {(sellers as any[]).map((s: any) => (
+              <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {rangeError && (
+        <div className="bg-red-900/25 border border-red-500/25 rounded-xl px-4 py-3 flex items-center gap-2">
+          <AlertTriangle size={15} className="text-red-400 shrink-0" />
+          <p className="text-sm text-red-300">{rangeError}</p>
+        </div>
+      )}
+
+      {data?.truncated && (
+        <div className="bg-amber-900/25 border border-amber-500/25 rounded-xl px-4 py-3 flex items-center gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+          <p className="text-sm text-amber-200">
+            Mostrando as primeiras {data.limit} NFs de {data.total}. O CSV sai igual à tela —
+            reduza o intervalo de datas para exportar a lista completa.
+          </p>
+        </div>
+      )}
+
+      {/* Lista */}
+      <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+        <div className="p-4 border-b border-white/8 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-white/80">Status das NFs</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-white/35">{rows.length} registros</span>
+            <button
+              onClick={handleExport}
+              disabled={!canQuery || exporting || rows.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+            >
+              <FileDown size={13} />
+              {exporting ? 'Gerando...' : 'Exportar CSV'}
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-white/4 border-b border-white/8">
+                {['NF', 'Situação', 'Cliente Final', 'Transportadora', 'Itens Previstos',
+                  'Itens Bipados', 'Último Scan', 'Operador', 'Chave DANFE', 'Data NF',
+                  'Importado em', 'Sessão', 'Status Bruto'].map(h => (
+                  <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!sellerId ? (
+                <tr><td colSpan={13} className="text-center py-10">
+                  <Package size={28} className="text-white/25 mx-auto mb-2" />
+                  <p className="text-sm text-white/35">Selecione um seller para consultar</p>
+                </td></tr>
+              ) : rangeError ? (
+                /* Sem isso a tabela seguiria exibindo o resultado do filtro
+                   anterior, que alguem poderia mandar ao cliente como se fosse
+                   do periodo novo. */
+                <tr><td colSpan={13} className="text-center py-10">
+                  <AlertTriangle size={28} className="text-red-400/50 mx-auto mb-2" />
+                  <p className="text-sm text-white/35">Ajuste o período para ver o resultado</p>
+                </td></tr>
+              ) : error ? (
+                <tr><td colSpan={13} className="text-center py-10">
+                  <AlertTriangle size={28} className="text-red-400/50 mx-auto mb-2" />
+                  <p className="text-sm text-red-300">
+                    {(error as any)?.response?.data?.detail || 'Falha ao carregar a lista'}
+                  </p>
+                </td></tr>
+              ) : isLoading ? (
+                <tr><td colSpan={13} className="text-center py-10 text-sm text-white/35">Carregando...</td></tr>
+              ) : rows.length > 0 ? rows.map((r: any) => {
+                const st = situacaoStyle(r.situacao || '');
+                return (
+                  <tr key={r.order_id} className={`border-b border-white/5 hover:bg-white/4 ${st.row}`}>
+                    <td className="py-2 px-3 text-xs font-mono text-white/80 whitespace-nowrap">{r.nf}</td>
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold border ${st.badge}`}>
+                        {r.situacao}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-sm text-white/80">{r.cliente_final || '—'}</td>
+                    <td className="py-2 px-3 text-xs text-white/60">{r.transportadora || '—'}</td>
+                    <td className="py-2 px-3 text-sm text-white/60 text-right">{r.itens_previstos}</td>
+                    <td className="py-2 px-3 text-sm text-violet-400 font-medium text-right">{r.itens_bipados}</td>
+                    <td className="py-2 px-3 text-xs font-mono text-white/50 whitespace-nowrap">{r.ultimo_scan || '—'}</td>
+                    <td className="py-2 px-3 text-sm text-white/80">{r.operador || '—'}</td>
+                    <td className="py-2 px-3 text-[11px] font-mono text-white/35">{r.chave_danfe || '—'}</td>
+                    <td className="py-2 px-3 text-xs text-white/50 whitespace-nowrap">{r.data_nf || '—'}</td>
+                    <td className="py-2 px-3 text-xs font-mono text-white/50 whitespace-nowrap">{r.importado_em || '—'}</td>
+                    <td className="py-2 px-3 text-xs font-mono text-white/35 text-right">{r.sessao ?? '—'}</td>
+                    <td className="py-2 px-3 text-[11px] font-mono text-white/35">{r.status_bruto}</td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={13} className="text-center py-10">
+                  <Package size={28} className="text-white/25 mx-auto mb-2" />
+                  <p className="text-sm text-white/35">Nenhuma NF encontrada para os filtros selecionados</p>
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ── Subcomponente: aba Ações do Sistema ──────────────────────────────────────
 function SystemAuditTab() {
   const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
@@ -508,13 +701,14 @@ function SystemAuditTab() {
 
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function AuditPage() {
-  const [activeTab, setActiveTab] = useState<'scans' | 'interrupted' | 'system'>('scans');
+  const [activeTab, setActiveTab] = useState<'scans' | 'interrupted' | 'nf-status' | 'system'>('scans');
 
   const isAdmin = (() => { try { return JSON.parse(localStorage.getItem('wms_user') || '{}').role === 'admin'; } catch { return false; } })();
 
   const tabs = [
     { key: 'scans' as const,  label: '📋 Bipagens',              desc: 'Cada scan com operador e horário' },
     ...(isAdmin ? [{ key: 'interrupted' as const, label: '⚠️ Pedidos Interrompidos', desc: 'Histórico de interrupções com motivo' }] : []),
+    { key: 'nf-status' as const, label: '📦 Status das NFs',     desc: 'Por seller: quais NFs foram bipadas e quais não' },
     { key: 'system' as const, label: '🗂 Ações do Sistema',       desc: 'Cadastros, uploads, estoque e configurações' },
   ];
 
@@ -548,6 +742,7 @@ export default function AuditPage() {
       {/* Conteúdo */}
       {activeTab === 'scans'       && <ScanAuditTab />}
       {activeTab === 'interrupted' && isAdmin && <InterruptedOrdersTab />}
+      {activeTab === 'nf-status'   && <NfStatusTab />}
       {activeTab === 'system'      && <SystemAuditTab />}
     </div>
   );

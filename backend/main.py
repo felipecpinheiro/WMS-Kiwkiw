@@ -57,6 +57,10 @@ PERF_INDEXES = [
     # scan-logs da sessão e trilha de auditoria
     ("ix_scanning_logs_session_id",
      "CREATE INDEX IF NOT EXISTS ix_scanning_logs_session_id ON scanning_logs (session_id)"),
+    # get_session_orders / get_order / process_scan (01/08/2026) — sem isso,
+    # buscar os itens de um pedido varre order_items inteira (8k+ linhas)
+    ("ix_order_items_order_id",
+     "CREATE INDEX IF NOT EXISTS ix_order_items_order_id ON order_items (order_id)"),
 ]
 
 
@@ -115,7 +119,7 @@ def run_light_migrations():
             existing_perf_idx = {
                 r[0] for r in db.execute(text(
                     "SELECT indexname FROM pg_indexes "
-                    "WHERE tablename IN ('stock_movements', 'scanning_logs')"
+                    "WHERE tablename IN ('stock_movements', 'scanning_logs', 'order_items')"
                 )).fetchall()
             }
             for idx_name, idx_sql in PERF_INDEXES:
@@ -170,7 +174,7 @@ def run_light_migrations():
 
             # Índices de performance: mesma checagem do ramo PostgreSQL, via PRAGMA.
             existing_perf_idx = set()
-            for _tbl in ("stock_movements", "scanning_logs"):
+            for _tbl in ("stock_movements", "scanning_logs", "order_items"):
                 existing_perf_idx |= {
                     r[1] for r in db.execute(text(f"PRAGMA index_list({_tbl})")).fetchall()
                 }

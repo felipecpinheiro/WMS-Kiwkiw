@@ -131,27 +131,33 @@ def get_session_orders(
         orders_query = orders_query.filter(models.Order.seller_id == seller_id)
     orders = orders_query.order_by(models.Order.nf_number).all()
 
-    # Conta itens escaneados para cada pedido
+    # Conta itens escaneados por pedido e por (pedido, sku) em 2 consultas agrupadas,
+    # em vez de 1 query por pedido + 1 query por item de cada pedido (N+1 — ver CLAUDE.md).
+    order_ids = [order.id for order in orders]
+
     scan_counts = {}
-    for order in orders:
-        scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-            models.ScanningLog.order_id == order.id,
+    item_scan_counts = {}
+    if order_ids:
+        order_totals = db.query(
+            models.ScanningLog.order_id,
+            func.sum(models.ScanningLog.quantity),
+        ).filter(
+            models.ScanningLog.order_id.in_(order_ids),
             models.ScanningLog.is_interrupted == False,
             models.ScanningLog.is_error == False,
-        ).scalar() or 0
-        scan_counts[order.id] = scanned
+        ).group_by(models.ScanningLog.order_id).all()
+        scan_counts = {order_id: total or 0 for order_id, total in order_totals}
 
-    # Per-item scan counts
-    item_scan_counts = {}
-    for order in orders:
-        for item in order.items:
-            scanned_for_item = db.query(func.sum(models.ScanningLog.quantity)).filter(
-                models.ScanningLog.order_id == order.id,
-                models.ScanningLog.sku == item.sku,
-                models.ScanningLog.is_error == False,
-                models.ScanningLog.is_interrupted == False,
-            ).scalar() or 0
-            item_scan_counts[(order.id, item.sku)] = scanned_for_item
+        item_totals = db.query(
+            models.ScanningLog.order_id,
+            models.ScanningLog.sku,
+            func.sum(models.ScanningLog.quantity),
+        ).filter(
+            models.ScanningLog.order_id.in_(order_ids),
+            models.ScanningLog.is_error == False,
+            models.ScanningLog.is_interrupted == False,
+        ).group_by(models.ScanningLog.order_id, models.ScanningLog.sku).all()
+        item_scan_counts = {(order_id, sku): total or 0 for order_id, sku, total in item_totals}
 
     result = []
     for order in orders:
@@ -223,6 +229,27 @@ def open_order_by_nfe(
     if order_status == "interrupted":
         return {"success": False, "message": f"Pedido NF {order.nf_number} foi interrompido e não pode ser reaberto. Contate o supervisor."}
 
+    # ── Aviso de NF duplicada: mesma NF já sendo bipada por OUTRO operador ──
+    # Não bloqueia (decisão do usuário em 01/08/2026) — dois operadores nunca
+    # deveriam abrir a mesma NF, mas se acontecer, avisa em vez de travar.
+    # Usa o último scan real (is_error=False) para saber quem está bipando —
+    # mesmo critério de "atividade real" do lock por seller logo abaixo.
+    duplicate_warning = None
+    if order_status == "scanning":
+        last_scan = db.query(models.ScanningLog).filter(
+            models.ScanningLog.order_id == order.id,
+            models.ScanningLog.is_error == False,
+        ).order_by(models.ScanningLog.timestamp.desc()).first()
+        if last_scan and last_scan.operator_id and last_scan.operator_id != current_user.id:
+            other_operator = db.query(models.User).filter(
+                models.User.id == last_scan.operator_id
+            ).first()
+            other_name = other_operator.name if other_operator else "outro operador"
+            duplicate_warning = (
+                f"⚠️ ATENÇÃO: a NF {order.nf_number} já está sendo bipada por {other_name}. "
+                "Confirme antes de continuar para não bipar a mesma caixa duas vezes."
+            )
+
     # ── Lock por (sessão + seller): só 1 NF com atividade real por seller por sessão.
     # Um pedido só bloqueia se estiver em "scanning" E tiver ao menos 1 scan log
     # registrado (bipagem real). Isso evita locks fantasma de aberturas sem atividade.
@@ -262,6 +289,7 @@ def open_order_by_nfe(
         "customer_name": order.customer_name,
         "status": order_status,
         "message": f"Pedido NF {order.nf_number} aberto com sucesso",
+        "warning": duplicate_warning,
     }
 
 
@@ -1625,14 +1653,21 @@ def _count_remaining_after_scan(
 
 def _build_progress(order: models.Order, db: Session) -> dict:
     """Constrói objeto de progresso do pedido — retorna dict com scanned/qty por SKU."""
-    items_progress = []
-    for item in order.items:
-        scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
+    # 1 consulta agrupada por SKU em vez de 1 por item (N+1 — ver CLAUDE.md).
+    scanned_by_sku = dict(
+        db.query(
+            models.ScanningLog.sku,
+            func.sum(models.ScanningLog.quantity),
+        ).filter(
             models.ScanningLog.order_id == order.id,
-            models.ScanningLog.sku == item.sku,
             models.ScanningLog.is_error == False,
             models.ScanningLog.is_interrupted == False,
-        ).scalar() or 0
+        ).group_by(models.ScanningLog.sku).all()
+    )
+
+    items_progress = []
+    for item in order.items:
+        scanned = scanned_by_sku.get(item.sku, 0) or 0
         items_progress.append({
             "sku": item.sku,
             "product_name": item.product_name,

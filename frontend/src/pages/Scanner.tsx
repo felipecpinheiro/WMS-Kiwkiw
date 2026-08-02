@@ -238,7 +238,12 @@ export default function ScannerPage() {
         })),
       }));
     },
-    { refetchInterval: 15000, enabled: !!sessionId },
+    {
+      // Com NF aberta o operador foca só nela — não recarrega em segundo plano.
+      // Sem NF aberta, atualiza a cada 60s (era 15s) para ver o progresso geral.
+      refetchInterval: activeOrderId ? false : 60000,
+      enabled: !!sessionId,
+    },
   );
 
   // Sync remote → local (only when not actively scanning)
@@ -339,7 +344,7 @@ export default function ScannerPage() {
     () => (scanningApi as any).scanLogs
       ? (scanningApi as any).scanLogs(Number(sessionId)).then((r: any) => r.data)
       : Promise.resolve([]),
-    { refetchInterval: 5000 },
+    { refetchInterval: 30000 },
   );
 
   const activeOrder = localOrders.find(o => o.id === activeOrderId) ?? null;
@@ -391,7 +396,15 @@ export default function ScannerPage() {
         }
         setActiveOrderId(data.order_id);
         qc.invalidateQueries(['session-orders', sessionId, sellerId]);
-        setFeedback({ state: 'success', title: `✓ Pedido aberto`, message: `NF ${data.nf_number} — ${data.customer_name ?? ''}` });
+        // Aviso explícito (não bloqueia): mesma NF já sendo bipada por outro
+        // operador. Ver CLAUDE.md — dois operadores nunca deveriam abrir a
+        // mesma NF; se acontecer, o supervisor precisa perceber na hora.
+        if (data.warning) {
+          setFeedback({ state: 'warning', title: '⚠️ NF já em bipagem', message: data.warning });
+          toast(data.warning, { icon: '⚠️', duration: 8000, style: { fontWeight: 600 } });
+        } else {
+          setFeedback({ state: 'success', title: `✓ Pedido aberto`, message: `NF ${data.nf_number} — ${data.customer_name ?? ''}` });
+        }
         // Update local order status to scanning
         setLocalOrders(prev => prev.map(o =>
           o.id === data.order_id && o.status === 'pending'
@@ -458,16 +471,28 @@ export default function ScannerPage() {
           setTimeout(() => setFlashedSku(undefined), 800);
         }
 
-        // Optimistic update: increment scanned for this item
+        // Atualiza o pedido ativo com o progresso que o próprio /scan já devolve
+        // (order_progress) — não recarrega a lista inteira da sessão a cada
+        // bipada. Fallback para incremento local se o servidor não mandar
+        // order_progress por algum motivo.
+        const progress = data.order_progress as
+          | { items: { sku: string; scanned: number }[]; scanned: number }
+          | undefined;
         setLocalOrders(prev => prev.map(o => {
           if (o.id !== activeOrder.id) return o;
-          const newItems = o.items.map(it => {
-            if (it.sku === data.sku && it.scanned < it.quantity) {
-              return { ...it, scanned: it.scanned + 1 };
-            }
-            return it;
-          });
-          const newScanned = newItems.reduce((acc, it) => acc + Math.min(it.scanned, it.quantity), 0);
+          const newItems = progress
+            ? o.items.map(it => {
+                const p = progress.items.find(pi => pi.sku === it.sku);
+                return p ? { ...it, scanned: p.scanned } : it;
+              })
+            : o.items.map(it => (
+                it.sku === data.sku && it.scanned < it.quantity
+                  ? { ...it, scanned: it.scanned + 1 }
+                  : it
+              ));
+          const newScanned = progress
+            ? progress.scanned
+            : newItems.reduce((acc, it) => acc + Math.min(it.scanned, it.quantity), 0);
           return {
             ...o,
             items: newItems,
@@ -488,9 +513,10 @@ export default function ScannerPage() {
           });
         }
 
-        // Refresh logs e session orders (garante consistência com servidor)
+        // Atualiza só o log de bipagens (consulta leve e indexada). A lista
+        // completa de pedidos da sessão NÃO é mais recarregada a cada bipe —
+        // o order_progress acima já mantém o pedido ativo consistente.
         qc.invalidateQueries(['scan-logs', sessionId]);
-        qc.invalidateQueries(['session-orders', sessionId, sellerId]);
       } else {
         setFeedback({ state: 'error', title: '✗ Código inválido', message: data.message ?? 'Produto não pertence a este pedido' });
       }

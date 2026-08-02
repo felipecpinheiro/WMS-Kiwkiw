@@ -325,17 +325,18 @@ def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
-    item_scan_counts = {
-        item.sku: (
-            db.query(func.sum(models.ScanningLog.quantity)).filter(
-                models.ScanningLog.order_id == order.id,
-                models.ScanningLog.sku == item.sku,
-                models.ScanningLog.is_error == False,
-                models.ScanningLog.is_interrupted == False,
-            ).scalar() or 0
-        )
-        for item in order.items
-    }
+    # 1 consulta agrupada por SKU em vez de 1 por item (N+1 — ver CLAUDE.md).
+    item_scan_counts = dict(
+        db.query(
+            models.ScanningLog.sku,
+            func.sum(models.ScanningLog.quantity),
+        ).filter(
+            models.ScanningLog.order_id == order.id,
+            models.ScanningLog.is_error == False,
+            models.ScanningLog.is_interrupted == False,
+        ).group_by(models.ScanningLog.sku).all()
+    )
+    item_scan_counts = {sku: item_scan_counts.get(sku, 0) or 0 for sku in {item.sku for item in order.items}}
 
     return schemas.OrderResponse(
         id=order.id,

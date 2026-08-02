@@ -762,6 +762,148 @@ atende. Diferente do resto do sistema, que usa `get_user_seller_ids`.
 
 ---
 
+## Performance — N+1 na bipagem corrigido e app inteiro testado (01-02/08/2026)
+
+**Sintoma relatado:** operadores reclamando de travamento no sistema, principalmente na bipagem.
+Diagnóstico feito lendo o próprio Postgres de **produção** (só leitura, via `pg_stat_user_tables` e
+`pg_stat_database`) — banco saudável (0 deadlock, cache 100%, conexões sobrando), então o problema
+não era o banco não aguentar: era volume de consultas.
+
+### Causa raiz e correção — commit `0dab80ab` (publicado em produção)
+
+A tela de pedidos da sessão (`GET /scanning/sessions/{id}/orders`, usada pelo Scanner) fazia
+**1 consulta por pedido + 1 consulta por item de cada pedido** pra montar a contagem de bipados —
+numa sessão grande (~926 itens), até ~1.300 consultas por carregamento. Piorava porque o Scanner
+recarregava a lista **inteira** a cada bipe e tinha polling automático a cada 15s, multiplicado por
+operador com a tela aberta. Confirmado no Postgres: `scanning_logs` varrida 4,1 milhões de vezes,
+lendo 10,8 bilhões de linhas, numa tabela de 8 mil linhas.
+
+Arquivos alterados (4, sem mudar nada que o usuário vê):
+- `backend/routers/scanning.py` — `get_session_orders` e `_build_progress` viraram consultas
+  agrupadas (`GROUP BY`) em vez de 1-por-item. Também adicionado aviso (não bloqueia) quando a
+  mesma NF já está sendo bipada por outro operador — furo que passava em silêncio antes.
+- `backend/routers/orders.py` — mesmo fix em `get_order`.
+- `backend/main.py` — novo índice `ix_order_items_order_id` em `PERF_INDEXES` (**lembrar de manter
+  `order_items` nas duas listas de checagem de índice existente**, Postgres e SQLite — senão o
+  `CREATE INDEX` roda a cada boot, mesma armadilha do índice de `stock_movements`).
+- `frontend/src/pages/Scanner.tsx` — para de recarregar a lista inteira a cada bipe (usa o
+  `order_progress` que `/scan` já devolve); polling do Scanner passou de 15s→60s e **pausa
+  totalmente enquanto há NF aberta**; scan-logs de 5s→30s. Banner + toast quando outro operador já
+  está bipando a mesma NF.
+
+### Ferramental de teste de carga reaproveitável
+
+Fora do repositório, em `D:\KiwKiw\plano_performance\stress_bipagem\` (não confundir com
+`D:\KiwKiw\plano_performance\` da bateria de 30/07 — pastas irmãs, propósitos diferentes):
+- `simulador.py` — simula operadores reais via HTTP+JWT (login, abre NF, bipa item a item, ~4% de
+  erro proposital), respeitando a trava por seller. Aceita `--versao antes|depois` (usa
+  `git worktree` pra rodar o código de um commit anterior sem mexer na pasta de trabalho),
+  `--pace realista|max`, `--cap-min` (teto de segurança pra rodada sem pausa).
+  ⚠️ **Nas funções `poller_*`, sempre passar `headers=` pro `chamar()`** — já apareceu 2x nesta
+  sessão o bug de esquecer o header e receber 403 em silêncio nos pollers.
+- `simulador_completo.py` — expande pra TODOS os papéis (10 operadores + N admins + N clientes)
+  rodando **simultâneo**, cobrindo as 17 telas do menu. Gera Excel de import sintético com
+  `openpyxl` usando seller/SKU reais do banco (evita cair no fluxo de seller não reconhecido).
+- `preparar_cenario.sql` / `preparar_cenario_completo.sql` — reseta só os pedidos de sexta-feira
+  pra `PENDING` (apaga `scanning_logs`/`stock_movements` dessa data) e cria usuários de teste
+  descartáveis (`stress_*@teste.local`, senha `StressTest_2026!`, hash gerado com o mesmo
+  `pwd_context` de `auth.py`). ⚠️ Se uma rodada anterior já rodou import/PDF com esses usuários,
+  o `DELETE FROM users` falha por FK em `audit_logs`/`picking_sessions.created_by_id` — o script já
+  limpa isso primeiro, mas se copiar o padrão pra outro cenário, lembrar da ordem.
+- Convenção confirmada nos dois testes: `role` (`userrole`), `status` (`orderstatus`) e `file_type`
+  (`filetype`) gravam o **nome maiúsculo** do enum Python no Postgres (`OPERATOR`, `PENDING`,
+  `EXPORT`), não o `.value` minúsculo — mesma armadilha já documentada pra `movement_type`.
+- Bancos descartáveis (`wms_stress_*`) e o `git worktree` temporário são sempre apagados/removidos
+  ao final de cada rodada — não ficam para trás.
+
+### Resultado do teste 1 — só bipagem, sexta-feira, antes/depois
+
+10 operadores simulados, ritmo realista e máximo, comparando o código de antes com o commit
+`0dab80ab`. Resultado: `sessions/{id}/orders` caiu de p95=504,7ms (532 chamadas) pra p95=106,5ms
+(52 chamadas) — 10× menos chamadas e mais rápido. No estresse máximo, esse endpoint **nunca disparou**
+no código corrigido (a pausa de polling com NF aberta elimina a chamada quase toda vez). Confirmado
+também no Postgres: `order_items` caiu de +35,2 milhões de linhas lidas em varredura pra +162 mil
+(217×) nos 45 minutos da rodada. 0 deadlock/conflito nas 4 rodadas — a lentidão nunca foi de
+concorrência travando linha, sempre foi volume de consulta.
+
+### Resultado do teste 2 — app inteiro, todos os papéis simultâneos (achados NOVOS, ainda não corrigidos)
+
+Ampliando pra 10 operadores + 4 admins (Dashboard/Auditoria/Faturamento/Estoque/Cadastros/Config) +
+3 clientes (Portal) + import de Excel + PDFs, tudo rodando ao mesmo tempo, achou **o mesmo padrão de
+N+1 em dois lugares nunca antes testados** — maiores que o que já foi corrigido:
+
+| Onde | Achado | Causa raiz |
+|---|---|---|
+| `GET /billing/export` | p50 = **14,5s**, máx 16,1s (crítico) | `backend/routers/billing.py:193-213`, função `_get_box()` — 1 consulta em `products` por item + 1 em `box_algorithm` por pedido, sem filtro de seller/período curto no teste (semana inteira = 3.754 pedidos/8.120 itens = ~12 mil consultas numa chamada) |
+| `GET /dashboard/master` | p95 = **3,77s**, p99 = 4,61s (crítico) | `backend/routers/dashboard.py:379-402`, checagem "Produtos cadastrados" (uma das P6/P8/P10/P12). `orders_today` não usa `joinedload` → `order.items` faz lazy-load por pedido, e o laço interno faz 1 consulta em `products` por item. Só sexta = ~2.100 consultas por carregamento do Dashboard. Menor, mesmo padrão, em `sessions_today_list` (linha ~439, 1 consulta por sessão) e no acesso a `order.seller` sem eager-load (linhas 371 e 394) |
+
+Confirmado com `EXPLAIN ANALYZE`: **não é falta de índice** — o índice `uq_seller_sku` em
+`products(seller_id, sku)` já existe e cada consulta individual leva 0,066ms. É puro volume, mesmo
+diagnóstico da bipagem. `order_items` chegou a 224.851 varreduras completas (1,8 bilhão de linhas
+lidas) nessa rodada — 50× mais que na rodada só de bipagem.
+
+**Efeito colateral medido:** com essas duas telas lentas rodando junto, a bipagem (já corrigida)
+ficou de 2× a 7× mais lenta na cauda (p99/máx) só por dividir o mesmo servidor — nenhum endpoint da
+bipagem cruzou o limiar de "lento" (1s), mas a degradação é real e mensurável. Prova concreta de que
+uma tela ineficiente prejudica as outras, mesmo sem relação direta de código.
+
+**Decisão do dono do sistema (02/08/2026):** `billing/export` é usado poucas vezes por mês — pode
+esperar. `dashboard/master` é aberto várias vezes ao dia por admin — **prioridade**. A checagem em si
+é intencionalmente "ao vivo" (produto pode ser cadastrado a qualquer momento) — o problema é *como*
+pergunta, não *que* pergunta; não faz sentido mover isso pra outra tela.
+
+### Correção do `dashboard/master` — feita e validada sob carga (02/08/2026)
+
+Corrigido **só em `backend/routers/dashboard.py`**, dentro de `master_dashboard`. Nada de frontend,
+nenhuma migração, nenhum índice novo, resposta da API idêntica campo a campo.
+
+| O que era | O que virou |
+|---|---|
+| `orders_today = db.query(Order).filter(*base_filter).all()` servindo de base pra dois laços | **deixou de existir** — era a raiz dos lazy-loads |
+| Checagem "Transportadora" varrendo os pedidos em Python (`not o.carrier`) | 1 `COUNT` com a **mesma semântica** (`NULL` **ou** string vazia) + `SELECT` com `joinedload(seller)` e `limit(30)` **só se houver faltante** |
+| Checagem "Produtos cadastrados": 1 lazy-load de `order.items` por pedido + 1 `SELECT products` por item (**2.150 consultas**) | **2 consultas agrupadas** — pares `(seller_id, sku)` distintos via `JOIN order_items` + `GROUP BY`, e os produtos ativos desses pares com 2 `IN` de listas literais (usa `uq_seller_sku`, Bitmap Index Scan) |
+| `sessions_today_list`: 1 consulta por sessão listada | 1 consulta agrupada pra todas as sessões (**mantido sem filtrar `Seller.active`**, igual era) |
+| Operadores: carregava **todos** os `ScanningLog` do dia e contava em Python (45,6ms no pico) | 1 `COUNT(DISTINCT order_id)` agrupado por operador, com o filtro de status no banco |
+
+⚠️ **`seller_name` da lista de SKUs faltando vem de `sellers_rows`** (já consultado logo acima, no
+bloco "Sellers com pedidos") — não reintroduzir uma consulta de seller ali. A lista saiu ordenada por
+`(seller_id, sku)` e o nome do produto usa `MIN(product_name)`, ambos pra ficar determinístico
+(decisão consciente: antes vinha na ordem de varredura dos pedidos).
+
+**Medido por instrumentação (atribuindo cada consulta à linha que a originou), dia de 644 pedidos:**
+**2.217 → 36 consultas** por carregamento, **3.031ms → 172ms**, SQL de 1.079ms → 83,9ms. Detalhe:
+"Checagens do Dia" 2.156 → 8, "Produtividade" 25 → 3, "Uploads do Dia" 13 → 2.
+
+**Validado no teste de carga do app inteiro** (mesma receita do teste 2, 45 min, 5.851 chamadas,
+**0 falhas** contra 2 da rodada anterior):
+
+| | Antes | Depois | |
+|---|---|---|---|
+| `dashboard/master` p50 | 1.653,4ms | **95,8ms** | 17,3× |
+| `dashboard/master` p95 | 3.765,3ms | **173,2ms** | 21,7× |
+| `dashboard/master` p99/máx | 4.613,7ms | **211,1ms** | 21,9× |
+| `order_items` varreduras completas | 224.846 | **32** | 7.026× |
+| `order_items` linhas lidas | 1.825.746.478 | **260.128** | 7.019× |
+| peso no tempo total do servidor | 125,7s (13,3%) | **7,1s (1,0%)** | saiu do top 10 |
+
+**Efeitos colaterais medidos (nenhum endpoint regrediu):** `dashboard/seller` p50 494,7 → 219,8ms
+(2×, **sem tocar no código dele** — só parou de dividir servidor com o Dashboard pesado);
+`open-by-nfe` p95 67,6 → 32,4ms; `scanning/scan` p95 96,9 → 89,9ms.
+
+**Sobre a bipagem — o agregado engana:** a melhora dela parece pequena (−7% no p95) porque a média
+inclui os momentos em que `billing/export` roda. Separando as janelas: **fora** delas p95 = **69,9ms**,
+que é praticamente o isolado (63,4ms, sem nenhuma outra tela competindo); **dentro** delas p95 = 162ms.
+`billing/export` trava o worker por **268s dos 2.725s** da rodada (9,8% do tempo) e responde por
+**39,6% de todo o tempo de servidor** com só 19 execuções — é hoje o único gargalo restante do sistema
+e o que ainda segura a bipagem acima do isolado.
+
+**Integridade conferida ao final da rodada:** 645/651 pedidos concluídos, **0** movimentos de estoque
+duplicados criados pela rodada, **0** pedidos concluídos sem baixa de estoque, 0 deadlocks. (Os 5
+"duplicados" que aparecem numa varredura ingênua são do pedido 2102, de 29/07, e **já vêm assim no
+dump de produção** — não são da rodada.)
+
+---
+
 ## Validação de FK nos cadastros (30/07/2026)
 
 Quando o payload traz um `seller_id`/`unit_id` que não existe, o endpoint tem que devolver **404 com
@@ -854,3 +996,4 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Endpoint pesado declarado `async def` | O FastAPI roda `async def` **no event loop**, não em threadpool. Com 1 worker Uvicorn, qualquer trabalho síncrono longo (Excel, laço de queries) **trava o sistema inteiro** — bipagem, dashboard e login param | Endpoint que faz I/O de banco/arquivo de forma síncrona deve ser `def` (sem `async`). Só use `async def` se realmente houver `await` de I/O assíncrono |
 | Query nova em `stock_movements` ou `scanning_logs` | `stock_movements` tem 630k+ linhas. Desde 30/07/2026 existem índices para `order_id` e `(seller_id, sku)` — **qualquer filtro fora desses volta a ser Seq Scan da tabela toda** | Conferir com `EXPLAIN ANALYZE` antes de subir; se faltar índice, acrescentar em `PERF_INDEXES` (`main.py`), que já é idempotente nos dois bancos |
 | Consultar produto/kit dentro de laço no import | Era N+1: 1 query de kit + 1 de produto **por item** do arquivo (2.410 queries num arquivo de 960 linhas) | Já resolvido pelos caches `_kits_of` / `_products_of` em `import_excel_orders`. Ao mexer no laço de persistência, **continuar passando `kits_by_sku`** para `process_order_items` — sem ele a função volta a consultar item a item (fallback mantido de propósito) |
+| Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado 3× nesta base: `scanning.py` e `dashboard.py` **já corrigidos**, `billing.py:193-213` (`_get_box`) **ainda em aberto** — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema (01-02/08/2026, ver seção "Performance — N+1 na bipagem") | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** (`WHERE (seller_id, sku) IN (...)` ou `GROUP BY`) fora do laço — mesmo padrão já usado em `get_session_orders`/`_build_progress` e agora em `master_dashboard` |

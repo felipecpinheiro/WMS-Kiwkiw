@@ -358,44 +358,71 @@ def master_dashboard(
                 keys = [o.danfe_key for o in session_orders if o.danfe_key]
                 checks["stock"] = len(keys) == len(set(keys))
 
-    orders_today = db.query(models.Order).filter(*base_filter).all()
-
     # ── Checagem: Transportadora ─────────────────────────────────────────────
+    # Antes: carregava todos os pedidos do dia e filtrava em Python (`not o.carrier`).
+    # Agora: mesma condição (NULL ou string vazia) direto no banco — 1 contagem, e só
+    # busca as linhas para exibir se houver alguma faltando.
     orders_no_carrier = []
     if cfg_transportadora:
-        orders_no_carrier = [
-            {
-                "order_id": o.id,
-                "nf_number": o.nf_number,
-                "seller_name": o.seller.trade_name if o.seller else "?",
-                "seller_id": o.seller_id,
-                "customer_name": o.customer_name,
-            }
-            for o in orders_today if not o.carrier
-        ]
-        checks["transport"] = len(orders_no_carrier) == 0
+        no_carrier_filter = (models.Order.carrier == None) | (models.Order.carrier == "")
+        missing_carrier_count = db.query(func.count(models.Order.id)).filter(
+            *base_filter, no_carrier_filter,
+        ).scalar() or 0
+        checks["transport"] = missing_carrier_count == 0
+        if missing_carrier_count > 0:
+            orders_no_carrier = [
+                {
+                    "order_id": o.id,
+                    "nf_number": o.nf_number,
+                    "seller_name": o.seller.trade_name if o.seller else "?",
+                    "seller_id": o.seller_id,
+                    "customer_name": o.customer_name,
+                }
+                for o in db.query(models.Order).options(
+                    joinedload(models.Order.seller)
+                ).filter(*base_filter, no_carrier_filter).limit(30).all()
+            ]
     checks["missing_carriers"] = orders_no_carrier[:30]
 
     # ── Checagem: Produtos cadastrados ────────────────────────────────────────
+    # Antes: 1 lazy-load de order.items por pedido + 1 query de Product por item
+    # (chegou a 2.150 queries num dia de 644 pedidos, ~950ms). Agora: 2 queries
+    # agrupadas — os pares (seller,sku) distintos do dia via JOIN+GROUP BY, e quais
+    # desses pares já têm produto ativo cadastrado (1 IN por seller_ids + 1 IN por
+    # skus, usa o índice uq_seller_sku). seller_name vem de sellers_rows (já
+    # consultado acima), sem query extra.
     missing_products = []
     if cfg_produtos:
-        for order in orders_today:
-            for item in order.items:
-                prod = db.query(models.Product).filter(
-                    models.Product.seller_id == order.seller_id,
-                    models.Product.sku == item.sku,
+        pairs_today = db.query(
+            models.Order.seller_id,
+            models.OrderItem.sku,
+            func.min(models.OrderItem.product_name).label("product_name"),
+        ).join(
+            models.Order, models.Order.id == models.OrderItem.order_id
+        ).filter(
+            *base_filter,
+        ).group_by(models.Order.seller_id, models.OrderItem.sku).all()
+
+        if pairs_today:
+            seller_ids_today = {p.seller_id for p in pairs_today}
+            skus_today = {p.sku for p in pairs_today}
+            existing_pairs = {
+                (p.seller_id, p.sku)
+                for p in db.query(models.Product.seller_id, models.Product.sku).filter(
                     models.Product.active == True,
-                ).first()
-                if not prod:
-                    entry = {
-                        "sku": item.sku,
-                        "product_name": item.product_name,
-                        "seller_id": order.seller_id,
-                        "seller_name": order.seller.trade_name if order.seller else "?",
-                    }
-                    if not any(e["sku"] == entry["sku"] and e["seller_id"] == entry["seller_id"]
-                               for e in missing_products):
-                        missing_products.append(entry)
+                    models.Product.seller_id.in_(seller_ids_today),
+                    models.Product.sku.in_(skus_today),
+                ).all()
+            }
+            seller_name_by_id = {r.id: r.trade_name for r in sellers_rows}
+            for p in sorted(pairs_today, key=lambda x: (x.seller_id, x.sku)):
+                if (p.seller_id, p.sku) not in existing_pairs:
+                    missing_products.append({
+                        "sku": p.sku,
+                        "product_name": p.product_name,
+                        "seller_id": p.seller_id,
+                        "seller_name": seller_name_by_id.get(p.seller_id, "?"),
+                    })
         checks["products_registered"] = len(missing_products) == 0
     else:
         checks["products_registered"] = None  # desabilitado
@@ -433,15 +460,24 @@ def master_dashboard(
         *session_filter
     ).order_by(models.PickingSession.created_at.desc()).all()
 
+    # Sellers distintos por sessão (com pedido ainda ativo, não cancelado) — antes
+    # era 1 query por sessão listada, agora é 1 query agrupada para todas de uma vez.
+    session_ids_today = [s.id for s in sessions_today_raw]
+    sellers_by_session: dict[int, list] = {}
+    if session_ids_today:
+        for sid, seller_id, seller_name in db.query(
+            models.Order.session_id, models.Seller.id, models.Seller.trade_name,
+        ).join(
+            models.Seller, models.Seller.id == models.Order.seller_id
+        ).filter(
+            models.Order.session_id.in_(session_ids_today),
+            models.Order.status != models.OrderStatus.CANCELLED,
+        ).distinct().all():
+            sellers_by_session.setdefault(sid, []).append((seller_id, seller_name))
+
     sessions_today_list = []
     for sess in sessions_today_raw:
-        # Sellers distintos nesta sessão (com pedido ainda ativo, não cancelado)
-        sess_sellers = db.query(models.Seller.id, models.Seller.trade_name).join(
-            models.Order, models.Order.seller_id == models.Seller.id
-        ).filter(
-            models.Order.session_id == sess.id,
-            models.Order.status != models.OrderStatus.CANCELLED,
-        ).distinct().all()
+        sess_sellers = sellers_by_session.get(sess.id, [])
         snames = [r[1] for r in sess_sellers]
         sellers_in_session = [{"seller_id": r[0], "seller_name": r[1]} for r in sess_sellers]
 
@@ -481,19 +517,20 @@ def master_dashboard(
         models.User.active == True,
     ).group_by(models.User.id, models.User.name).all()
 
-    # Pedidos concluídos por operador (último scan é do operador que fechou)
-    completed_by_op = {}
-    logs_today = db.query(models.ScanningLog).join(
+    # Pedidos concluídos por operador — antes carregava todos os logs do dia na
+    # memória e contava em Python (45,6ms no dia de pico); agora é 1 query agrupada
+    # com COUNT(DISTINCT order_id), equivalente ao set() que o código montava.
+    completed_rows = db.query(
+        models.ScanningLog.operator_id,
+        func.count(models.ScanningLog.order_id.distinct()).label("cnt"),
+    ).join(
         models.Order, models.Order.id == models.ScanningLog.order_id
     ).filter(
         func.date(models.ScanningLog.timestamp) == target,
+        models.Order.status.in_([models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED]),
         *([models.Order.unit_id == unit_id] if unit_id else []),
-    ).all()
-    for log in logs_today:
-        if log.operator_id not in completed_by_op:
-            completed_by_op[log.operator_id] = set()
-        if log.order and log.order.status in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED):
-            completed_by_op[log.operator_id].add(log.order_id)
+    ).group_by(models.ScanningLog.operator_id).all()
+    completed_by_op_count = {r.operator_id: r.cnt for r in completed_rows}
 
     operators_summary = []
     for r in operator_rows:
@@ -502,7 +539,7 @@ def master_dashboard(
             "operator_name": r.name,
             "scans":         int(r.scans or 0),
             "orders_touched": int(r.orders_touched or 0),
-            "orders_completed": len(completed_by_op.get(r.id, set())),
+            "orders_completed": completed_by_op_count.get(r.id, 0),
         }
         operators_summary.append(ops)
 

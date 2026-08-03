@@ -246,12 +246,16 @@ export default function ScannerPage() {
     },
   );
 
-  // Sync remote → local (only when not actively scanning)
+  // Sync remote → local: só quando o dado do servidor MUDA de verdade
+  // (ordersRaw), nunca por causa do liga/desliga de `scanning` a cada bipe —
+  // senão essa sincronização reaplica um ordersRaw ainda velho por cima da
+  // atualização otimista que acabamos de fazer em handleProductScan, e a tela
+  // parece "não atualizar na hora" mesmo bipando com sucesso.
   useEffect(() => {
-    if (!scanning && ordersRaw.length > 0) {
+    if (ordersRaw.length > 0) {
       setLocalOrders(ordersRaw);
     }
-  }, [ordersRaw, scanning]);
+  }, [ordersRaw]);
 
   // Limpa activeOrderId stale: se a lista carregou mas o pedido não está nela
   // (ex: sessionStorage de visita anterior, ou pedido de outro seller)
@@ -352,6 +356,19 @@ export default function ScannerPage() {
   // (activeOrder null → stale ID, trata como 'nfe' para não travar a tela)
   const scanPhase: 'nfe' | 'product' =
     (activeOrderId === null || !activeOrder || activeOrder.status === 'completed') ? 'nfe' : 'product';
+
+  // Gatilho real de atualização: assim que o pedido é concluído (sai de 'product'
+  // pra 'nfe'), busca a lista da sessão uma vez — mostra o progresso de outros
+  // operadores no momento em que o operador termina a NF dele, sem voltar a
+  // recarregar tudo a cada bipe individual (o polling de 60s sozinho quase nunca
+  // dispara pra quem bipa sem pausar — ver CLAUDE.md).
+  const prevScanPhaseRef = useRef<'nfe' | 'product'>(scanPhase);
+  useEffect(() => {
+    if (prevScanPhaseRef.current === 'product' && scanPhase === 'nfe') {
+      qc.invalidateQueries(['session-orders', sessionId, sellerId]);
+    }
+    prevScanPhaseRef.current = scanPhase;
+  }, [scanPhase, sessionId, sellerId, qc]);
 
   const totalOrders = localOrders.length;
   const doneOrders = localOrders.filter(o => o.status === 'completed').length;

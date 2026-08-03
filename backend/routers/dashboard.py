@@ -243,6 +243,7 @@ def master_dashboard(
 
         unit_filter = [
             _imported_on(target),
+            models.Order.status != models.OrderStatus.CANCELLED,
             models.Order.seller_id.in_(sellers_of_unit),
         ]
         if manager_seller_ids:

@@ -343,14 +343,35 @@ def master_dashboard(
         "all_ok":      False,
     }
 
-    last_session = db.query(models.PickingSession).filter(
-        *session_filter,
-    ).order_by(models.PickingSession.id.desc()).first()
+    # "Última sessão" para as checagens: quando há unidade selecionada, não usar
+    # PickingSession.unit_id (denormalizado — grava a unidade de quem fez o upload,
+    # não a dos sellers de dentro do arquivo). Em vez disso, achar a sessão mais
+    # recente que tenha pedido de algum seller REAL daquela unidade.
+    if unit_id:
+        sellers_of_selected_unit = db.query(models.Seller.id).filter(
+            models.Seller.unit_id == unit_id,
+        ).scalar_subquery()
+        last_session_id = db.query(models.Order.session_id).join(
+            models.PickingSession, models.PickingSession.id == models.Order.session_id
+        ).filter(
+            _session_created_on(target),
+            models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.seller_id.in_(sellers_of_selected_unit),
+        ).order_by(models.PickingSession.id.desc()).limit(1).scalar()
+        last_session = (
+            db.query(models.PickingSession).filter(models.PickingSession.id == last_session_id).first()
+            if last_session_id else None
+        )
+    else:
+        last_session = db.query(models.PickingSession).filter(
+            _session_created_on(target),
+        ).order_by(models.PickingSession.id.desc()).first()
 
     if last_session:
-        session_orders = db.query(models.Order).filter(
-            models.Order.session_id == last_session.id
-        ).all()
+        session_orders_filter = [models.Order.session_id == last_session.id]
+        if unit_id:
+            session_orders_filter.append(models.Order.seller_id.in_(sellers_of_selected_unit))
+        session_orders = db.query(models.Order).filter(*session_orders_filter).all()
         if session_orders:
             checks["separation"] = bool(last_session.check_separation)
             checks["planning"]   = bool(last_session.check_planning)

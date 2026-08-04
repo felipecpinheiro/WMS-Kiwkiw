@@ -711,6 +711,8 @@ def export_stock_csv(
     )
     if user_role == "client" and current_user.seller_id != seller_id:
         raise HTTPException(status_code=403, detail="Acesso negado")
+    if user_role == "operator":
+        raise HTTPException(status_code=403, detail="Operador não tem permissão para exportar estoque")
 
     positions = db.query(models.StockPosition).filter(
         models.StockPosition.seller_id == seller_id

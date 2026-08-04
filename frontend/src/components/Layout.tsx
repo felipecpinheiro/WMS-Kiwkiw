@@ -34,10 +34,11 @@ const navItems = [
   ]},
 ];
 
-// Nav reduzido para operadores: somente Manuseios
+// Nav reduzido para operadores: Manuseios + Estoque (somente visualização)
 const navOperator = [
   { group: 'Operação', items: [
-    { to: '/manuseios', icon: Layers, label: 'Manuseios' },
+    { to: '/manuseios', icon: Layers,    label: 'Manuseios' },
+    { to: '/inventory', icon: Warehouse, label: 'Estoque'   },
   ]},
 ];
 

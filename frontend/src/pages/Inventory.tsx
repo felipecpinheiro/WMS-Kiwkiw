@@ -1770,38 +1770,44 @@ export default function InventoryPage() {
             ))}
           </select>
 
-          {/* Download CSV Estoque */}
-          <button
-            onClick={() => sellerId && inventoryApi.exportStockCsv(sellerId)}
-            disabled={!sellerId}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-white/10 text-white/70 hover:bg-white/5 transition disabled:opacity-40"
-          >
-            <Download size={13} />
-            Exportar Estoque
-          </button>
+          {/* Download CSV Estoque — operador é view-only, não exporta */}
+          {user?.role !== 'operator' && (
+            <button
+              onClick={() => sellerId && inventoryApi.exportStockCsv(sellerId)}
+              disabled={!sellerId}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-white/10 text-white/70 hover:bg-white/5 transition disabled:opacity-40"
+            >
+              <Download size={13} />
+              Exportar Estoque
+            </button>
+          )}
 
-          {/* Lançamento manual */}
-          <button
-            onClick={() => setShowManual(true)}
-            disabled={!sellerId}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
-            style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
-          >
-            <Upload size={13} />
-            Lançamento Manual
-          </button>
+          {/* Lançamento manual — operador é view-only, backend já bloqueia (require_manager_or_above) */}
+          {user?.role !== 'operator' && (
+            <button
+              onClick={() => setShowManual(true)}
+              disabled={!sellerId}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
+            >
+              <Upload size={13} />
+              Lançamento Manual
+            </button>
+          )}
 
-          {/* Importa a planilha ESTOQUE do seller (aba DETALHADO) */}
-          <button
-            onClick={() => setShowHistory(true)}
-            disabled={!sellerId}
-            title="Importa a planilha ESTOQUE do seller (Excel, aba DETALHADO) com todo o histórico de entradas e saídas"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
-            style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
-          >
-            <FileUp size={13} />
-            Importar Histórico (Excel)
-          </button>
+          {/* Importa a planilha ESTOQUE do seller (aba DETALHADO) — operador é view-only, backend já bloqueia */}
+          {user?.role !== 'operator' && (
+            <button
+              onClick={() => setShowHistory(true)}
+              disabled={!sellerId}
+              title="Importa a planilha ESTOQUE do seller (Excel, aba DETALHADO) com todo o histórico de entradas e saídas"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
+            >
+              <FileUp size={13} />
+              Importar Histórico (Excel)
+            </button>
+          )}
         </div>
       </div>
 

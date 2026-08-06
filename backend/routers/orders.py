@@ -20,7 +20,13 @@ from .. import models, schemas
 from ..services.order_import import import_excel_orders
 from ..services.pdf_generator import generate_separation_bytes, generate_expedition_bytes, generate_pdfs_for_session
 from ..services.audit_export import export_session_to_csv
-from ..timezone_utils import today_brasilia
+from ..services.stock_manager import (
+    apply_stock_for_orders,
+    apply_stock_for_order,
+    reverse_stock_for_order,
+    evaluate_orders_for_stock,
+)
+from ..timezone_utils import today_brasilia, now_brasilia
 
 router = APIRouter(prefix="/orders", tags=["Pedidos"])
 
@@ -93,7 +99,9 @@ def import_orders(
         raise HTTPException(status_code=400, detail="Apenas arquivos Excel são aceitos (.xlsx, .xlsm, .xls)")
 
     # Valida file_type
-    file_type_enum = models.FileType.IN if file_type.strip().lower() in ("entrada", "in") else models.FileType.EXPORT
+    # ⚠️ Era `models.FileType.IN`, que NÃO existe — o enum tem IMPORT/EXPORT.
+    # Marcar o arquivo como "Entrada" estourava AttributeError → 500 no import.
+    file_type_enum = models.FileType.IMPORT if file_type.strip().lower() in ("entrada", "in") else models.FileType.EXPORT
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -358,6 +366,7 @@ def list_orders(
             "for_billing": order.for_billing,
             "imported_at": order.imported_at,
             "session_id": order.session_id,
+            "stock_applied_at": order.stock_applied_at,
             "items": [
                 {
                     "id": item.id,
@@ -373,6 +382,74 @@ def list_orders(
         result.append(schemas.OrderResponse(**order_dict))
 
     return result
+
+
+# ⚠️ Rota estática ANTES da parametrizada `/{order_id}` — senão o FastAPI
+# tenta casar "pending-stock" com order_id:int e devolve 422. Mesma armadilha
+# já documentada em /kits/expansion-log.
+@router.get("/pending-stock", response_model=schemas.StockApplyReport)
+def list_pending_stock_orders(
+    session_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    NFs que ainda NÃO baixaram estoque e o motivo (06/08/2026).
+
+    Alimenta o aviso fixo do Dashboard e o modal de cadastro de produto.
+    Segue o mesmo recorte do resto da operação: seller ativo e sem pedido
+    cancelado/inativo.
+    """
+    q = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).join(models.Seller, models.Order.seller_id == models.Seller.id).filter(
+        models.Order.stock_applied_at.is_(None),
+        models.Order.status.notin_([
+            models.OrderStatus.CANCELLED,
+            models.OrderStatus.INACTIVE,
+        ]),
+        models.Seller.active == True,  # noqa: E712
+    )
+    if session_id:
+        q = q.filter(models.Order.session_id == session_id)
+
+    orders = q.all()
+    if not orders:
+        return schemas.StockApplyReport()
+
+    evaluation = evaluate_orders_for_stock(orders, db)
+    pending, missing = [], {}
+    for o in orders:
+        ev = evaluation[o.id]
+        pending.append(schemas.PendingStockOrderInfo(
+            order_id=o.id,
+            nf_number=o.nf_number,
+            seller_id=o.seller_id,
+            seller_name=o.seller.trade_name if o.seller else None,
+            customer_name=o.customer_name,
+            missing_carrier=ev["missing_carrier"],
+            missing_skus=ev["missing_skus"],
+        ))
+        for sku in ev["missing_skus"]:
+            key = (o.seller_id, sku)
+            if key not in missing:
+                missing[key] = schemas.MissingProductInfo(
+                    seller_id=o.seller_id,
+                    seller_name=o.seller.trade_name if o.seller else None,
+                    sku=sku,
+                    product_name=next((i.product_name for i in o.items if i.sku == sku), sku),
+                    nf_numbers=[],
+                )
+            if o.nf_number not in missing[key].nf_numbers:
+                missing[key].nf_numbers.append(o.nf_number)
+
+    return schemas.StockApplyReport(
+        applied_orders=0,
+        pending_orders=pending,
+        missing_products=list(missing.values()),
+        negatives=[],
+    )
 
 
 @router.get("/{order_id}", response_model=schemas.OrderResponse)
@@ -428,6 +505,7 @@ def get_order(
         for_billing=order.for_billing,
         imported_at=order.imported_at,
         session_id=order.session_id,
+        stock_applied_at=order.stock_applied_at,
         items=[
             schemas.OrderItemResponse(
                 id=item.id,
@@ -451,18 +529,56 @@ def configure_order(
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
-    """Configura tipo do arquivo (entrada/saída) e se é para faturamento."""
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    """
+    Configura tipo do arquivo (entrada/saída) e se é para faturamento.
+
+    ⚠️ O file_type define o SINAL do movimento de estoque (06/08/2026). Se a NF
+    já baixou, trocar o tipo sem mexer no estoque deixaria o movimento com o
+    sinal errado em silêncio — então estorna com o sinal antigo e baixa de novo
+    com o novo. Antes desta data o valor era gravado como string crua na coluna
+    Enum, o que também estava errado.
+    """
+    order = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
+    resigned = False
     if file_type is not None:
-        order.file_type = file_type
+        new_file_type = (
+            models.FileType.IMPORT if str(file_type).strip().lower() in ("entrada", "in")
+            else models.FileType.EXPORT
+        )
+        if new_file_type != order.file_type:
+            if order.stock_applied_at:
+                reverse_stock_for_order(
+                    order, db,
+                    observation=(
+                        f"ESTORNO — tipo da NF {order.nf_number} alterado para '{file_type}' "
+                        f"por {current_user.name} em {now_brasilia().strftime('%d/%m/%Y %H:%M')}. "
+                        f"Reverte a baixa feita com o tipo anterior."
+                    ),
+                    operator_id=current_user.id,
+                )
+                order.file_type = new_file_type
+                apply_stock_for_order(order, db, operator_id=current_user.id)
+                resigned = True
+            else:
+                order.file_type = new_file_type
+
     if for_billing is not None:
         order.for_billing = for_billing
 
     db.commit()
-    return {"message": "Configuração atualizada"}
+    return {
+        "message": (
+            "Configuração atualizada"
+            + (" — estoque re-lançado com o novo sinal." if resigned else "")
+        ),
+        "stock_resigned": resigned,
+    }
 
 
 @router.patch("/{order_id}/carrier")
@@ -472,16 +588,41 @@ def update_order_carrier(
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
-    """Atualiza transportadora de um pedido."""
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    """
+    Atualiza transportadora de um pedido.
+
+    Falta de transportadora é um dos dois motivos que seguram a baixa de
+    estoque (06/08/2026). Preencher aqui destrava a NF NA HORA — sem precisar
+    de nenhuma outra ação. Ver services/stock_manager.py.
+    """
+    order = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     carrier = data.get("carrier", "").strip()
     order.carrier = carrier or None
+
+    stock_report = apply_stock_for_order(order, db, operator_id=current_user.id)
+    stock_applied = order.id in stock_report["applied"]
+
     db.add(models.AuditLog(
         entity_type="Order", entity_id=order_id, action="UPDATE_CARRIER",
         user_id=current_user.id,
-        detail=f"Transportadora: {carrier or 'removida'}",
+        detail=(
+            f"Transportadora: {carrier or 'removida'}."
+            + (" Estoque baixado automaticamente." if stock_applied else "")
+        ),
     ))
     db.commit()
-    return {"message": "Transportadora atualizada", "carrier": order.carrier}
+    return {
+        "message": (
+            "Transportadora atualizada"
+            + (" — estoque baixado." if stock_applied else "")
+        ),
+        "carrier": order.carrier,
+        "stock_applied": stock_applied,
+        "negatives": stock_report["negatives"],
+        "pending": stock_report["pending"][0] if stock_report["pending"] else None,
+    }

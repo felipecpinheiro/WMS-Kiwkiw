@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 # completa da tabela a cada pedido concluído. O DDL é igual nos dois bancos —
 # só a forma de checar a existência do índice muda.
 PERF_INDEXES = [
-    # anti-duplicata do update_stock_from_order (stock_manager.py) + scanning.py
+    # estorno/anti-duplicata de estoque (stock_manager.py) + scanning.py
     ("ix_stock_movements_order_id",
      "CREATE INDEX IF NOT EXISTS ix_stock_movements_order_id ON stock_movements (order_id)"),
     # get_stock_report, get_sku_history, export — e o prefixo seller_id sozinho
@@ -110,6 +110,14 @@ def run_light_migrations():
             # UnicodeEncodeError em console Windows.
             if not col_exists("orders", "reactivated_at"):
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at TIMESTAMP")
+            # Coluna aditiva pura: nullable, sem default → no Postgres é mudança
+            # só de metadado (não reescreve linha, não trava a tabela).
+            # NÃO há backfill de propósito: pedido concluído ANTES desta mudança
+            # fica com a coluna vazia, e quem decide estorno trata
+            # "COMPLETED/INTERRUPTED sem a coluna" como já baixado — ver
+            # order_has_stock_applied() em services/stock_manager.py.
+            if not col_exists("orders", "stock_applied_at"):
+                index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at TIMESTAMP")
 
             # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
             # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
@@ -202,6 +210,8 @@ def run_light_migrations():
                 # Coluna nova vai em index_migrations (print em texto puro) — ver
                 # comentário no ramo PostgreSQL acima.
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at DATETIME")
+            if "stock_applied_at" not in existing_ord:
+                index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at DATETIME")
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:

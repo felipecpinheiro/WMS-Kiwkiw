@@ -296,6 +296,7 @@ class Order(Base):
     imported_at = Column(DateTime, default=now_brasilia)
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)
     reactivated_at = Column(DateTime, nullable=True)         # marca o "corte de ciclo" ao reativar NF inativada — bipagem/estoque anteriores a esta data não contam mais
+    stock_applied_at = Column(DateTime, nullable=True)       # quando esta NF baixou estoque (06/08/2026: a baixa passou a ser no import, não na bipagem). Vazio = ainda não baixou
 
     # Relacionamentos
     seller = relationship("Seller")

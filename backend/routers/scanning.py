@@ -18,7 +18,12 @@ from sqlalchemy import func, or_
 from ..database import get_db
 from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin, get_user_seller_ids
 from ..timezone_utils import now_brasilia, today_brasilia, end_of_day
-from ..services.stock_manager import update_stock_position
+from ..services.stock_manager import (
+    update_stock_position,
+    apply_stock_for_order,
+    reverse_stock_for_order,
+    order_has_stock_applied,
+)
 from .. import models, schemas
 
 router = APIRouter(prefix="/scanning", tags=["Bipagem"])
@@ -457,15 +462,47 @@ def update_session_config(
 
     if payload.file_type is not None:
         ft = payload.file_type.strip()
-        if ft.lower() in ("entrada", "in"):
-            session.file_type = models.FileType.IN
-        else:
-            session.file_type = models.FileType.EXPORT
+        # ⚠️ Era `models.FileType.IN`, que NÃO existe (o enum tem IMPORT/EXPORT)
+        # — trocar o tipo para "Entrada" estourava AttributeError → 500.
+        new_file_type = (
+            models.FileType.IMPORT if ft.lower() in ("entrada", "in")
+            else models.FileType.EXPORT
+        )
+
+        # O file_type define o SINAL do movimento de estoque (06/08/2026).
+        # Se a sessão já baixou estoque, trocar o tipo sem mexer no estoque
+        # deixaria os movimentos com o sinal errado, em silêncio. Então:
+        # estorna com o sinal antigo, troca, e baixa de novo com o novo.
+        resigned_orders = 0
+        if new_file_type != session.file_type:
+            applied_orders = db.query(models.Order).options(
+                joinedload(models.Order.items),
+                joinedload(models.Order.seller),
+            ).filter(
+                models.Order.session_id == session_id,
+                models.Order.stock_applied_at.isnot(None),
+            ).all()
+            for order in applied_orders:
+                reverse_stock_for_order(
+                    order, db,
+                    observation=(
+                        f"ESTORNO — tipo do arquivo da sessão {session_id} alterado para "
+                        f"'{ft}' por {current_user.name}. Reverte a baixa feita com o tipo anterior."
+                    ),
+                    operator_id=current_user.id,
+                )
+                order.file_type = new_file_type
+                apply_stock_for_order(order, db, operator_id=current_user.id)
+                resigned_orders += 1
+
+        session.file_type = new_file_type
         # Propaga para todos os pedidos da sessão
         db.query(models.Order).filter(
             models.Order.session_id == session_id
         ).update({"file_type": session.file_type}, synchronize_session=False)
         changed_fields.append("file_type")
+        if resigned_orders:
+            changed_fields.append(f"estoque re-lançado em {resigned_orders} NF(s)")
 
     if payload.for_billing is not None:
         session.for_billing = bool(payload.for_billing)
@@ -655,14 +692,11 @@ def process_scan(
                 session.status = models.OrderStatus.COMPLETED
                 session.completed_at = now_brasilia()
 
-        # ── Atualiza estoque em tempo real ──────────────────────────
-        # Cria StockMovement e atualiza StockPosition para cada item do pedido.
-        try:
-            from ..services.stock_manager import update_stock_from_order
-            update_stock_from_order(order, db)
-        except Exception as _stock_err:
-            # Não bloqueia o scan em caso de erro de estoque
-            pass
+        # ── Estoque NÃO é tocado aqui (06/08/2026) ──────────────────
+        # A baixa passou a acontecer na IMPORTAÇÃO do arquivo, NF a NF.
+        # A bipagem virou conferência/auditoria. Ver o cabeçalho de
+        # services/stock_manager.py. Não reintroduzir chamada de estoque
+        # neste ponto: a NF já baixou antes de chegar na bancada.
 
         db.commit()
 
@@ -751,17 +785,11 @@ def interrupt_order(
                 ]),
             ).count()
 
-    # ── Sensibiliza o estoque (idêntico ao fluxo de concluído) ──────────────────
-    # Para fins de workflow, INTERRUPTED == COMPLETED com carimbo diferente.
-    # O estoque é debitado integralmente para manter a acurácia.
-    stock_updated = False
-    try:
-        from ..services.stock_manager import update_stock_from_order
-        update_stock_from_order(order, db)
-        stock_updated = True
-    except Exception as _stock_err:
-        # Nunca bloqueia o fluxo de bipagem por erro de estoque
-        print(f"[interrupt] erro ao atualizar estoque: {_stock_err}")
+    # ── Estoque NÃO é tocado aqui (06/08/2026) ─────────────────────────────────
+    # A NF já baixou estoque na importação. Interromper não devolve nada: a
+    # decisão do dono do sistema é que a baixa permanece e, se houver
+    # divergência física, o acerto é feito na mão pela tela de Estoque.
+    stock_updated = bool(getattr(order, "stock_applied_at", None))
 
     # Log de auditoria do sistema
     audit = models.AuditLog(
@@ -771,7 +799,7 @@ def interrupt_order(
         detail=(
             f"Pedido NF {order.nf_number} interrompido. "
             f"Motivo: {request.reason or 'Não informado'}. "
-            f"Estoque {'sensibilizado' if stock_updated else 'NÃO atualizado (erro)'}."
+            f"Estoque {'já baixado na importação' if stock_updated else 'ainda não baixado (NF pendente)'}."
         ),
         user_id=current_user.id,
     )
@@ -780,10 +808,7 @@ def interrupt_order(
 
     return {
         "success": True,
-        "message": (
-            f"Pedido {order.nf_number} interrompido e registrado. "
-            f"{'Estoque atualizado.' if stock_updated else 'Atenção: estoque não foi atualizado.'}"
-        ),
+        "message": f"Pedido {order.nf_number} interrompido e registrado.",
         "stock_updated": stock_updated,
     }
 
@@ -800,7 +825,7 @@ def force_complete_session(
 
     Comportamento idêntico à conclusão normal:
     - Status dos pedidos → COMPLETED
-    - Estoque sensibilizado via update_stock_from_order()
+    - Estoque NÃO é tocado (desde 06/08/2026 a baixa acontece na importação)
     - Contador da sessão atualizado
     - Registra ScanningLog (sku=FORCE_COMPLETE) + AuditLog por pedido
     - Registra AuditLog de resumo do lote
@@ -834,8 +859,6 @@ def force_complete_session(
     if not orders:
         return {"success": True, "forced": 0, "message": "Todos os pedidos já estavam concluídos"}
 
-    from ..services.stock_manager import update_stock_from_order
-
     forced = 0
     now = now_brasilia()
     seller_name = orders[0].seller.trade_name if orders[0].seller else f"Seller {seller_id}"
@@ -857,11 +880,7 @@ def force_complete_session(
             error_message=f"Finalizado sem bipagem pelo admin {current_user.name}",
         ))
 
-        # Sensibiliza estoque exatamente como conclusão normal
-        try:
-            update_stock_from_order(order, db)
-        except Exception as _e:
-            pass  # Não bloqueia — mesma política do fluxo normal
+        # Estoque não é tocado: a NF já baixou na importação (06/08/2026).
 
         # AuditLog individual por pedido
         db.add(models.AuditLog(
@@ -924,7 +943,9 @@ def cancel_handling_session(
 
     Comportamento:
     - Status dos pedidos → CANCELLED
-    - Estoque NÃO é sensibilizado (pedido não foi processado)
+    - Estoque É ESTORNADO se a NF já tiver baixado (06/08/2026: a baixa passou
+      a acontecer na importação, então até pedido PENDING pode estar baixado —
+      antes desta data este endpoint nunca mexia em estoque, de propósito)
     - Contador da sessão atualizado
     - Registra ScanningLog (sku=CANCELLED) + AuditLog por pedido
     - Se todos os pedidos da sessão estiverem cancelados/concluídos → sessão → completed
@@ -961,8 +982,25 @@ def cancel_handling_session(
     now = now_brasilia()
     seller_name = orders[0].seller.trade_name if orders[0].seller else f"Seller {seller_id}"
     cancelled = 0
+    stock_reversed_count = 0
 
     for order in orders:
+        # Estorna ANTES de trocar o status — depois de CANCELLED o pedido
+        # entra em STOCK_BLOCKED_STATUSES e a NF não pode mais ser reavaliada.
+        reversed_here = False
+        if order_has_stock_applied(order, db):
+            reverse_stock_for_order(
+                order, db,
+                observation=(
+                    f"ESTORNO — NF {order.nf_number} cancelada (manuseio desnecessário) por "
+                    f"{current_user.name} em {now.strftime('%d/%m/%Y %H:%M')}. "
+                    f"Reverte o saldo desta NF (nunca edita o movimento original)."
+                ),
+                operator_id=current_user.id,
+            )
+            reversed_here = True
+            stock_reversed_count += 1
+
         order.status = models.OrderStatus.CANCELLED
 
         # ScanningLog especial — cancellation admin
@@ -987,7 +1025,8 @@ def cancel_handling_session(
                 f"Pedido NF {order.nf_number} ({order.customer_name}) "
                 f"cancelado pelo admin (manuseio desnecessário). "
                 f"Seller: {seller_name}. Sessão: {session_id}. "
-                f"Estoque NÃO sensibilizado."
+                + ("Estoque revertido via movimento de estorno."
+                   if reversed_here else "Estoque não impactado (NF ainda não havia baixado).")
             ),
             user_id=current_user.id,
         ))
@@ -1017,7 +1056,7 @@ def cancel_handling_session(
         detail=(
             f"Cancelamento em lote | Admin: {current_user.name} | "
             f"Seller: {seller_name} | Pedidos cancelados: {cancelled} | "
-            f"Sessão: {session_id} | Estoque NÃO movimentado."
+            f"Com reversão de estoque: {stock_reversed_count} | Sessão: {session_id}"
         ),
         user_id=current_user.id,
     ))
@@ -1027,7 +1066,11 @@ def cancel_handling_session(
     return {
         "success": True,
         "cancelled": cancelled,
-        "message": f"{cancelled} pedido(s) de {seller_name} cancelados. Estoque não alterado.",
+        "stock_reversed": stock_reversed_count,
+        "message": (
+            f"{cancelled} pedido(s) de {seller_name} cancelados — "
+            f"{stock_reversed_count} com reversão de estoque."
+        ),
     }
 
 
@@ -1094,9 +1137,9 @@ def cancel_duplicate_orders(
     preview = []
     any_needs_confirmation = False
     for order in orders:
-        stock_touched = order.status in (
-            models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED,
-        )
+        # ⚠️ Desde 06/08/2026 NÃO dá pra deduzir isso pelo status: a NF baixa
+        # estoque na importação, então um pedido PENDING já pode estar baixado.
+        stock_touched = order_has_stock_applied(order, db)
         has_real_scans = db.query(models.ScanningLog.id).filter(
             *_active_scan_filters(order)
         ).first() is not None
@@ -1137,45 +1180,18 @@ def cancel_duplicate_orders(
         bucket = bucket_by_order.get(order.id, "pending")
 
         if bucket == "stock_reversal":
-            original_movements = db.query(models.StockMovement).filter(
-                models.StockMovement.order_id == order.id
-            ).all()
-            for mv in original_movements:
-                reverse_type = (
-                    models.MovementType.OUT
-                    if mv.movement_type == models.MovementType.IN
-                    else models.MovementType.IN
-                )
-                db.add(models.StockMovement(
-                    seller_id=mv.seller_id,
-                    sku=mv.sku,
-                    product_name=mv.product_name,
-                    movement_date=today_brasilia(),
-                    movement_type=reverse_type,
-                    quantity=mv.quantity,
-                    adjusted_quantity=mv.quantity,
-                    nf_number=mv.nf_number,
-                    nature=mv.nature,
-                    order_id=order.id,
-                    session_id=session_id,
-                    operator_id=current_user.id,
-                    observation=(
-                        f"ESTORNO — NF {order.nf_number} cancelada (duplicata) por "
-                        f"{current_user.name} em {now.strftime('%d/%m/%Y %H:%M')}. "
-                        f"Reverte a movimentação original (movimento #{mv.id}) deste pedido."
-                    ),
-                ))
-                update_stock_position(
-                    seller_id=mv.seller_id,
-                    sku=mv.sku,
-                    product_name=mv.product_name or mv.sku,
-                    movement_type=reverse_type,
-                    quantity=mv.quantity,
-                    db=db,
-                )
+            reversed_skus = reverse_stock_for_order(
+                order, db,
+                observation=(
+                    f"ESTORNO — NF {order.nf_number} cancelada (duplicata) por "
+                    f"{current_user.name} em {now.strftime('%d/%m/%Y %H:%M')}. "
+                    f"Reverte o saldo desta NF (nunca edita o movimento original)."
+                ),
+                operator_id=current_user.id,
+            )
             stock_reversed_count += 1
             summary_lines.append(
-                f"NF {order.nf_number} foi cancelada — estoque revertido ({len(original_movements)} SKU(s))"
+                f"NF {order.nf_number} foi cancelada — estoque revertido ({reversed_skus} SKU(s))"
             )
         elif bucket == "partial_scan":
             summary_lines.append(f"NF {order.nf_number}: bipagem parcial descartada (sem impacto de estoque)")
@@ -1270,45 +1286,20 @@ def deactivate_order(
     now = now_brasilia()
     seller_name = order.seller.trade_name if order.seller else f"Seller {order.seller_id}"
 
+    # ⚠️ Não olhar o status aqui: desde 06/08/2026 a NF baixa estoque na
+    # importação, então PENDING já pode estar baixado.
     stock_reversed = False
-    if order.status in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED):
-        original_movements = db.query(models.StockMovement).filter(
-            models.StockMovement.order_id == order.id
-        ).all()
-        for mv in original_movements:
-            reverse_type = (
-                models.MovementType.OUT
-                if mv.movement_type == models.MovementType.IN
-                else models.MovementType.IN
-            )
-            db.add(models.StockMovement(
-                seller_id=mv.seller_id,
-                sku=mv.sku,
-                product_name=mv.product_name,
-                movement_date=today_brasilia(),
-                movement_type=reverse_type,
-                quantity=mv.quantity,
-                adjusted_quantity=mv.quantity,
-                nf_number=mv.nf_number,
-                nature=mv.nature,
-                order_id=order.id,
-                session_id=order.session_id,
-                operator_id=current_user.id,
-                observation=(
-                    f"ESTORNO — NF {order.nf_number} inativada por {current_user.name} "
-                    f"em {now.strftime('%d/%m/%Y %H:%M')}. Motivo: {reason}. "
-                    f"Reverte a movimentação original (movimento #{mv.id}) deste pedido."
-                ),
-            ))
-            update_stock_position(
-                seller_id=mv.seller_id,
-                sku=mv.sku,
-                product_name=mv.product_name or mv.sku,
-                movement_type=reverse_type,
-                quantity=mv.quantity,
-                db=db,
-            )
-        stock_reversed = bool(original_movements)
+    if order_has_stock_applied(order, db):
+        reversed_skus = reverse_stock_for_order(
+            order, db,
+            observation=(
+                f"ESTORNO — NF {order.nf_number} inativada por {current_user.name} "
+                f"em {now.strftime('%d/%m/%Y %H:%M')}. Motivo: {reason}. "
+                f"Reverte o saldo desta NF (nunca edita o movimento original)."
+            ),
+            operator_id=current_user.id,
+        )
+        stock_reversed = reversed_skus > 0
 
     order.status = models.OrderStatus.INACTIVE
 
@@ -1357,13 +1348,17 @@ def reactivate_order(
     [ADMIN] Reativa uma NF inativada. Sempre volta para `pending`, do zero —
     nunca restaura o status/andamento anterior de bipagem.
 
-    `reactivated_at` marca o corte de ciclo: bipagem e a trava anti-duplicata
-    de estoque (update_stock_from_order) passam a ignorar tudo que aconteceu
-    antes dessa data para este pedido, então a NF só baixa estoque de novo
-    quando for bipada e concluída de verdade outra vez.
+    `reactivated_at` marca o corte de ciclo da BIPAGEM: os scans anteriores
+    deixam de contar para o progresso deste pedido.
+
+    Estoque (06/08/2026): a NF volta a baixar NA HORA, se estiver liberada
+    (tem transportadora e todos os SKUs cadastrados). Não espera bipagem —
+    a baixa deixou de acontecer lá. Se estiver pendente, baixa sozinha
+    quando a pendência for resolvida.
     """
     order = db.query(models.Order).options(
         joinedload(models.Order.seller),
+        joinedload(models.Order.items),
     ).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
@@ -1376,6 +1371,11 @@ def reactivate_order(
 
     order.status = models.OrderStatus.PENDING
     order.reactivated_at = now
+
+    # Volta a baixar estoque imediatamente (só desta NF).
+    stock_report = apply_stock_for_order(order, db, operator_id=current_user.id)
+    stock_applied = order.id in stock_report["applied"]
+    stock_pending = stock_report["pending"][0] if stock_report["pending"] else None
 
     if order.session_id:
         db.add(models.ScanningLog(
@@ -1396,8 +1396,9 @@ def reactivate_order(
         action="REACTIVATE_NF",
         detail=(
             f"NF {order.nf_number} ({order.customer_name}) reativada por {current_user.name}. "
-            f"Seller: {seller_name}. Voltou como pendente — bipagem anterior não conta mais; "
-            f"estoque só é baixado de novo quando o pedido for concluído outra vez."
+            f"Seller: {seller_name}. Voltou como pendente — bipagem anterior não conta mais. "
+            + ("Estoque baixado novamente." if stock_applied
+               else "Estoque NÃO baixado: NF pendente (falta transportadora ou produto cadastrado).")
         ),
         user_id=current_user.id,
     ))
@@ -1406,7 +1407,14 @@ def reactivate_order(
 
     return {
         "success": True,
-        "message": f"NF {order.nf_number} reativada — voltou para pendente.",
+        "message": (
+            f"NF {order.nf_number} reativada — voltou para pendente."
+            + (" Estoque baixado novamente." if stock_applied
+               else " Atenção: estoque não baixou (NF pendente).")
+        ),
+        "stock_applied": stock_applied,
+        "stock_pending": stock_pending,
+        "negatives": stock_report["negatives"],
     }
 
 
@@ -1881,7 +1889,11 @@ def _active_scan_filters(order: models.Order) -> list:
     Filtros padrão de 'bipagem real' de um pedido — exclui erro/interrupção e,
     se a NF já foi reativada depois de inativada, ignora bipagem anterior ao
     corte do ciclo novo (order.reactivated_at). Ver deactivate_order/
-    reactivate_order e update_stock_from_order (stock_manager.py).
+    reactivate_order.
+
+    ⚠️ `reactivated_at` hoje é corte só de BIPAGEM. O estoque não depende mais
+    dele: quem responde "esta NF está baixada?" é order.stock_applied_at
+    (ver services/stock_manager.py, mudança de 06/08/2026).
     """
     filters = [
         models.ScanningLog.order_id == order.id,

@@ -18,6 +18,7 @@ from ..auth import (
 from ..timezone_utils import end_of_day
 from ..services.kit_import import parse_kit_workbook, match_sellers, _norm as _norm_seller
 from ..services.order_import import _build_seller_alias_map
+from ..services.stock_manager import release_pending_orders_for_sku
 from .. import models, schemas
 
 router = APIRouter(prefix="/cadastros", tags=["Cadastros"])
@@ -170,6 +171,11 @@ def create_product(
         user_id=current_user.id,
     ))
 
+    # SKU sem produto cadastrado segura a baixa de estoque da NF (06/08/2026).
+    # Cadastrar o produto destrava as NFs pendentes automaticamente.
+    if p.active:
+        release_pending_orders_for_sku(p.seller_id, p.sku, db, operator_id=current_user.id)
+
     db.commit()
     db.refresh(p)
     return schemas.ProductResponse(
@@ -208,6 +214,13 @@ def update_product(
         ),
         user_id=current_user.id,
     ))
+
+    # Editar o SKU (ou reativar por aqui) pode destravar NF que estava segurada
+    # por falta deste produto — ver create_product.
+    if product.active:
+        release_pending_orders_for_sku(
+            product.seller_id, product.sku, db, operator_id=current_user.id
+        )
 
     db.commit()
     db.refresh(product)
@@ -268,6 +281,9 @@ def reactivate_product(
         detail=f"Produto reativado: SKU={product.sku} | Seller={seller.trade_name if seller else product.seller_id}",
         user_id=current_user.id,
     ))
+    release_pending_orders_for_sku(
+        product.seller_id, product.sku, db, operator_id=current_user.id
+    )
     db.commit()
     db.refresh(product)
     return schemas.ProductResponse(

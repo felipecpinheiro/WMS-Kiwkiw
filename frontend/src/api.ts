@@ -165,6 +165,10 @@ export interface Order {
   danfe_key: string;
   for_billing: boolean;
   imported_at: string;
+  session_id?: number | null;
+  // null = a NF ainda não baixou estoque (falta transportadora ou produto
+  // cadastrado). O estoque baixa na importação desde 06/08/2026.
+  stock_applied_at?: string | null;
   items: OrderItem[];
 }
 
@@ -247,6 +251,46 @@ export type SellerLinkDecision =
   | { action: 'create'; unit_id: number }
   | { action: 'link'; seller_id: number };
 
+// ── Baixa de estoque na importação (06/08/2026) ───────────────────────────
+// O estoque deixou de ser sensibilizado na bipagem: baixa no fim do import,
+// NF a NF. NF sem transportadora ou com SKU sem produto cadastrado fica
+// pendente e baixa sozinha quando a pendência é resolvida.
+
+export interface NegativeStockInfo {
+  seller_id: number;
+  seller_name: string | null;
+  sku: string;
+  product_name: string | null;
+  current_stock: number;        // posição DEPOIS da baixa
+  applied_qty: number;          // delta assinado desta importação
+  was_negative_before: boolean;
+}
+
+export interface PendingStockOrderInfo {
+  order_id: number;
+  nf_number: string;
+  seller_id: number;
+  seller_name: string | null;
+  customer_name: string | null;
+  missing_carrier: boolean;
+  missing_skus: string[];
+}
+
+export interface MissingProductInfo {
+  seller_id: number;
+  seller_name: string | null;
+  sku: string;
+  product_name: string | null;
+  nf_numbers: string[];
+}
+
+export interface StockApplyReport {
+  applied_orders: number;
+  pending_orders: PendingStockOrderInfo[];
+  missing_products: MissingProductInfo[];
+  negatives: NegativeStockInfo[];
+}
+
 export interface ImportResult {
   success: boolean;
   message: string;
@@ -261,6 +305,7 @@ export interface ImportResult {
   inactive_sellers: InactiveSellerInfo[];
   unmatched_sellers: UnmatchedSellerInfo[];
   missing_carrier_orders: MissingCarrierOrderInfo[];
+  stock: StockApplyReport | null;
 }
 
 export interface ScanRequest {
@@ -375,8 +420,21 @@ export const ordersApi = {
   },
   configure: (id: number, data: { file_type?: string; for_billing?: boolean }) =>
     api.patch(`/orders/${id}/config`, null, { params: data }),
+  // Preencher a transportadora destrava a baixa de estoque da NF (06/08/2026)
+  // — a resposta traz stock_applied e os SKUs que ficaram negativos.
   updateCarrier: (orderId: number, carrier: string) =>
-    api.patch(`/orders/${orderId}/carrier`, { carrier }),
+    api.patch<{
+      message: string;
+      carrier: string | null;
+      stock_applied: boolean;
+      negatives: NegativeStockInfo[];
+      pending: PendingStockOrderInfo | null;
+    }>(`/orders/${orderId}/carrier`, { carrier }),
+  // NFs que ainda não baixaram estoque e o motivo — aviso fixo do Dashboard.
+  pendingStock: (sessionId?: number) =>
+    api.get<StockApplyReport>('/orders/pending-stock', {
+      params: sessionId ? { session_id: sessionId } : undefined,
+    }),
   downloadSessionPdf: async (sessionId: number, type: 'separation' | 'expedition'): Promise<void> => {
     const response = await api.get(`/orders/sessions/${sessionId}/pdf/${type}`, {
       responseType: 'blob',

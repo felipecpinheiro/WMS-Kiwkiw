@@ -415,6 +415,9 @@ class OrderResponse(BaseModel):
     for_billing: bool
     imported_at: datetime
     session_id: Optional[int] = None
+    # Vazio = a NF ainda não baixou estoque (falta transportadora ou produto
+    # cadastrado). Ver services/stock_manager.py — 06/08/2026.
+    stock_applied_at: Optional[datetime] = None
     items: List[OrderItemResponse] = []
 
     class Config:
@@ -708,6 +711,45 @@ class MissingCarrierOrderInfo(BaseModel):
     customer_name: Optional[str] = None
 
 
+class NegativeStockInfo(BaseModel):
+    """SKU que ficou negativo após a baixa de estoque da importação."""
+    seller_id: int
+    seller_name: Optional[str] = None
+    sku: str
+    product_name: Optional[str] = None
+    current_stock: int = 0          # posição depois da baixa
+    applied_qty: int = 0            # delta assinado desta importação
+    was_negative_before: bool = False
+
+
+class PendingStockOrderInfo(BaseModel):
+    """NF que NÃO baixou estoque na importação e o motivo."""
+    order_id: int
+    nf_number: str
+    seller_id: int
+    seller_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    missing_carrier: bool = False
+    missing_skus: List[str] = []
+
+
+class MissingProductInfo(BaseModel):
+    """SKU sem produto cadastrado que está segurando a baixa de estoque."""
+    seller_id: int
+    seller_name: Optional[str] = None
+    sku: str
+    product_name: Optional[str] = None
+    nf_numbers: List[str] = []
+
+
+class StockApplyReport(BaseModel):
+    """Resultado da baixa de estoque — usado no import e no destravamento."""
+    applied_orders: int = 0
+    pending_orders: List[PendingStockOrderInfo] = []
+    missing_products: List[MissingProductInfo] = []
+    negatives: List[NegativeStockInfo] = []
+
+
 class ImportResult(BaseModel):
     """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
     success: bool = False
@@ -724,3 +766,4 @@ class ImportResult(BaseModel):
     inactive_sellers: List[InactiveSellerInfo] = []
     unmatched_sellers: List[UnmatchedSellerInfo] = []
     missing_carrier_orders: List[MissingCarrierOrderInfo] = []
+    stock: Optional[StockApplyReport] = None

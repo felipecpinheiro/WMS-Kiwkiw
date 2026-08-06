@@ -14,6 +14,7 @@ import re
 from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from .kit_handler import process_order_items
+from .stock_manager import apply_stock_for_orders
 from ..timezone_utils import now_brasilia, today_brasilia
 
 
@@ -1025,12 +1026,49 @@ def import_excel_orders(
         # Atualiza totais da sessão
         session.total_orders = orders_imported
 
+        # ── Baixa de estoque (06/08/2026) ──────────────────────────────────
+        # Acontece AQUI, dentro da mesma transação do import e ANTES do commit
+        # único lá embaixo: se a baixa estourar, o `except` faz rollback e nada
+        # é criado — nem sessão, nem pedido, nem movimento. Era exatamente o
+        # requisito ("deve falhar, desfazer e deixar o erro explícito").
+        #
+        # O flush + recarga com joinedload é necessário: os OrderItem foram
+        # criados com order_id (não via relationship), e a sessão usa
+        # autoflush=False — sem isso, `order.items` viria VAZIO e nenhuma NF
+        # baixaria estoque, em silêncio.
+        db.flush()
+        session_orders = db.query(models.Order).options(
+            joinedload(models.Order.items),
+            joinedload(models.Order.seller),
+        ).filter(models.Order.session_id == session.id).all()
+        stock_raw = apply_stock_for_orders(session_orders, db, operator_id=created_by_id)
+
+        stock_report = schemas.StockApplyReport(
+            applied_orders=len(stock_raw["applied"]),
+            pending_orders=[schemas.PendingStockOrderInfo(**p) for p in stock_raw["pending"]],
+            missing_products=[
+                schemas.MissingProductInfo(**m) for m in stock_raw["missing_skus"].values()
+            ],
+            negatives=[schemas.NegativeStockInfo(**n) for n in stock_raw["negatives"]],
+        )
+
+        if stock_report.pending_orders:
+            warnings.append(
+                f"{len(stock_report.pending_orders)} NF(s) NÃO baixaram estoque — "
+                f"falta transportadora ou produto cadastrado"
+            )
+
         # Log de auditoria
         audit = models.AuditLog(
             entity_type="PickingSession",
             entity_id=session.id,
             action="IMPORT",
-            detail=f"Importação de {orders_imported} pedidos do arquivo {os.path.basename(file_path)}. Kits expandidos: {kits_expanded}",
+            detail=(
+                f"Importação de {orders_imported} pedidos do arquivo {os.path.basename(file_path)}. "
+                f"Kits expandidos: {kits_expanded}. "
+                f"Estoque baixado em {stock_report.applied_orders} NF(s); "
+                f"{len(stock_report.pending_orders)} pendente(s)."
+            ),
             user_id=created_by_id,
         )
         db.add(audit)
@@ -1045,6 +1083,7 @@ def import_excel_orders(
             orders_with_kits=kits_expanded,
             errors=errors,
             warnings=warnings,
+            stock=stock_report,
         )
 
     except Exception as e:

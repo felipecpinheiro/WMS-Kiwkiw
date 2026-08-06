@@ -245,12 +245,13 @@ client (0) < operator (1) < manager (2) < admin (3)
 
 ### Fluxo de um dia de trabalho (visão geral)
 1. **Admin importa Excel** → `POST /orders/import` → cria `PickingSession` + `Orders` + `OrderItems`
+   - **O estoque é baixado AQUI, NF a NF** (06/08/2026 — ver seção própria abaixo)
    - PDFs de separação e expedição gerados automaticamente após import
    - CSVs de auditoria gerados automaticamente
 2. **Operadores veem os cards de manuseio** → `GET /scanning/session-cards` → página `Handling.tsx`
 3. **Operador abre um pedido** → escaneia a chave DANFE da etiqueta → `POST /scanning/sessions/{id}/open-by-nfe`
 4. **Operador bipa cada produto** → `POST /scanning/scan` → valida `barcode_seller`
-5. **Pedido completo** → status vira `completed` → estoque atualizado em tempo real
+5. **Pedido completo** → status vira `completed` → **estoque NÃO é tocado** (já baixou no passo 1)
 6. **Admin acompanha** → Dashboard Master → checagens P6/P8/P10/P12
 
 ### Importação de Excel (ordem de operações interna)
@@ -266,18 +267,103 @@ client (0) < operator (1) < manager (2) < admin (3)
 
 ## Regras de Negócio Críticas (NÃO ÓBVIAS)
 
+### ⚠️ Baixa de estoque na IMPORTAÇÃO (mudança de 06/08/2026)
+
+**Até 06/08/2026** o estoque era sensibilizado quando o pedido era **concluído na bipagem**. O seller
+vendia segunda 20h, a Kiwkiw manuseava terça 17h, e o estoque dele ficava ~24h defasado — inviável de
+acompanhar em escala. **Agora a baixa acontece no fim da IMPORTAÇÃO, NF a NF.**
+
+**A bipagem não mexe mais em estoque.** Virou conferência e auditoria. Removidas as chamadas em
+`process_scan`, `interrupt_order` e `force_complete_session` — **não reintroduzir**.
+
+**Uma NF só baixa se estiver liberada.** Dois bloqueios, ambos por NF (não pela sessão):
+1. **transportadora preenchida**
+2. **todos os SKUs com produto ATIVO cadastrado** no seller
+
+Sem isso ela fica pendente (`Order.stock_applied_at` vazio) e **baixa sozinha** quando a pendência for
+resolvida — `PATCH /orders/{id}/carrier` e criar/reativar/renomear SKU de produto chamam
+`release_pending_orders_for_sku()`. Não existe botão de "aplicar estoque": é sempre automático.
+
+**Onde tudo isso mora:** `backend/services/stock_manager.py`, com um cabeçalho explicando a regra.
+
+| Função | Papel |
+|---|---|
+| `apply_stock_for_orders(orders, db)` | baixa em lote (usada no import). Devolve `applied` / `pending` / `negatives` / `missing_skus` |
+| `apply_stock_for_order(order, db)` | uma NF (destravamento) |
+| `reverse_stock_for_order(order, db, observation)` | estorno |
+| `evaluate_orders_for_stock(orders, db)` | por que a NF não pode baixar |
+| `order_has_stock_applied(order, db)` | "esta NF está baixada agora?" |
+| `order_stock_sign(order)` | sinal do movimento |
+| `release_pending_orders_for_sku(seller_id, sku, db)` | destrava NFs após cadastrar produto |
+
+**⚠️ O SINAL vem do `file_type`, não da natureza da NF.** Arquivo marcado "Entrada" **soma tudo**,
+qualquer outro **subtrai tudo**. O `NATURE_TYPE_MAP` **deixou de decidir sinal** (continua gravado em
+`Order.nature` para auditoria). Antes o sinal saía do mapa com default "Saída", então NF de entrada
+com natureza fora do mapa **dava baixa em vez de entrada**.
+
+**Trocar o `file_type` depois do import re-lança o estoque.** `PATCH /orders/{id}/config` e
+`PATCH /scanning/sessions/{id}/config` estornam com o sinal antigo e baixam com o novo. Sem isso o
+movimento ficaria com o sinal errado em silêncio.
+
+**`Order.stock_applied_at`** (coluna nova, migração idempotente em `run_light_migrations()`) marca
+quando a NF baixou. Vazio = não baixou. **Não dá mais para deduzir estoque pelo status** — um pedido
+`PENDING` já pode estar baixado.
+
+**⚠️ Sem backfill, de propósito.** Pedido concluído ANTES de 06/08/2026 tem movimento mas a coluna
+vazia. `order_has_stock_applied()` cobre as duas eras: coluna preenchida **ou**
+(`COMPLETED`/`INTERRUPTED` **e** existe movimento de verdade). A segunda metade confirma no banco em
+vez de confiar no status — senão um pedido concluído à força sem nunca ter baixado seria estornado e
+criaria estoque fantasma.
+
+**Estorno é por SALDO LÍQUIDO por SKU**, não movimento a movimento: soma entradas menos saídas
+daquele `order_id` e cria um movimento oposto para zerar. Correto independente de quantos ciclos de
+baixa/estorno/reativação a NF teve, e **nunca edita ou apaga o movimento original**. Estornar duas
+vezes não faz nada (saldo já é zero).
+
+**Quem estorna:** `cancel-duplicate-orders`, `deactivate_order` e — **novo** — `cancel-handling`, que
+até 06/08/2026 nunca mexia em estoque de propósito ("pedido não foi processado"). Como agora até NF
+`PENDING` pode estar baixada, ele passou a estornar. `reactivate_order` **baixa de novo na hora**, só
+daquela NF.
+
+**⚠️ SQL puro em `stock_movements` precisa de `CAST(movement_type AS TEXT)`.** Em produção a coluna é
+enum nativo; comparar direto com `'Entrada'` (rótulo inválido) estoura `InvalidTextRepresentation` e
+**aborta a transação**. O SQLite aceita — teste local não pega. Já mordeu durante a implementação
+desta feature.
+
+**Falha na baixa desfaz o import inteiro.** `apply_stock_for_orders` roda **dentro** de
+`import_excel_orders`, antes do commit único; qualquer exceção cai no `rollback` que já existia e nada
+é criado — nem sessão, nem pedido, nem movimento.
+
+**⚠️ `db.flush()` + recarga com `joinedload` antes de baixar no import.** Os `OrderItem` são criados
+com `order_id` (não pela relationship) e a sessão usa `autoflush=False` — sem isso `order.items` vem
+**vazio** e nenhuma NF baixa, em silêncio.
+
+**O que a tela mostra:** modal pós-import com SKUs que ficaram negativos (por seller, marcando quem
+**já estava** negativo antes), NFs que não subiram e formulário pra cadastrar o produto faltante na
+hora. **Avisa, nunca trava.** Mais o aviso fixo no Dashboard (`GET /orders/pending-stock`) e a marca
+"sem estoque" na linha do pedido em Pedidos.
+
+**Cadastro de produto no modal só CRIA produto novo com o SKU da NF.** Não existe "vincular a um
+produto existente": o estoque é indexado por `(seller_id, sku)` e apontar a NF pra outro SKU baixaria
+o produto errado e criaria posição fantasma no SKU da NF. De-para de SKU (a aba `ACERTO SKU` da
+planilha antiga) continua **deliberadamente fora** do WMS.
+
+**Reimportar duplicata agora erra o estoque na hora**, não só se alguém bipar. A trava de duplicata
+(que já compara `nf_number + seller_id` em **todo o histórico**, sem filtro de data) continua igual —
+o que mudou é o modal, que ficou explícito sobre o impacto imediato no estoque.
+
 ### Bipagem
 - **Só `barcode_seller` é aceito** — o `barcode_kiwkiw` existe no modelo mas não é usado na bipagem
 - **Lock por (sessão+seller):** só 1 pedido com atividade real por seller por sessão. Pedido em `SCANNING` sem nenhum `ScanningLog` real = "lock fantasma" → liberado automaticamente
-- **INTERRUPTED = COMPLETED** para fins de estoque e kanban: pedido interrompido sensibiliza o estoque igualmente e conta como "feito" no progresso
+- **INTERRUPTED = COMPLETED** para o kanban: pedido interrompido conta como "feito" no progresso. **Para estoque, nenhum dos dois faz nada** — a baixa acontece na importação desde 06/08/2026, e interromper não devolve estoque (divergência física se acerta na mão pela tela de Estoque)
 - **Não volta de INTERRUPTED:** pedido interrompido não pode ser reaberto via bipagem normal
 
 ### Cancelamento de pedidos duplicados (upload repetido)
 - Cenário: cliente sobe o mesmo Excel duas vezes → NFs duplicadas na mesma sessão. Correção pelo Dashboard: card da sessão em "Uploads do Dia" → botão **"Excluir sellers"** → escolhe quais sellers daquela sessão cancelar (os demais não são afetados).
 - Endpoint: `POST /scanning/sessions/{id}/cancel-duplicate-orders` (admin **e** manager — manager só nos sellers que atende, via `get_user_seller_ids`). Body: `{ seller_ids: [...], confirm: bool }`.
 - **Fluxo em 2 passos:** sem `confirm=true`, só devolve um preview (nada muda no banco) quando algum pedido selecionado já tem bipagem registrada. Com `confirm=true`, executa de fato.
-- Pedido vira `status=cancelled` (soft — nunca é apagado). Se o pedido **já estava concluído/interrompido** (já sensibilizou estoque), o endpoint cria um **novo movimento de estoque revertendo** a quantidade original (nunca edita/apaga o movimento original) com `observation` explícita tipo `"ESTORNO — NF X cancelada (duplicata) por Fulano em .... Reverte a movimentação original (movimento #N)"`. Tudo registrado em `AuditLog` (por pedido + resumo do lote).
-- **Diferente do endpoint antigo `/scanning/sessions/{id}/cancel-handling`** (admin-only, "manuseio desnecessário", não reverte estoque, ignora pedido já concluído) — são dois endpoints separados de propósito, para não arriscar regressão na feature antiga.
+- Pedido vira `status=cancelled` (soft — nunca é apagado). Se a NF **já baixou estoque** (desde 06/08/2026 isso é decidido por `order_has_stock_applied()`, **não pelo status** — NF `PENDING` já pode estar baixada), o endpoint cria um **novo movimento revertendo o saldo líquido** por SKU (nunca edita/apaga o movimento original) com `observation` explícita tipo `"ESTORNO — NF X cancelada (duplicata) por Fulano em ..."`. Tudo registrado em `AuditLog` (por pedido + resumo do lote).
+- **Diferente do endpoint `/scanning/sessions/{id}/cancel-handling`** (admin-only, "manuseio desnecessário", um seller por vez, sem preview de 2 passos) — são dois endpoints separados de propósito. ⚠️ **Desde 06/08/2026 o `cancel-handling` também estorna estoque**; antes disso ele nunca mexia, porque pedido não concluído não tinha baixado nada.
 - **Pedido `cancelled` fica invisível em toda a operação** (Pedidos, Scanner, Manuseios, estatísticas do Dashboard) para qualquer role, inclusive manager — só aparece na Trilha de Auditoria. Filtro aplicado em `list_orders` (orders.py), `get_session_orders` (scanning.py) e no `base_filter` do `/dashboard/master`. Se adicionar uma nova query de pedidos em algum lugar, **lembrar de excluir `status != CANCELLED`** — não há um filtro global automático.
 
 ### Datas e Timezone (⚠️ CRÍTICO — Railway roda em UTC)
@@ -289,7 +375,7 @@ client (0) < operator (1) < manager (2) < admin (3)
   ```
 - **No frontend**, use `todayBrasiliaStr()` de `frontend/src/timezone.ts` em vez de `new Date().toISOString().slice(0, 10)` (que usa UTC e retorna data errada após 21h em Brasília)
 - **`end_of_day(d)`** retorna `datetime.combine(d, datetime.max.time())` — use em queries `timestamp <= date_to` para incluir todos os registros do dia (`date_to 00:00:00` excluiria tudo do próprio dia)
-- **Estoque sensibilizado com `today_brasilia()`** (data real de conclusão no horário de Brasília), não a data do ERP
+- **Estoque sensibilizado com `today_brasilia()`** — desde 06/08/2026 é a data em que a Kiwkiw **importou o arquivo**, não a data do ERP nem a da conclusão da bipagem
 
 ### Email de usuário — sempre comparado sem diferenciar maiúscula/minúscula (31/07/2026)
 - Login (`auth.py`) e cadastro/edição de usuário (`products.py`, `create_user`/`update_user`) comparam email com `func.lower(...)` dos dois lados — nunca `==` direto.
@@ -389,7 +475,7 @@ client (0) < operator (1) < manager (2) < admin (3)
 - `StockPosition` é desnormalizado (calculado a partir dos movimentos para performance)
 - `current_stock = initial_stock + total_in - total_out`
 - Nível: ALTO > 600 | MÉDIO > 300 | BAIXO ≤ 300
-- **Anti-duplicata:** `update_stock_from_order()` checa se já existe movimento para `order_id` antes de criar → evita dupla contagem
+- **Anti-duplicata:** `apply_stock_for_orders()` pula NF que já tem `stock_applied_at` preenchido e NF cancelada/inativa → chamar duas vezes não dobra a baixa (`update_stock_from_order()` e `update_stock_from_session()` **foram removidas** em 06/08/2026)
 - **Editar movimentação de estoque:** requer `role=admin` + senha especial (configurável via env `WMS_EDIT_PASSPHRASE`) — **não documentar a senha aqui**
 - **Estoque negativo é esperado e não deve ser "corrigido":** sellers enviam produtos sem NF, então a entrada não é registrada mas as saídas sim. Na carga inicial (24/07/2026), 456 SKUs ficaram negativos. Decisão do dono do sistema: manter como está — o negativo é o indicador de onde falta regularizar entrada. Uma função para ocultar SKUs descontinuados pode existir no futuro, mas **apenas visual**
 
@@ -451,8 +537,8 @@ Endpoints: `POST /inventory/import-history/{seller_id}/analyze` e `/execute`.
 | Prefixo | Arquivo | Responsabilidade |
 |---------|---------|-----------------|
 | `/auth` | `routers/auth.py` | Login (`POST /auth/login`), perfil (`GET /auth/me`) |
-| `/orders` | `routers/orders.py` | Import Excel, listagem, config de pedido, transportadora |
-| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt, force-complete, cancel-handling (admin), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), audit log (inclui `seller_name`), session-cards, suggested-box |
+| `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs que não baixaram) |
+| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt, force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **Nenhum endpoint daqui baixa estoque — só estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | Config de cobrança, relatório, export Excel |
@@ -956,7 +1042,7 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Query de auditoria/estoque por data | `timestamp <= date_to` com `00:00:00` | Usar `end_of_day(date_to)` = `23:59:59.999999` para incluir registros do dia todo |
 | Download de CSV com Bearer token | Usar `window.open(url)` (não envia token) | Usar `downloadAuthenticatedFile(url, filename)` em `api.ts` (blob via axios com interceptor) |
 | Serializar enums no JSON | Retornar enum object direto | Sempre usar `.value` (ex: `status.value if hasattr(status, 'value') else status`) |
-| Movimento de estoque duplicado | Chamar `update_stock_from_order()` duas vezes | Função já tem anti-duplicata por `order_id` — não chamar manualmente sem verificar |
+| Movimento de estoque duplicado | Chamar a baixa duas vezes para a mesma NF | `apply_stock_for_orders()` pula quem já tem `stock_applied_at` — não zerar esse campo na mão |
 | `INSERT` de `stock_movements` via SQL puro | Gravar `mt.value` (`"Entrada"`) — o Postgres recusa com `InvalidTextRepresentation` e aborta a transação | Gravar `mt.name` (`"IN"`/`"OUT"`). SQLite aceita os dois, então o teste local não detecta |
 | `StockPosition` duplicada / `UNIQUE (seller_id, sku)` violada | Chamar `update_stock_position()` em laço: a sessão usa `autoflush=False`, a posição recém-criada não aparece na query seguinte e uma segunda é criada | A função já faz `db.flush()` após criar — não remover |
 | Importar produtos com seller inativo homônimo | `bulk_upload_products` carrega **todos** os sellers (inclusive inativos) no cache e o último sobrescreve o anterior — produtos vão para o registro errado ou são pulados em silêncio | Ao desativar um seller duplicado, **renomear** `name` e `trade_name` (sufixo `(DUPLICADO)`); desativar não basta |
@@ -993,5 +1079,10 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | ⚠️ **Pré-existente, não corrigido:** SKU repetido vira 2 itens no pedido | A soma de SKUs repetidos ocorre **antes** da expansão, sobre os SKUs crus. Um componente de kit que coincide com uma linha avulsa do mesmo SKU gera dois `order_items` (ex.: 4 do kit + 5 avulso, não 9) | Comportamento antigo e conhecido; o operador vê o mesmo SKU duas vezes na bipagem |
 | Endpoint pesado declarado `async def` | O FastAPI roda `async def` **no event loop**, não em threadpool. Com 1 worker Uvicorn, qualquer trabalho síncrono longo (Excel, laço de queries) **trava o sistema inteiro** — bipagem, dashboard e login param | Endpoint que faz I/O de banco/arquivo de forma síncrona deve ser `def` (sem `async`). Só use `async def` se realmente houver `await` de I/O assíncrono |
 | Query nova em `stock_movements` ou `scanning_logs` | `stock_movements` tem 630k+ linhas. Desde 30/07/2026 existem índices para `order_id` e `(seller_id, sku)` — **qualquer filtro fora desses volta a ser Seq Scan da tabela toda** | Conferir com `EXPLAIN ANALYZE` antes de subir; se faltar índice, acrescentar em `PERF_INDEXES` (`main.py`), que já é idempotente nos dois bancos |
+| Deduzir "esta NF baixou estoque?" pelo status | Desde 06/08/2026 a baixa é na importação: NF `PENDING` já pode estar baixada, e NF `COMPLETED` pode nunca ter baixado | Usar `order_has_stock_applied(order, db)` / `Order.stock_applied_at` — **nunca** `status in (COMPLETED, INTERRUPTED)` |
+| Reintroduzir baixa de estoque na bipagem | `process_scan`/`interrupt`/`force-complete` já baixaram até 06/08/2026; recolocar a chamada dobra a baixa | A bipagem é só conferência agora. A baixa é no import, ver `services/stock_manager.py` |
+| Decidir sinal do movimento pela natureza da NF | O `NATURE_TYPE_MAP` **não** decide mais sinal — quem decide é o `file_type` do arquivo | `order_stock_sign(order)`. Trocar `file_type` de NF já baixada exige estornar e re-lançar |
+| `SELECT` em `stock_movements` comparando `movement_type` com string | Em produção é enum nativo: `movement_type IN ('Entrada')` estoura `InvalidTextRepresentation` e **aborta a transação**. SQLite aceita | `CAST(movement_type AS TEXT) IN ('IN','Entrada')` — funciona nos dois bancos |
+| Ler `order.items` logo após criar os itens no import | Itens são criados com `order_id` (não pela relationship) e a sessão é `autoflush=False` → a lista vem **vazia** e nada baixa, em silêncio | `db.flush()` e recarregar com `joinedload(Order.items)` antes de usar |
 | Consultar produto/kit dentro de laço no import | Era N+1: 1 query de kit + 1 de produto **por item** do arquivo (2.410 queries num arquivo de 960 linhas) | Já resolvido pelos caches `_kits_of` / `_products_of` em `import_excel_orders`. Ao mexer no laço de persistência, **continuar passando `kits_by_sku`** para `process_order_items` — sem ele a função volta a consultar item a item (fallback mantido de propósito) |
 | Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado 3× nesta base: `scanning.py` e `dashboard.py` **já corrigidos**, `billing.py:193-213` (`_get_box`) **ainda em aberto** — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema (01-02/08/2026, ver seção "Performance — N+1 na bipagem") | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** (`WHERE (seller_id, sku) IN (...)` ou `GROUP BY`) fora do laço — mesmo padrão já usado em `get_session_orders`/`_build_progress` e agora em `master_dashboard` |

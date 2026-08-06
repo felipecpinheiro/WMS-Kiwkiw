@@ -13,7 +13,7 @@ import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
   ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, scanningApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision } from '../api';
+import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -231,6 +231,14 @@ export default function DashboardPage() {
   const [unmatchedModalOpen, setUnmatchedModalOpen] = useState(false);
   const [unmatchedDecisions, setUnmatchedDecisions] = useState<Record<string, SellerLinkDecision>>({});
 
+  // Modal do resultado de estoque da importação (06/08/2026): SKUs que ficaram
+  // negativos, NFs que não baixaram e os produtos que precisam ser cadastrados
+  // para destravar. Avisa, nunca trava — decisão do dono do sistema.
+  const [stockReport, setStockReport] = useState<StockApplyReport | null>(null);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [newProductForm, setNewProductForm] = useState<Record<string, { name: string; barcode: string }>>({});
+  const [savingProductKey, setSavingProductKey] = useState<string | null>(null);
+
   // Modal de cancelamento de pedidos duplicados (por sessão + sellers selecionados)
   const [cancelDupSession, setCancelDupSession] = useState<{ session_id: number; sellers: { seller_id: number; seller_name: string }[] } | null>(null);
   const [cancelDupSelected, setCancelDupSelected] = useState<number[]>([]);
@@ -271,6 +279,15 @@ export default function DashboardPage() {
     'sellers-without-unit',
     () => import('../api').then(m => m.cadastrosApi.sellersWithoutUnit().then(r => r.data)),
     { staleTime: 5 * 60 * 1000 },
+  );
+
+  // Warning: NFs que não baixaram estoque (06/08/2026). Diferente do aviso de
+  // transportadora, este cobre também SKU sem produto cadastrado — e não some
+  // ao fechar o modal do import, só quando a pendência é resolvida de verdade.
+  const { data: pendingStock } = useQuery(
+    'orders-pending-stock',
+    () => ordersApi.pendingStock().then(r => r.data),
+    { staleTime: 60 * 1000, refetchInterval: 120000 },
   );
 
   // Lista de sellers ativos p/ o dropdown de vínculo do modal de sellers não reconhecidos
@@ -334,6 +351,7 @@ export default function DashboardPage() {
         inactive_sellers: inactives = [],
         unmatched_sellers: unmatched = [],
         missing_carrier_orders: missingCarrierOrders = [],
+        stock = null,
       } = data;
 
       // Backend achou sellers inativos referenciados no arquivo → exibe modal de decisão.
@@ -372,6 +390,18 @@ export default function DashboardPage() {
       }
       warnings.slice(0, 3).forEach((w: string) => toast(w, { icon: 'ℹ️' }));
 
+      // Resultado da baixa de estoque. Só abre o modal se houver algo a dizer:
+      // SKU negativo ou NF que não subiu. Import limpo não incomoda ninguém.
+      if (stock) {
+        setStockReport(stock);
+        setNewProductForm({});
+        if ((stock.negatives?.length ?? 0) > 0 || (stock.pending_orders?.length ?? 0) > 0) {
+          setStockModalOpen(true);
+        } else if (stock.applied_orders > 0) {
+          toast.success(`Estoque atualizado em ${stock.applied_orders} NF(s)`);
+        }
+      }
+
       // Pedido(s) sem transportadora → bipagem e PDFs ficam bloqueados (ver
       // CLAUDE.md). Abre o modal na hora em vez de tentar baixar o PDF; ao
       // completar, handleCarrierSave dispara o download sozinho.
@@ -398,6 +428,7 @@ export default function DashboardPage() {
       }
 
       refetch();
+      qc.invalidateQueries('orders-pending-stock');
       // Fecha tudo e limpa estado
       setUploadModalOpen(false);
       setDuplicateModalOpen(false);
@@ -537,17 +568,70 @@ export default function DashboardPage() {
     }
   };
 
+  // Cadastra na hora um produto que está segurando a baixa de estoque.
+  // Só CRIA produto novo com o SKU que veio na NF — não existe "vincular a um
+  // produto existente" de propósito: o estoque é indexado por (seller, SKU), e
+  // apontar a NF para outro SKU baixaria o produto errado e criaria posição
+  // fantasma no SKU da NF. De-para de SKU é outro projeto (ver CLAUDE.md).
+  const handleCreateMissingProduct = async (mp: { seller_id: number; sku: string; product_name: string | null }) => {
+    const key = `${mp.seller_id}:${mp.sku}`;
+    const form = newProductForm[key];
+    const name = (form?.name ?? mp.product_name ?? '').trim();
+    if (!name) { toast.error('Informe o nome do produto'); return; }
+    setSavingProductKey(key);
+    try {
+      await cadastrosApi.createProduct({
+        seller_id: mp.seller_id,
+        sku: mp.sku,
+        name,
+        barcode_seller: form?.barcode?.trim() || undefined,
+      });
+      toast.success(`Produto ${mp.sku} cadastrado — NFs liberadas`);
+      // O backend baixa o estoque das NFs pendentes sozinho ao criar o produto.
+      // Recarrega o que ainda está pendente para o modal refletir a realidade.
+      const { data } = await ordersApi.pendingStock();
+      setStockReport(prev => ({
+        applied_orders: prev?.applied_orders ?? 0,
+        negatives: prev?.negatives ?? [],
+        pending_orders: data.pending_orders,
+        missing_products: data.missing_products,
+      }));
+      qc.invalidateQueries(['dashboard', targetDate]);
+      qc.invalidateQueries('orders-pending-stock');
+      refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao cadastrar produto');
+    } finally {
+      setSavingProductKey(null);
+    }
+  };
+
   const handleCarrierSave = async (updates: Record<number, string>) => {
     const { ordersApi } = await import('../api');
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
     if (!entries.length) { setCarrierModalOrders([]); return; }
     try {
-      await Promise.all(
+      const results = await Promise.all(
         entries.map(([id, carrier]) =>
           ordersApi.updateCarrier(Number(id), carrier)
         )
       );
       toast.success(`${entries.length} transportadora(s) salva(s)`);
+
+      // Preencher a transportadora destrava a baixa de estoque (06/08/2026).
+      // Se isso jogou algum SKU pra negativo, mostra no MESMO modal do import.
+      const applied = results.filter(r => r.data?.stock_applied).length;
+      const negatives = results.flatMap(r => r.data?.negatives ?? []);
+      if (applied > 0) toast.success(`Estoque baixado em ${applied} NF(s)`);
+      if (negatives.length > 0) {
+        setStockReport({
+          applied_orders: applied,
+          pending_orders: [],
+          missing_products: [],
+          negatives,
+        });
+        setStockModalOpen(true);
+      }
     } catch {
       toast.error('Erro ao salvar transportadoras');
     }
@@ -560,6 +644,7 @@ export default function DashboardPage() {
     );
     setCarrierModalOrders([]);
     qc.invalidateQueries(['dashboard', targetDate]);
+    qc.invalidateQueries('orders-pending-stock');
     const fresh = await refetch();
     const stillPending = new Set(
       ((fresh.data?.checks?.pending_carrier_sessions ?? []) as any[]).map(p => p.session_id)
@@ -610,6 +695,51 @@ export default function DashboardPage() {
             </p>
           </div>
           <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
+        </div>
+      )}
+
+      {/* ⚠️ Aviso fixo: NFs que não subiram ao estoque (06/08/2026).
+          O estoque do seller não reflete essas notas até a pendência ser
+          resolvida — e aí ele baixa sozinho. */}
+      {(pendingStock?.pending_orders?.length ?? 0) > 0 && (
+        <div className="flex items-start gap-3 bg-red-900/25 border border-red-500/30 rounded-xl px-4 py-3">
+          <span className="text-red-400 mt-0.5 flex-shrink-0">📦</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-300">
+              {pendingStock!.pending_orders.length} NF(s) não subiram ao estoque
+            </p>
+            <p className="text-xs text-red-400/80 mt-0.5">
+              O estoque desses sellers está desatualizado enquanto isso. Resolva a pendência e a
+              baixa acontece sozinha — não precisa reimportar nada.
+            </p>
+            <p className="text-xs text-red-400/60 mt-1">
+              {(() => {
+                const semTransp = pendingStock!.pending_orders.filter(p => p.missing_carrier).length;
+                const semProduto = pendingStock!.pending_orders.filter(p => p.missing_skus.length > 0).length;
+                const partes = [];
+                if (semTransp) partes.push(`${semTransp} sem transportadora`);
+                if (semProduto) partes.push(`${semProduto} com SKU sem produto cadastrado`);
+                return partes.join(' · ');
+              })()}
+            </p>
+          </div>
+          {pendingStock!.missing_products.length > 0 && (
+            <button
+              onClick={() => {
+                setStockReport({
+                  applied_orders: 0,
+                  pending_orders: pendingStock!.pending_orders,
+                  missing_products: pendingStock!.missing_products,
+                  negatives: [],
+                });
+                setNewProductForm({});
+                setStockModalOpen(true);
+              }}
+              className="flex-shrink-0 text-xs text-red-400 hover:underline mt-0.5"
+            >
+              Resolver →
+            </button>
+          )}
         </div>
       )}
 
@@ -1234,8 +1364,8 @@ export default function DashboardPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-yellow-900/30">
-                <AlertTriangle size={20} className="text-yellow-600" />
+              <div className="p-2 rounded-lg bg-red-900/30">
+                <AlertTriangle size={20} className="text-red-400" />
               </div>
               <div>
                 <h3 className="text-base font-semibold text-white">
@@ -1245,6 +1375,20 @@ export default function DashboardPage() {
                   Algumas notas fiscais deste arquivo já existem no banco. Confirme se deseja reimportar mesmo assim.
                 </p>
               </div>
+            </div>
+
+            {/* Desde 06/08/2026 o estoque baixa na importação: reimportar
+                duplicata erra o estoque do seller NA HORA, não só se alguém
+                bipar. Por isso o aviso é explícito e em vermelho. */}
+            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-900/20 px-3 py-2.5">
+              <p className="text-xs text-red-200 font-semibold mb-1">
+                Atenção: isso vai baixar o estoque destas NFs DE NOVO.
+              </p>
+              <p className="text-xs text-red-200/70">
+                O estoque é sensibilizado na importação. Reimportar duplica a baixa imediatamente,
+                antes de qualquer bipagem. Só confirme se realmente for uma nota nova com o mesmo número.
+                Para corrigir depois, use “Excluir sellers” no card da sessão.
+              </p>
             </div>
 
             <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4">
@@ -1454,6 +1598,169 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Resultado da baixa de estoque da importação (06/08/2026).
+          Avisa, NUNCA trava — o import já foi concluído quando isso aparece. */}
+      {stockModalOpen && stockReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setStockModalOpen(false)}>
+          <div
+            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-3xl mx-4 max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-amber-900/30">
+                <AlertTriangle size={20} className="text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold text-white">Resultado do estoque</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  {stockReport.applied_orders > 0
+                    ? `Estoque baixado em ${stockReport.applied_orders} NF(s). `
+                    : ''}
+                  Confira os pontos abaixo — nada aqui bloqueia a operação.
+                </p>
+              </div>
+              <button onClick={() => setStockModalOpen(false)} className="text-white/40 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* ── SKUs negativos, agrupados por seller ── */}
+            {stockReport.negatives.length > 0 && (() => {
+              const bySeller = stockReport.negatives.reduce((acc, n) => {
+                const k = n.seller_name || `Seller ${n.seller_id}`;
+                (acc[k] = acc[k] || []).push(n);
+                return acc;
+              }, {} as Record<string, typeof stockReport.negatives>);
+              return (
+                <div className="mb-5">
+                  <p className="text-sm font-semibold text-red-300 mb-2">
+                    Estoque negativo em {stockReport.negatives.length} SKU(s)
+                  </p>
+                  {Object.entries(bySeller).map(([sellerName, rows]) => (
+                    <div key={sellerName} className="mb-3 border border-white/8 rounded-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-white/5 text-sm text-white/90 font-medium">{sellerName}</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="text-white/40">
+                            <tr>
+                              <th className="text-left px-3 py-1.5 font-medium">SKU</th>
+                              <th className="text-left px-3 py-1.5 font-medium">Produto</th>
+                              <th className="text-right px-3 py-1.5 font-medium">Estoque agora</th>
+                              <th className="text-right px-3 py-1.5 font-medium">Esta importação</th>
+                              <th className="text-left px-3 py-1.5 font-medium">Situação</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {rows.map((n) => (
+                              <tr key={n.sku}>
+                                <td className="px-3 py-1.5 text-white/80 font-mono">{n.sku}</td>
+                                <td className="px-3 py-1.5 text-white/60 truncate max-w-[220px]">{n.product_name}</td>
+                                <td className="px-3 py-1.5 text-right text-red-300 font-semibold">{n.current_stock}</td>
+                                <td className="px-3 py-1.5 text-right text-white/60">
+                                  {n.applied_qty > 0 ? `+${n.applied_qty}` : n.applied_qty}
+                                </td>
+                                <td className="px-3 py-1.5">
+                                  {n.was_negative_before ? (
+                                    <span className="text-amber-300/80">Já estava negativo</span>
+                                  ) : (
+                                    <span className="text-red-300">Ficou negativo agora</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* ── NFs que não subiram ao estoque ── */}
+            {stockReport.pending_orders.length > 0 && (
+              <div className="mb-5">
+                <p className="text-sm font-semibold text-amber-300 mb-1">
+                  {stockReport.pending_orders.length} NF(s) NÃO subiram ao estoque
+                </p>
+                <p className="text-xs text-white/45 mb-2">
+                  Enquanto não forem resolvidas, o estoque do seller não reflete essas notas — e o
+                  negativo acima pode aumentar quando elas subirem.
+                </p>
+                <div className="max-h-48 overflow-y-auto border border-white/8 rounded-lg divide-y divide-white/5">
+                  {stockReport.pending_orders.map((p) => (
+                    <div key={p.order_id} className="px-3 py-2">
+                      <p className="text-sm text-white/90">NF {p.nf_number} — {p.seller_name}</p>
+                      <p className="text-xs text-white/40">
+                        {p.missing_carrier && 'Sem transportadora'}
+                        {p.missing_carrier && p.missing_skus.length > 0 && ' · '}
+                        {p.missing_skus.length > 0 && `SKU sem cadastro: ${p.missing_skus.join(', ')}`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Produtos a cadastrar (destrava sozinho ao salvar) ── */}
+            {stockReport.missing_products.length > 0 && (
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-white/90 mb-1">
+                  Cadastrar {stockReport.missing_products.length} produto(s) para liberar
+                </p>
+                <p className="text-xs text-white/45 mb-2">
+                  Ao salvar, as NFs que dependem do SKU baixam o estoque automaticamente.
+                </p>
+                <div className="border border-white/8 rounded-lg divide-y divide-white/5">
+                  {stockReport.missing_products.map((mp) => {
+                    const key = `${mp.seller_id}:${mp.sku}`;
+                    const form = newProductForm[key] ?? { name: mp.product_name ?? '', barcode: '' };
+                    return (
+                      <div key={key} className="px-3 py-2.5">
+                        <p className="text-xs text-white/50 mb-1.5">
+                          <span className="font-mono text-white/80">{mp.sku}</span> · {mp.seller_name} ·{' '}
+                          {mp.nf_numbers.length} NF(s)
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <input
+                            value={form.name}
+                            onChange={(e) => setNewProductForm(prev => ({ ...prev, [key]: { ...form, name: e.target.value } }))}
+                            placeholder="Nome do produto (obrigatório)"
+                            className="flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                          />
+                          <input
+                            value={form.barcode}
+                            onChange={(e) => setNewProductForm(prev => ({ ...prev, [key]: { ...form, barcode: e.target.value } }))}
+                            placeholder="Código de barras (opcional)"
+                            className="w-44 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                          />
+                          <button
+                            onClick={() => handleCreateMissingProduct(mp)}
+                            disabled={savingProductKey === key}
+                            className="px-3 py-1.5 rounded-lg bg-[#3DD9A4] text-[#14122A] text-xs font-semibold disabled:opacity-50"
+                          >
+                            {savingProductKey === key ? 'Salvando…' : 'Cadastrar'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setStockModalOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelDupSession && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeCancelDupModal}>
           <div
@@ -1496,7 +1803,7 @@ export default function DashboardPage() {
                   <div key={p.order_id} className="px-3 py-2.5">
                     <p className="text-sm text-white/90">NF {p.nf_number} — {p.seller_name}</p>
                     {p.bucket === 'stock_reversal' && (
-                      <p className="text-xs text-red-300 mt-0.5">⚠ Pedido já concluído — estoque será revertido</p>
+                      <p className="text-xs text-red-300 mt-0.5">⚠ NF já baixou estoque — será revertido</p>
                     )}
                     {p.bucket === 'partial_scan' && (
                       <p className="text-xs text-amber-300 mt-0.5">⚠ Bipagem parcial em andamento será descartada (sem impacto de estoque)</p>

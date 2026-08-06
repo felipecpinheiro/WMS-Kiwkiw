@@ -184,7 +184,21 @@ function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
       className="border-b border-white/5 hover:bg-white/4 transition cursor-pointer"
       onClick={onClick}
     >
-      <td className="py-2.5 px-3 text-sm font-mono text-white/80">{order.nf_number}</td>
+      <td className="py-2.5 px-3 text-sm font-mono text-white/80">
+        <span className="inline-flex items-center gap-1.5">
+          {order.nf_number}
+          {/* Desde 06/08/2026 o estoque baixa na importação. NF sem a marca
+              ainda NÃO baixou (falta transportadora ou produto cadastrado). */}
+          {!order.stock_applied_at && order.status !== 'cancelled' && order.status !== 'inactive' && (
+            <span
+              title="Esta NF ainda não baixou estoque — falta transportadora ou produto cadastrado"
+              className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-500/30 font-sans"
+            >
+              sem estoque
+            </span>
+          )}
+        </span>
+      </td>
       <td className="py-2.5 px-3 text-sm text-white/80 max-w-[180px] truncate">{order.customer_name}</td>
       <td className="py-2.5 px-3 text-sm text-white/50">{order.seller_name}</td>
       <td className="py-2.5 px-3 text-sm text-white/50">{order.carrier || '—'}</td>

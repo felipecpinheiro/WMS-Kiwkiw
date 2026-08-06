@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict
 from collections import defaultdict
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 
 from .. import models
@@ -49,114 +49,128 @@ def calculate_stock_level(current_stock: int) -> str:
         return "BAIXO"
 
 
-def update_stock_from_session(session: models.PickingSession, db: Session) -> Dict:
-    """
-    Atualiza o estoque a partir de uma sessão de picking concluída.
-    Cria movimentos de saída para cada pedido bipado.
-    """
-    updated_skus = 0
-    errors = []
+# ==================================================================
+# BAIXA DE ESTOQUE NA IMPORTAÇÃO (06/08/2026)
+# ==================================================================
+# Até 06/08/2026 o estoque era sensibilizado quando o pedido era CONCLUÍDO na
+# bipagem. Isso deixava o estoque do seller defasado por até ~24h (vendeu
+# segunda 20h, manuseio na terça 17h) — inviável para o seller acompanhar.
+#
+# Agora a baixa acontece no fim da IMPORTAÇÃO, NF a NF. A bipagem NÃO mexe mais
+# em estoque: virou conferência e auditoria.
+#
+# Uma NF só baixa se estiver liberada:
+#   - transportadora preenchida
+#   - todos os SKUs dela com produto ATIVO cadastrado no seller
+# Sem isso ela fica pendente (stock_applied_at vazio) e baixa SOZINHA quando a
+# pendência for resolvida — ver apply_stock_for_order() chamado no
+# PATCH /orders/{id}/carrier e no cadastro/reativação de produto.
+#
+# ⚠️ O SINAL vem do file_type do pedido (configuração de NÍVEL DE ARQUIVO), e
+# NÃO da natureza da NF: arquivo "Entrada" soma tudo, qualquer outro subtrai
+# tudo. O NATURE_TYPE_MAP deixou de decidir sinal de movimento.
 
-    # Busca pedidos completos da sessão
-    orders = db.query(models.Order).filter(
-        models.Order.session_id == session.id,
-        models.Order.status == models.OrderStatus.COMPLETED,
+# Status em que a NF não deve baixar estoque de jeito nenhum.
+STOCK_BLOCKED_STATUSES = (
+    models.OrderStatus.CANCELLED,
+    models.OrderStatus.INACTIVE,
+)
+
+
+def order_stock_sign(order) -> models.MovementType:
+    """
+    Sinal do movimento a partir do file_type do pedido.
+    Tolerante a valor legado gravado como texto ('entrada'/'Entrada').
+    """
+    raw = getattr(order, "file_type", None)
+    raw = raw.value if hasattr(raw, "value") else raw
+    if str(raw or "").strip().lower() in ("entrada", "import", "in"):
+        return models.MovementType.IN
+    return models.MovementType.OUT
+
+
+def order_has_stock_applied(order, db: Session) -> bool:
+    """
+    Esta NF está com estoque baixado neste momento?
+
+    Cobre as duas eras sem precisar de backfill em produção:
+      - a partir de 06/08/2026: a coluna stock_applied_at responde direto;
+      - antes disso: não existia a coluna, a baixa acontecia na conclusão da
+        bipagem — então pedido COMPLETED/INTERRUPTED daquela época está
+        baixado. Confirmamos pelo movimento real (consulta indexada por
+        order_id, e só no caminho de estorno — nunca em tela de lista).
+    """
+    if getattr(order, "stock_applied_at", None):
+        return True
+    if order.status not in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED):
+        return False
+    return db.execute(
+        text("SELECT 1 FROM stock_movements WHERE order_id = :oid LIMIT 1"),
+        {"oid": order.id},
+    ).first() is not None
+
+
+def _registered_sku_pairs(db: Session, pairs: set) -> set:
+    """
+    Dado um conjunto de (seller_id, sku), devolve os que TÊM produto ativo.
+    Uma consulta só, com dois IN — usa o índice uq_seller_sku (mesmo padrão
+    da correção do master_dashboard). Não fazer isso item a item dentro de
+    laço: é o N+1 que já derrubou esta base 3 vezes.
+    """
+    if not pairs:
+        return set()
+    seller_ids = {p[0] for p in pairs}
+    skus = {p[1] for p in pairs}
+    rows = db.query(models.Product.seller_id, models.Product.sku).filter(
+        models.Product.seller_id.in_(seller_ids),
+        models.Product.sku.in_(skus),
+        models.Product.active == True,  # noqa: E712
     ).all()
-
-    for order in orders:
-        for item in order.items:
-            try:
-                # Determina tipo de movimento pela natureza do pedido
-                from .order_import import NATURE_TYPE_MAP
-                movement_type_str = NATURE_TYPE_MAP.get(order.nature or "", "Saída")
-                movement_type = (
-                    models.MovementType.IN
-                    if movement_type_str == "Entrada"
-                    else models.MovementType.OUT
-                )
-
-                # Cria movimento de estoque
-                movement = models.StockMovement(
-                    seller_id=order.seller_id,
-                    sku=item.sku,
-                    product_name=item.product_name,
-                    # Usa a data real de finalização (hoje), não a data do ERP
-                    movement_date=today_brasilia(),
-                    movement_type=movement_type,
-                    quantity=item.quantity,
-                    adjusted_quantity=item.quantity,
-                    nf_number=order.nf_number,
-                    nature=order.nature,
-                    order_id=order.id,
-                    session_id=session.id,
-                )
-                db.add(movement)
-
-                # Atualiza posição de estoque
-                update_stock_position(
-                    seller_id=order.seller_id,
-                    sku=item.sku,
-                    product_name=item.product_name,
-                    movement_type=movement_type,
-                    quantity=item.quantity,
-                    db=db,
-                )
-                updated_skus += 1
-
-            except Exception as e:
-                errors.append(f"Erro ao atualizar SKU {item.sku}: {str(e)}")
-
-    # Marca checagem de estoque como concluída
-    session.check_stock = True
-    db.commit()
-
-    return {
-        "updated_skus": updated_skus,
-        "errors": errors,
-    }
+    return {(r[0], r[1]) for r in rows}
 
 
-def update_stock_from_order(order, db: Session) -> None:
+def evaluate_orders_for_stock(orders: List, db: Session) -> Dict[int, Dict]:
     """
-    Atualiza estoque quando um pedido individual é concluído no scanner.
-    Chamado em tempo real, no momento que o último item é bipado.
-    Evita duplicata: não cria movimento se já existe um para esta order_id.
-
-    Quando o pedido foi inativado e depois reativado (order.reactivated_at
-    preenchido), movimentos ANTERIORES ao corte não contam pra anti-duplicata
-    — senão o estorno feito na inativação (que também usa este order_id)
-    faria a NF nunca mais baixar estoque numa 2ª conclusão real. Ver
-    deactivate_order/reactivate_order em routers/scanning.py.
+    Para cada pedido, diz se ele pode baixar estoque e o que está faltando.
+    Devolve {order_id: {"missing_carrier", "missing_skus", "can_apply"}}.
     """
-    # Evita dupla contagem — usa SQL raw para não crashar com enum legado
-    from .. import models as _m
-    if order.reactivated_at:
-        existing_count = db.execute(
-            text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid AND created_at > :cutoff"),
-            {"oid": order.id, "cutoff": order.reactivated_at},
-        ).scalar()
-    else:
-        existing_count = db.execute(
-            text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid"),
-            {"oid": order.id},
-        ).scalar()
-    if existing_count:
-        return
+    pairs = set()
+    for o in orders:
+        for it in o.items:
+            pairs.add((o.seller_id, it.sku))
+    registered = _registered_sku_pairs(db, pairs)
 
-    from .order_import import NATURE_TYPE_MAP
-    movement_type_str = NATURE_TYPE_MAP.get(order.nature or "", "Saída")
-    movement_type = (
-        _m.MovementType.IN
-        if movement_type_str == "Entrada"
-        else _m.MovementType.OUT
-    )
+    result = {}
+    for o in orders:
+        missing_carrier = not (o.carrier or "").strip()
+        missing_skus = sorted({
+            it.sku for it in o.items
+            if (o.seller_id, it.sku) not in registered
+        })
+        result[o.id] = {
+            "missing_carrier": missing_carrier,
+            "missing_skus": missing_skus,
+            "can_apply": (not missing_carrier) and (not missing_skus),
+        }
+    return result
+
+
+def _write_stock_for_order(order, db: Session, operator_id: Optional[int] = None) -> Dict:
+    """
+    Grava os movimentos de UMA NF e carimba stock_applied_at.
+    Não valida nada — quem chama já decidiu que pode. Devolve as posições
+    tocadas: {(seller_id, sku): (position, delta_assinado)}.
+    """
+    movement_type = order_stock_sign(order)
+    signal = 1 if movement_type == models.MovementType.IN else -1
+    touched = {}
 
     for item in order.items:
-        movement = _m.StockMovement(
+        db.add(models.StockMovement(
             seller_id=order.seller_id,
             sku=item.sku,
             product_name=item.product_name,
-            # Usa a data real de conclusão/interrupção (hoje), não a data do ERP
+            # Data em que a Kiwkiw importou o arquivo — não a data da NF.
             movement_date=today_brasilia(),
             movement_type=movement_type,
             quantity=item.quantity,
@@ -165,10 +179,9 @@ def update_stock_from_order(order, db: Session) -> None:
             nature=order.nature,
             order_id=order.id,
             session_id=order.session_id,
-        )
-        db.add(movement)
-
-        update_stock_position(
+            operator_id=operator_id,
+        ))
+        position = update_stock_position(
             seller_id=order.seller_id,
             sku=item.sku,
             product_name=item.product_name or item.sku,
@@ -176,6 +189,247 @@ def update_stock_from_order(order, db: Session) -> None:
             quantity=item.quantity,
             db=db,
         )
+        key = (order.seller_id, item.sku)
+        prev_pos, prev_delta = touched.get(key, (position, 0))
+        touched[key] = (position, prev_delta + signal * item.quantity)
+
+    order.stock_applied_at = now_brasilia()
+    return touched
+
+
+def apply_stock_for_orders(
+    orders: List,
+    db: Session,
+    operator_id: Optional[int] = None,
+) -> Dict:
+    """
+    Baixa o estoque de um LOTE de NFs (usado na importação).
+
+    Idempotente: pula quem já baixou e quem está cancelado/inativo.
+    Não commita — quem chama decide. Se qualquer coisa estourar aqui, a
+    exceção sobe: o import inteiro deve ser desfeito (regra do usuário).
+
+    Devolve:
+      applied       -> [order_id, ...] que baixaram agora
+      pending       -> [{order_id, nf_number, seller_id, seller_name,
+                         customer_name, missing_carrier, missing_skus}]
+      negatives     -> [{seller_id, seller_name, sku, product_name,
+                         current_stock, applied_qty, was_negative_before}]
+      missing_skus  -> {(seller_id, sku)} agregado, para o modal de cadastro
+    """
+    candidates = [
+        o for o in orders
+        if o.status not in STOCK_BLOCKED_STATUSES
+        and not getattr(o, "stock_applied_at", None)
+    ]
+
+    applied: List[int] = []
+    pending: List[Dict] = []
+    negatives: List[Dict] = []
+    missing_pairs: Dict = {}
+
+    if not candidates:
+        return {"applied": applied, "pending": pending,
+                "negatives": negatives, "missing_skus": missing_pairs}
+
+    evaluation = evaluate_orders_for_stock(candidates, db)
+
+    # Foto do estoque ANTES de aplicar, para saber quem já estava negativo.
+    pairs = {
+        (o.seller_id, it.sku)
+        for o in candidates
+        if evaluation[o.id]["can_apply"]
+        for it in o.items
+    }
+    before = {}
+    if pairs:
+        seller_ids = {p[0] for p in pairs}
+        skus = {p[1] for p in pairs}
+        for row in db.query(
+            models.StockPosition.seller_id,
+            models.StockPosition.sku,
+            models.StockPosition.current_stock,
+        ).filter(
+            models.StockPosition.seller_id.in_(seller_ids),
+            models.StockPosition.sku.in_(skus),
+        ).all():
+            before[(row[0], row[1])] = row[2] or 0
+
+    touched_all: Dict = {}
+    for order in candidates:
+        ev = evaluation[order.id]
+        if not ev["can_apply"]:
+            seller = getattr(order, "seller", None)
+            pending.append({
+                "order_id": order.id,
+                "nf_number": order.nf_number,
+                "seller_id": order.seller_id,
+                "seller_name": seller.trade_name if seller else None,
+                "customer_name": order.customer_name,
+                "missing_carrier": ev["missing_carrier"],
+                "missing_skus": ev["missing_skus"],
+            })
+            for sku in ev["missing_skus"]:
+                key = (order.seller_id, sku)
+                if key not in missing_pairs:
+                    name = next(
+                        (it.product_name for it in order.items if it.sku == sku),
+                        sku,
+                    )
+                    missing_pairs[key] = {
+                        "seller_id": order.seller_id,
+                        "seller_name": seller.trade_name if seller else None,
+                        "sku": sku,
+                        "product_name": name,
+                        "nf_numbers": [],
+                    }
+                if order.nf_number not in missing_pairs[key]["nf_numbers"]:
+                    missing_pairs[key]["nf_numbers"].append(order.nf_number)
+            continue
+
+        touched = _write_stock_for_order(order, db, operator_id=operator_id)
+        applied.append(order.id)
+        for key, (position, delta) in touched.items():
+            prev_pos, prev_delta = touched_all.get(key, (position, 0))
+            touched_all[key] = (position, prev_delta + delta)
+
+    # Relatório de negativos — feito DEPOIS da baixa, sobre a posição final.
+    seller_names = {
+        o.seller_id: (o.seller.trade_name if getattr(o, "seller", None) else None)
+        for o in candidates
+    }
+    for (seller_id, sku), (position, delta) in touched_all.items():
+        if (position.current_stock or 0) < 0:
+            negatives.append({
+                "seller_id": seller_id,
+                "seller_name": seller_names.get(seller_id),
+                "sku": sku,
+                "product_name": position.product_name or sku,
+                "current_stock": position.current_stock or 0,
+                "applied_qty": delta,
+                "was_negative_before": before.get((seller_id, sku), 0) < 0,
+            })
+    negatives.sort(key=lambda n: ((n["seller_name"] or ""), n["sku"]))
+
+    return {
+        "applied": applied,
+        "pending": pending,
+        "negatives": negatives,
+        "missing_skus": missing_pairs,
+    }
+
+
+def apply_stock_for_order(order, db: Session, operator_id: Optional[int] = None) -> Dict:
+    """
+    Versão de UMA NF — usada quando a pendência é resolvida (transportadora
+    preenchida, produto cadastrado). Mesmo relatório do lote.
+    """
+    return apply_stock_for_orders([order], db, operator_id=operator_id)
+
+
+def release_pending_orders_for_sku(
+    seller_id: int,
+    sku: str,
+    db: Session,
+    operator_id: Optional[int] = None,
+) -> Dict:
+    """
+    Destrava as NFs que estavam seguradas por falta deste SKU.
+
+    Chamado depois de cadastrar / reativar / renomear o SKU de um produto.
+    Só pega NF que ainda não baixou e que não está cancelada/inativa; a
+    própria apply_stock_for_orders reavalia se ainda falta alguma coisa
+    (outro SKU sem cadastro, transportadora), então NF com mais de uma
+    pendência continua segura até a última ser resolvida.
+    """
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(
+        models.Order.seller_id == seller_id,
+        models.Order.stock_applied_at.is_(None),
+        models.Order.status.notin_(STOCK_BLOCKED_STATUSES),
+        models.Order.id.in_(
+            db.query(models.OrderItem.order_id)
+              .filter(models.OrderItem.sku == sku)
+              .scalar_subquery()
+        ),
+    ).all()
+    if not orders:
+        return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
+    return apply_stock_for_orders(orders, db, operator_id=operator_id)
+
+
+def reverse_stock_for_order(
+    order,
+    db: Session,
+    observation: str,
+    operator_id: Optional[int] = None,
+) -> int:
+    """
+    Estorna o estoque de UMA NF e limpa stock_applied_at.
+
+    Trabalha pelo SALDO LÍQUIDO por SKU (soma das entradas menos as saídas de
+    todos os movimentos deste order_id), criando um movimento no sentido
+    oposto para zerar. Isso é correto independente de quantos ciclos de
+    baixa/estorno/reativação a NF já teve, e nunca edita ou apaga o movimento
+    original — os dois lados ficam auditáveis.
+
+    Devolve quantos SKUs foram estornados (0 = não havia o que estornar).
+    """
+    # ⚠️ CAST(... AS TEXT) é obrigatório: em produção movement_type é um ENUM
+    # NATIVO do Postgres, e comparar a coluna direto com 'Entrada' (que não é
+    # rótulo válido do tipo) estoura InvalidTextRepresentation e ABORTA a
+    # transação inteira. O SQLite aceitaria sem reclamar — teste local não pega.
+    # Os dois formatos convivem no banco por razões históricas (ver CLAUDE.md).
+    rows = db.execute(text("""
+        SELECT sku,
+               MAX(product_name) AS product_name,
+               SUM(CASE WHEN CAST(movement_type AS TEXT) IN ('IN', 'Entrada') THEN quantity ELSE 0 END) AS total_in,
+               SUM(CASE WHEN CAST(movement_type AS TEXT) IN ('IN', 'Entrada') THEN 0 ELSE quantity END) AS total_out
+          FROM stock_movements
+         WHERE order_id = :oid
+         GROUP BY sku
+    """), {"oid": order.id}).fetchall()
+
+    reversed_count = 0
+    for row in rows:
+        sku = row[0]
+        product_name = row[1] or sku
+        net = (row[2] or 0) - (row[3] or 0)
+        if net == 0:
+            continue
+        # net > 0 → a NF somou estoque; estorno subtrai. E vice-versa.
+        reverse_type = models.MovementType.OUT if net > 0 else models.MovementType.IN
+        quantity = abs(net)
+
+        db.add(models.StockMovement(
+            seller_id=order.seller_id,
+            sku=sku,
+            product_name=product_name,
+            movement_date=today_brasilia(),
+            movement_type=reverse_type,
+            quantity=quantity,
+            adjusted_quantity=quantity,
+            nf_number=order.nf_number,
+            nature=order.nature,
+            order_id=order.id,
+            session_id=order.session_id,
+            operator_id=operator_id,
+            observation=observation,
+        ))
+        update_stock_position(
+            seller_id=order.seller_id,
+            sku=sku,
+            product_name=product_name,
+            movement_type=reverse_type,
+            quantity=quantity,
+            db=db,
+        )
+        reversed_count += 1
+
+    order.stock_applied_at = None
+    return reversed_count
 
 
 def update_stock_position(

@@ -105,6 +105,34 @@ def run_light_migrations():
                 migrations.append("ALTER TABLE stock_movements ADD COLUMN nf_date DATE")
             if not col_exists("kit_items", "product_id"):
                 migrations.append("ALTER TABLE kit_items ADD COLUMN product_id INTEGER REFERENCES products(id)")
+            # Coluna nova vai em index_migrations (print em texto puro), não em
+            # migrations (print com emoji) — ver comentário mais abaixo sobre o
+            # UnicodeEncodeError em console Windows.
+            if not col_exists("orders", "reactivated_at"):
+                index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at TIMESTAMP")
+
+            # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
+            # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
+            # pode dividir transação com nada que use o valor novo (ver CLAUDE.md,
+            # mesma armadilha já documentada para movement_type).
+            # ⚠️ O SQLAlchemy grava o NOME do membro do enum Python no Postgres
+            # (ex.: 'CANCELLED', 'PENDING'), não o `.value` minúsculo — por isso
+            # aqui é 'INACTIVE' maiúsculo, não 'inactive'.
+            enum_type_row = db.execute(text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name='orders' AND column_name='status'"
+            )).fetchone()
+            if enum_type_row:
+                enum_type_name = enum_type_row[0]
+                enum_has_inactive = db.execute(text(
+                    "SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = :tn AND e.enumlabel = 'INACTIVE'"
+                ), {"tn": enum_type_name}).fetchone()
+                if enum_has_inactive is None:
+                    db.execute(text(f"ALTER TYPE {enum_type_name} ADD VALUE 'INACTIVE'"))
+                    db.commit()
+                    print(f"[migracao] enum {enum_type_name}: valor 'INACTIVE' adicionado")
+
             # Índice checado à parte da coluna: se a coluna existir sem o índice
             # (criação parcial), ele ainda precisa ser criado. A condição olha o
             # índice de verdade para não reexecutar nada em toda inicialização.
@@ -167,6 +195,13 @@ def run_light_migrations():
             existing_ki = {r[1] for r in rows_ki}
             if "product_id" not in existing_ki:
                 migrations.append("ALTER TABLE kit_items ADD COLUMN product_id INTEGER REFERENCES products(id)")
+
+            rows_ord = db.execute(text("PRAGMA table_info(orders)")).fetchall()
+            existing_ord = {r[1] for r in rows_ord}
+            if "reactivated_at" not in existing_ord:
+                # Coluna nova vai em index_migrations (print em texto puro) — ver
+                # comentário no ramo PostgreSQL acima.
+                index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at DATETIME")
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:

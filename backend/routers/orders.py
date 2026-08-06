@@ -40,6 +40,7 @@ def _missing_carrier_orders(db: Session, session_id: int) -> list:
     ).filter(
         models.Order.session_id == session_id,
         models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.status != models.OrderStatus.INACTIVE,
         (models.Order.carrier == None) | (models.Order.carrier == ""),
         models.Order.seller_id.in_(
             db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
@@ -273,12 +274,17 @@ def list_orders(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     search: Optional[str] = None,
+    include_inactive: bool = False,
     limit: int = Query(default=100, le=1000),
     offset: int = 0,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Lista pedidos com filtros."""
+    """Lista pedidos com filtros.
+
+    include_inactive: só tem efeito para admin — usado pelo toggle "Mostrar
+    NFs inativas" da tela de Pedidos.
+    """
     query = db.query(models.Order).options(
         joinedload(models.Order.items),
         joinedload(models.Order.seller),
@@ -287,6 +293,12 @@ def list_orders(
     # Pedido cancelado (ex.: duplicata de upload removida) nunca aparece
     # nesta tela, pra ninguém — só fica rastreável na Trilha de Auditoria.
     query = query.filter(models.Order.status != models.OrderStatus.CANCELLED)
+
+    # NF inativada some da tela pra todo mundo — só admin com o toggle ligado
+    # a enxerga de novo. Ver deactivate_order/reactivate_order em scanning.py.
+    user_role_for_inactive = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+    if not (include_inactive and user_role_for_inactive == "admin"):
+        query = query.filter(models.Order.status != models.OrderStatus.INACTIVE)
 
     # Pedido de seller inativo também não aparece, pra ninguém — mesma lógica.
     # Ver CLAUDE.md → "Seller inativo — onde pode e onde não pode aparecer".
@@ -379,14 +391,22 @@ def get_order(
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
     # 1 consulta agrupada por SKU em vez de 1 por item (N+1 — ver CLAUDE.md).
+    # Se a NF foi reativada depois de inativada, ignora bipagem anterior ao
+    # corte do ciclo novo — ver order.reactivated_at / deactivate_order em
+    # scanning.py.
+    scan_filters = [
+        models.ScanningLog.order_id == order.id,
+        models.ScanningLog.is_error == False,
+        models.ScanningLog.is_interrupted == False,
+    ]
+    if order.reactivated_at:
+        scan_filters.append(models.ScanningLog.timestamp > order.reactivated_at)
     item_scan_counts = dict(
         db.query(
             models.ScanningLog.sku,
             func.sum(models.ScanningLog.quantity),
         ).filter(
-            models.ScanningLog.order_id == order.id,
-            models.ScanningLog.is_error == False,
-            models.ScanningLog.is_interrupted == False,
+            *scan_filters
         ).group_by(models.ScanningLog.sku).all()
     )
     item_scan_counts = {sku: item_scan_counts.get(sku, 0) or 0 for sku in {item.sku for item in order.items}}

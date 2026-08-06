@@ -13,7 +13,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from ..database import get_db
 from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin, get_user_seller_ids
@@ -103,12 +103,18 @@ def _build_item_dict(item: models.OrderItem, seller_id: int, item_scan_counts: d
 def get_session_orders(
     session_id: int,
     seller_id: Optional[int] = None,
+    include_inactive: bool = False,
     current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
     """
     Retorna lista de pedidos da sessão para a interface de bipagem.
     Equivalente ao MENU do Scan Manuseio.
+
+    include_inactive: só tem efeito para admin — usado pelo toggle "Mostrar
+    NFs inativas". Filtro exclusivo: liga → mostra SÓ as NFs inativas (não as
+    ativas + inativas juntas). Os totais de progresso da sessão (cabeçalho)
+    sempre refletem só as NFs ativas, independente do toggle.
     """
     session = db.query(models.PickingSession).filter(
         models.PickingSession.id == session_id
@@ -116,12 +122,21 @@ def get_session_orders(
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    show_inactive = include_inactive and user_role == "admin"
+
+    status_filters = [models.Order.status != models.OrderStatus.CANCELLED]
+    if show_inactive:
+        status_filters.append(models.Order.status == models.OrderStatus.INACTIVE)
+    else:
+        status_filters.append(models.Order.status != models.OrderStatus.INACTIVE)
+
     orders_query = db.query(models.Order).options(
         joinedload(models.Order.items).joinedload(models.OrderItem.product),
         joinedload(models.Order.seller),
     ).filter(
         models.Order.session_id == session_id,
-        models.Order.status != models.OrderStatus.CANCELLED,
+        *status_filters,
         # Seller inativo não aparece na operação — ver CLAUDE.md.
         models.Order.seller_id.in_(
             db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
@@ -133,6 +148,8 @@ def get_session_orders(
 
     # Conta itens escaneados por pedido e por (pedido, sku) em 2 consultas agrupadas,
     # em vez de 1 query por pedido + 1 query por item de cada pedido (N+1 — ver CLAUDE.md).
+    # Join com Order para respeitar reactivated_at: bipagem anterior ao corte de um
+    # ciclo (NF que foi inativada e depois reativada) não conta pro ciclo atual.
     order_ids = [order.id for order in orders]
 
     scan_counts = {}
@@ -141,10 +158,16 @@ def get_session_orders(
         order_totals = db.query(
             models.ScanningLog.order_id,
             func.sum(models.ScanningLog.quantity),
+        ).join(
+            models.Order, models.Order.id == models.ScanningLog.order_id
         ).filter(
             models.ScanningLog.order_id.in_(order_ids),
             models.ScanningLog.is_interrupted == False,
             models.ScanningLog.is_error == False,
+            or_(
+                models.Order.reactivated_at.is_(None),
+                models.ScanningLog.timestamp > models.Order.reactivated_at,
+            ),
         ).group_by(models.ScanningLog.order_id).all()
         scan_counts = {order_id: total or 0 for order_id, total in order_totals}
 
@@ -152,10 +175,16 @@ def get_session_orders(
             models.ScanningLog.order_id,
             models.ScanningLog.sku,
             func.sum(models.ScanningLog.quantity),
+        ).join(
+            models.Order, models.Order.id == models.ScanningLog.order_id
         ).filter(
             models.ScanningLog.order_id.in_(order_ids),
             models.ScanningLog.is_error == False,
             models.ScanningLog.is_interrupted == False,
+            or_(
+                models.Order.reactivated_at.is_(None),
+                models.ScanningLog.timestamp > models.Order.reactivated_at,
+            ),
         ).group_by(models.ScanningLog.order_id, models.ScanningLog.sku).all()
         item_scan_counts = {(order_id, sku): total or 0 for order_id, sku, total in item_totals}
 
@@ -163,6 +192,7 @@ def get_session_orders(
     for order in orders:
         total_items = sum(item.quantity for item in order.items)
         scanned = scan_counts.get(order.id, 0)
+        order_status = order.status.value if hasattr(order.status, 'value') else order.status
 
         result.append({
             "id": order.id,
@@ -171,7 +201,8 @@ def get_session_orders(
             "seller": order.seller.trade_name if order.seller else None,
             "seller_id": order.seller_id,
             "carrier": order.carrier,
-            "status": order.status.value if hasattr(order.status, 'value') else order.status,
+            "status": order_status,
+            "is_inactive": order_status == "inactive",
             "total_items": total_items,
             "scanned_items": scanned,
             "remaining": max(0, total_items - scanned),
@@ -182,10 +213,28 @@ def get_session_orders(
             ],
         })
 
-    total = len(orders)
+    # Totais/progresso da sessão (cabeçalho) sempre refletem só as NFs ativas
+    # — independente do toggle "Mostrar NFs inativas" ter filtrado a lista
+    # abaixo para mostrar só as inativas.
+    if show_inactive:
+        operational_query = db.query(models.Order).filter(
+            models.Order.session_id == session_id,
+            models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
+            models.Order.seller_id.in_(
+                db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
+            ),
+        )
+        if seller_id:
+            operational_query = operational_query.filter(models.Order.seller_id == seller_id)
+        operational_orders = operational_query.all()
+    else:
+        operational_orders = orders
+
+    total = len(operational_orders)
     # Pedidos interrompidos contam como "feitos" para efeitos de progresso
     completed = sum(
-        1 for o in orders
+        1 for o in operational_orders
         if (o.status.value if hasattr(o.status, 'value') else o.status) in ("completed", "interrupted")
     )
 
@@ -228,6 +277,9 @@ def open_order_by_nfe(
     # B: pedido interrompido é uma finalização manual — não pode ser reaberto via bipagem
     if order_status == "interrupted":
         return {"success": False, "message": f"Pedido NF {order.nf_number} foi interrompido e não pode ser reaberto. Contate o supervisor."}
+    if order_status == "inactive":
+        admin_name = _get_deactivation_admin_name(order.id, db)
+        return {"success": False, "blocked_reason": "inactive", "message": f"Esta NF foi inativada por {admin_name}."}
 
     # Pedido sem transportadora não pode ser bipado — ver CLAUDE.md.
     # Preencher em Dashboard → aviso fixo no topo (ou na hora do import).
@@ -242,8 +294,7 @@ def open_order_by_nfe(
     duplicate_warning = None
     if order_status == "scanning":
         last_scan = db.query(models.ScanningLog).filter(
-            models.ScanningLog.order_id == order.id,
-            models.ScanningLog.is_error == False,
+            *_active_scan_filters(order)
         ).order_by(models.ScanningLog.timestamp.desc()).first()
         if last_scan and last_scan.operator_id and last_scan.operator_id != current_user.id:
             other_operator = db.query(models.User).filter(
@@ -268,8 +319,7 @@ def open_order_by_nfe(
 
         for conflicting in scanning_orders_same_seller:
             has_real_activity = db.query(models.ScanningLog).filter(
-                models.ScanningLog.order_id == conflicting.id,
-                models.ScanningLog.is_error == False,
+                *_active_scan_filters(conflicting)
             ).first() is not None
 
             if has_real_activity:
@@ -480,6 +530,14 @@ def process_scan(
             status="error",
             items_remaining=0,
         )
+    if order_status == "inactive":
+        admin_name = _get_deactivation_admin_name(order.id, db)
+        return schemas.ScanResponse(
+            success=False,
+            message=f"Esta NF foi inativada por {admin_name}.",
+            status="inactive",
+            items_remaining=0,
+        )
 
     # Pedido sem transportadora não pode ser bipado — mesma trava de
     # open_order_by_nfe, aqui como segunda camada de defesa. Ver CLAUDE.md.
@@ -539,10 +597,8 @@ def process_scan(
 
     # Conta quantas vezes esse SKU já foi bipado neste pedido
     already_scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-        models.ScanningLog.order_id == order.id,
+        *_active_scan_filters(order),
         models.ScanningLog.sku == matched_item.sku,
-        models.ScanningLog.is_error == False,
-        models.ScanningLog.is_interrupted == False,
     ).scalar() or 0
 
     expected_qty = matched_item.quantity
@@ -768,6 +824,7 @@ def force_complete_session(
         models.Order.status.notin_([
             models.OrderStatus.COMPLETED,
             models.OrderStatus.CANCELLED,
+            models.OrderStatus.INACTIVE,
         ]),
     )
     if seller_id:
@@ -891,6 +948,7 @@ def cancel_handling_session(
             models.OrderStatus.COMPLETED,
             models.OrderStatus.CANCELLED,
             models.OrderStatus.INTERRUPTED,
+            models.OrderStatus.INACTIVE,
         ]),
     )
     if seller_id:
@@ -943,6 +1001,7 @@ def cancel_handling_session(
             models.OrderStatus.COMPLETED,
             models.OrderStatus.CANCELLED,
             models.OrderStatus.INTERRUPTED,
+            models.OrderStatus.INACTIVE,
         ]),
     ).count() - cancelled  # -cancelled pois ainda não commitou
 
@@ -1022,6 +1081,7 @@ def cancel_duplicate_orders(
         models.Order.session_id == session_id,
         models.Order.seller_id.in_(seller_ids),
         models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.status != models.OrderStatus.INACTIVE,
     ).all()
 
     if not orders:
@@ -1038,8 +1098,7 @@ def cancel_duplicate_orders(
             models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED,
         )
         has_real_scans = db.query(models.ScanningLog.id).filter(
-            models.ScanningLog.order_id == order.id,
-            models.ScanningLog.is_error == False,
+            *_active_scan_filters(order)
         ).first() is not None
 
         if stock_touched:
@@ -1171,6 +1230,183 @@ def cancel_duplicate_orders(
         "stock_reversed": stock_reversed_count,
         "summary": summary_lines,
         "message": f"{cancelled} pedido(s) cancelado(s) — {stock_reversed_count} com reversão de estoque.",
+    }
+
+
+@router.post("/orders/{order_id}/deactivate")
+def deactivate_order(
+    order_id: int,
+    body: dict,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    [ADMIN] Inativa uma NF individual — botão rápido do Scanner/Pedidos.
+
+    Funciona em qualquer status. Se o pedido já tinha baixado estoque
+    (completed/interrupted), reverte com um movimento de estorno — mesma
+    lógica de cancel_duplicate_orders, sem editar/apagar o movimento
+    original. Fica invisível em toda a operação (Pedidos, Manuseios,
+    Dashboard, Scanner) — só reaparece via o toggle "Mostrar NFs inativas"
+    (admin) e na Trilha de Auditoria.
+
+    Body: { "reason": str } — motivo obrigatório, vai para o AuditLog.
+    """
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Informe o motivo da inativação")
+
+    order = db.query(models.Order).options(
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    if order.status == models.OrderStatus.INACTIVE:
+        raise HTTPException(status_code=400, detail="Este pedido já está inativo")
+    if order.status == models.OrderStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="Este pedido já está cancelado")
+
+    now = now_brasilia()
+    seller_name = order.seller.trade_name if order.seller else f"Seller {order.seller_id}"
+
+    stock_reversed = False
+    if order.status in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED):
+        original_movements = db.query(models.StockMovement).filter(
+            models.StockMovement.order_id == order.id
+        ).all()
+        for mv in original_movements:
+            reverse_type = (
+                models.MovementType.OUT
+                if mv.movement_type == models.MovementType.IN
+                else models.MovementType.IN
+            )
+            db.add(models.StockMovement(
+                seller_id=mv.seller_id,
+                sku=mv.sku,
+                product_name=mv.product_name,
+                movement_date=today_brasilia(),
+                movement_type=reverse_type,
+                quantity=mv.quantity,
+                adjusted_quantity=mv.quantity,
+                nf_number=mv.nf_number,
+                nature=mv.nature,
+                order_id=order.id,
+                session_id=order.session_id,
+                operator_id=current_user.id,
+                observation=(
+                    f"ESTORNO — NF {order.nf_number} inativada por {current_user.name} "
+                    f"em {now.strftime('%d/%m/%Y %H:%M')}. Motivo: {reason}. "
+                    f"Reverte a movimentação original (movimento #{mv.id}) deste pedido."
+                ),
+            ))
+            update_stock_position(
+                seller_id=mv.seller_id,
+                sku=mv.sku,
+                product_name=mv.product_name or mv.sku,
+                movement_type=reverse_type,
+                quantity=mv.quantity,
+                db=db,
+            )
+        stock_reversed = bool(original_movements)
+
+    order.status = models.OrderStatus.INACTIVE
+
+    if order.session_id:
+        db.add(models.ScanningLog(
+            session_id=order.session_id,
+            order_id=order.id,
+            sku="INACTIVE",
+            barcode_scanned="INACTIVE",
+            quantity=0,
+            operator_id=current_user.id,
+            is_error=False,
+            is_interrupted=False,
+            error_message=f"Inativado pelo admin {current_user.name} — motivo: {reason}",
+        ))
+
+    db.add(models.AuditLog(
+        entity_type="Order",
+        entity_id=order.id,
+        action="DEACTIVATE_NF",
+        detail=(
+            f"NF {order.nf_number} ({order.customer_name}) inativada por {current_user.name}. "
+            f"Seller: {seller_name}. Motivo: {reason}. "
+            + ("Estoque revertido via movimento de estorno." if stock_reversed
+               else "Estoque não impactado (pedido ainda não havia sido concluído).")
+        ),
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"NF {order.nf_number} inativada" + (" — estoque revertido." if stock_reversed else "."),
+        "stock_reversed": stock_reversed,
+    }
+
+
+@router.post("/orders/{order_id}/reactivate")
+def reactivate_order(
+    order_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    [ADMIN] Reativa uma NF inativada. Sempre volta para `pending`, do zero —
+    nunca restaura o status/andamento anterior de bipagem.
+
+    `reactivated_at` marca o corte de ciclo: bipagem e a trava anti-duplicata
+    de estoque (update_stock_from_order) passam a ignorar tudo que aconteceu
+    antes dessa data para este pedido, então a NF só baixa estoque de novo
+    quando for bipada e concluída de verdade outra vez.
+    """
+    order = db.query(models.Order).options(
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    if order.status != models.OrderStatus.INACTIVE:
+        raise HTTPException(status_code=400, detail="Este pedido não está inativo")
+
+    now = now_brasilia()
+    seller_name = order.seller.trade_name if order.seller else f"Seller {order.seller_id}"
+
+    order.status = models.OrderStatus.PENDING
+    order.reactivated_at = now
+
+    if order.session_id:
+        db.add(models.ScanningLog(
+            session_id=order.session_id,
+            order_id=order.id,
+            sku="REACTIVATED",
+            barcode_scanned="REACTIVATED",
+            quantity=0,
+            operator_id=current_user.id,
+            is_error=False,
+            is_interrupted=False,
+            error_message=f"Reativado pelo admin {current_user.name}",
+        ))
+
+    db.add(models.AuditLog(
+        entity_type="Order",
+        entity_id=order.id,
+        action="REACTIVATE_NF",
+        detail=(
+            f"NF {order.nf_number} ({order.customer_name}) reativada por {current_user.name}. "
+            f"Seller: {seller_name}. Voltou como pendente — bipagem anterior não conta mais; "
+            f"estoque só é baixado de novo quando o pedido for concluído outra vez."
+        ),
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"NF {order.nf_number} reativada — voltou para pendente.",
     }
 
 
@@ -1306,6 +1542,7 @@ def _nf_status_rows(
     base = db.query(models.Order).filter(
         models.Order.seller_id == seller_id,
         models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.status != models.OrderStatus.INACTIVE,
         models.Order.imported_at >= date_from,
         models.Order.imported_at <= end_of_day(date_to),
     )
@@ -1639,13 +1876,43 @@ def _save_audit_csv(log: models.ScanningLog, order: models.Order, user: models.U
 # Funções auxiliares
 # ============================================================
 
+def _active_scan_filters(order: models.Order) -> list:
+    """
+    Filtros padrão de 'bipagem real' de um pedido — exclui erro/interrupção e,
+    se a NF já foi reativada depois de inativada, ignora bipagem anterior ao
+    corte do ciclo novo (order.reactivated_at). Ver deactivate_order/
+    reactivate_order e update_stock_from_order (stock_manager.py).
+    """
+    filters = [
+        models.ScanningLog.order_id == order.id,
+        models.ScanningLog.is_error == False,
+        models.ScanningLog.is_interrupted == False,
+    ]
+    if order.reactivated_at:
+        filters.append(models.ScanningLog.timestamp > order.reactivated_at)
+    return filters
+
+
+def _get_deactivation_admin_name(order_id: int, db: Session) -> str:
+    """Nome do admin que inativou a NF pela última vez, via AuditLog — usado
+    nas mensagens de rejeição quando alguém tenta biper uma NF inativa."""
+    log = db.query(models.AuditLog).filter(
+        models.AuditLog.entity_type == "Order",
+        models.AuditLog.entity_id == order_id,
+        models.AuditLog.action == "DEACTIVATE_NF",
+    ).order_by(models.AuditLog.id.desc()).first()
+    if log and log.user_id:
+        user = db.query(models.User).filter(models.User.id == log.user_id).first()
+        if user:
+            return user.name
+    return "um administrador"
+
+
 def _count_remaining(order: models.Order, db: Session) -> int:
     """Conta itens restantes para bipar no pedido."""
     total = sum(item.quantity for item in order.items)
     scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-        models.ScanningLog.order_id == order.id,
-        models.ScanningLog.is_error == False,
-        models.ScanningLog.is_interrupted == False,
+        *_active_scan_filters(order)
     ).scalar() or 0
     return max(0, total - scanned)
 
@@ -1658,9 +1925,7 @@ def _count_remaining_after_scan(
     """Conta itens restantes considerando que acabou de bipar 1 item do SKU."""
     total = sum(item.quantity for item in order.items)
     scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-        models.ScanningLog.order_id == order.id,
-        models.ScanningLog.is_error == False,
-        models.ScanningLog.is_interrupted == False,
+        *_active_scan_filters(order)
     ).scalar() or 0
     # +1 pois o log atual ainda não foi commitado
     return max(0, total - scanned - 1)
@@ -1674,9 +1939,7 @@ def _build_progress(order: models.Order, db: Session) -> dict:
             models.ScanningLog.sku,
             func.sum(models.ScanningLog.quantity),
         ).filter(
-            models.ScanningLog.order_id == order.id,
-            models.ScanningLog.is_error == False,
-            models.ScanningLog.is_interrupted == False,
+            *_active_scan_filters(order)
         ).group_by(models.ScanningLog.sku).all()
     )
 
@@ -1822,13 +2085,13 @@ def session_cards(
             all_orders = info["orders"]
 
             # Exclui pedidos cancelados do total visível no kanban.
-            # Se TODOS estiverem cancelados → não exibe o card.
+            # Se TODOS estiverem cancelados/inativos → não exibe o card.
             active_orders = [
                 o for o in all_orders
-                if (o.status.value if hasattr(o.status, "value") else o.status) != "cancelled"
+                if (o.status.value if hasattr(o.status, "value") else o.status) not in ("cancelled", "inactive")
             ]
             if not active_orders:
-                continue  # seller totalmente cancelado — remove o card
+                continue  # seller totalmente cancelado/inativo — remove o card
 
             orders = active_orders
             total = len(orders)

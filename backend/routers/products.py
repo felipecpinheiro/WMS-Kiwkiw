@@ -884,6 +884,7 @@ def kit_expansion_log(
             models.OrderItem.is_kit_component == True,
             models.OrderItem.original_kit_sku.isnot(None),
             models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
         )
     )
 

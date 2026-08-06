@@ -33,6 +33,7 @@ class OrderStatus(str, enum.Enum):
     COMPLETED = "completed"      # Todos pedidos bipados
     INTERRUPTED = "interrupted"  # Pedido interrompido pelo operador
     CANCELLED = "cancelled"      # Cancelado
+    INACTIVE = "inactive"        # Inativado pelo admin (NF individual) — reversível
 
 class MovementType(str, enum.Enum):
     IN = "Entrada"
@@ -294,6 +295,7 @@ class Order(Base):
     for_billing = Column(Boolean, default=True)             # considerar para faturamento
     imported_at = Column(DateTime, default=now_brasilia)
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)
+    reactivated_at = Column(DateTime, nullable=True)         # marca o "corte de ciclo" ao reativar NF inativada — bipagem/estoque anteriores a esta data não contam mais
 
     # Relacionamentos
     seller = relationship("Seller")

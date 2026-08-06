@@ -404,8 +404,13 @@ export const ordersApi = {
 export const scanningApi = {
   sessions: (params?: Record<string, any>) =>
     api.get<PickingSession[]>('/scanning/sessions', { params }),
-  sessionOrders: (sessionId: number, sellerId?: number) =>
-    api.get(`/scanning/sessions/${sessionId}/orders`, { params: sellerId ? { seller_id: sellerId } : {} }),
+  sessionOrders: (sessionId: number, sellerId?: number, includeInactive?: boolean) =>
+    api.get(`/scanning/sessions/${sessionId}/orders`, {
+      params: {
+        ...(sellerId ? { seller_id: sellerId } : {}),
+        ...(includeInactive ? { include_inactive: true } : {}),
+      },
+    }),
   scan: (data: ScanRequest) =>
     api.post<ScanResponse>('/scanning/scan', data),
   interrupt: (data: {
@@ -478,6 +483,18 @@ export const scanningApi = {
     }>(
       `/scanning/sessions/${sessionId}/cancel-duplicate-orders`,
       { seller_ids: sellerIds, confirm },
+    ),
+  /** [Admin] Inativa uma NF individual. Motivo obrigatório — vai para o log de auditoria. */
+  deactivateOrder: (orderId: number, reason: string) =>
+    api.post<{ success: boolean; message: string; stock_reversed: boolean }>(
+      `/scanning/orders/${orderId}/deactivate`,
+      { reason },
+    ),
+  /** [Admin] Reativa uma NF inativada — sempre volta como pendente. */
+  reactivateOrder: (orderId: number) =>
+    api.post<{ success: boolean; message: string }>(
+      `/scanning/orders/${orderId}/reactivate`,
+      {},
     ),
   suggestedBox: (orderId: number) =>
     api.get<{ order_id: number; suggested: string | null; box_used: string | null; effective: string | null }>(

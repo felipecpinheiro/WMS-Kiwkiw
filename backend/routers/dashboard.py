@@ -151,6 +151,7 @@ def master_dashboard(
     base_filter = [
         _imported_on(target),
         models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.status != models.OrderStatus.INACTIVE,
         models.Order.seller_id.in_(active_sellers),
     ]
     if unit_id:
@@ -199,7 +200,7 @@ def master_dashboard(
         for order in sess.orders:
             if order.seller is not None and not order.seller.active:
                 continue
-            if order.status == models.OrderStatus.CANCELLED:
+            if order.status in (models.OrderStatus.CANCELLED, models.OrderStatus.INACTIVE):
                 continue
             seller_orders.setdefault(order.seller_id, []).append(order)
         for sid, sorders in seller_orders.items():
@@ -220,6 +221,7 @@ def master_dashboard(
     if unit_id:
         sessions_with_unit_orders = db.query(models.Order.session_id).filter(
             models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
             models.Order.seller_id.in_(sellers_in_unit),
         ).distinct().scalar_subquery()
         session_filter.append(models.PickingSession.id.in_(sessions_with_unit_orders))
@@ -252,6 +254,7 @@ def master_dashboard(
         unit_filter = [
             _imported_on(target),
             models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
             models.Order.seller_id.in_(sellers_of_unit),
         ]
         if manager_seller_ids:
@@ -361,6 +364,7 @@ def master_dashboard(
         ).filter(
             _session_created_on(target),
             models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
             models.Order.seller_id.in_(sellers_in_unit),
         ).order_by(models.PickingSession.id.desc()).limit(1).scalar()
         last_session = (
@@ -511,6 +515,7 @@ def master_dashboard(
         ).filter(
             models.Order.session_id.in_(session_ids_today),
             models.Order.status != models.OrderStatus.CANCELLED,
+            models.Order.status != models.OrderStatus.INACTIVE,
         ).distinct().all():
             sellers_by_session.setdefault(sid, []).append((seller_id, seller_name))
 
@@ -647,6 +652,7 @@ def seller_dashboard(
         func.date(models.Order.imported_at) >= start,
         func.date(models.Order.imported_at) <= end,
         models.Order.status != models.OrderStatus.CANCELLED,
+        models.Order.status != models.OrderStatus.INACTIVE,
     ]
     if seller_id:
         base_filter.append(models.Order.seller_id == seller_id)

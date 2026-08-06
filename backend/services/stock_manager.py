@@ -121,13 +121,25 @@ def update_stock_from_order(order, db: Session) -> None:
     Atualiza estoque quando um pedido individual é concluído no scanner.
     Chamado em tempo real, no momento que o último item é bipado.
     Evita duplicata: não cria movimento se já existe um para esta order_id.
+
+    Quando o pedido foi inativado e depois reativado (order.reactivated_at
+    preenchido), movimentos ANTERIORES ao corte não contam pra anti-duplicata
+    — senão o estorno feito na inativação (que também usa este order_id)
+    faria a NF nunca mais baixar estoque numa 2ª conclusão real. Ver
+    deactivate_order/reactivate_order em routers/scanning.py.
     """
     # Evita dupla contagem — usa SQL raw para não crashar com enum legado
     from .. import models as _m
-    existing_count = db.execute(
-        text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid"),
-        {"oid": order.id},
-    ).scalar()
+    if order.reactivated_at:
+        existing_count = db.execute(
+            text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid AND created_at > :cutoff"),
+            {"oid": order.id, "cutoff": order.reactivated_at},
+        ).scalar()
+    else:
+        existing_count = db.execute(
+            text("SELECT COUNT(*) FROM stock_movements WHERE order_id = :oid"),
+            {"oid": order.id},
+        ).scalar()
     if existing_count:
         return
 

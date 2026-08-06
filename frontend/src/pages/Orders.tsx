@@ -10,9 +10,11 @@ import { format } from 'date-fns';
 import {
   Search, ScanLine, Package, Settings,
   ArrowDownToLine, ArrowUpFromLine, DollarSign, XCircle, Download,
+  Ban, RotateCcw,
 } from 'lucide-react';
 import { scanningApi, ordersApi } from '../api';
 import type { Order, PickingSession } from '../api';
+import { usePermissions } from '../hooks/usePermissions';
 import toast from 'react-hot-toast';
 
 // ─── Utilitários ─────────────────────────────────────────────
@@ -25,6 +27,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   completed:   { label: 'Concluído',     color: 'bg-emerald-900/40 text-emerald-300 border border-emerald-500/20' },
   interrupted: { label: 'Interrompido',  color: 'bg-orange-900/40 text-orange-300 border border-orange-500/20' },
   cancelled:   { label: 'Cancelado',     color: 'bg-red-900/40 text-red-300 border border-red-500/20' },
+  inactive:    { label: 'Inativo',       color: 'bg-red-950/50 text-red-400/70 border border-red-500/10' },
 };
 
 const normalizeFileType = (ft?: string): 'Saída' | 'Entrada' | '' => {
@@ -327,10 +330,47 @@ function SessionOrdersModal({
   onClose: () => void;
   onSelectOrder: (orderId: number) => void;
 }) {
-  const { data: sessionOrders = [], isLoading } = useQuery(
-    ['session-orders-modal', session.id],
-    () => scanningApi.sessionOrders(session.id).then(r => (r.data as any).orders ?? r.data),
+  const { isAdmin } = usePermissions();
+  const [showInactive, setShowInactive] = useState(false);
+  const [deactivateTarget, setDeactivateTarget] = useState<any | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState('');
+  const [deactivating, setDeactivating] = useState(false);
+  const [reactivatingId, setReactivatingId] = useState<number | null>(null);
+
+  const { data: sessionOrders = [], isLoading, refetch } = useQuery(
+    ['session-orders-modal', session.id, isAdmin && showInactive],
+    () => scanningApi.sessionOrders(session.id, undefined, isAdmin && showInactive)
+      .then(r => (r.data as any).orders ?? r.data),
   );
+
+  const handleDeactivate = async () => {
+    if (!deactivateTarget || !deactivateReason.trim()) return;
+    setDeactivating(true);
+    try {
+      const res = await scanningApi.deactivateOrder(deactivateTarget.id, deactivateReason.trim());
+      toast.success(res.data.message || 'NF inativada');
+      setDeactivateTarget(null);
+      setDeactivateReason('');
+      refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao inativar NF');
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
+  const handleReactivate = async (orderId: number) => {
+    setReactivatingId(orderId);
+    try {
+      const res = await scanningApi.reactivateOrder(orderId);
+      toast.success(res.data.message || 'NF reativada');
+      refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao reativar NF');
+    } finally {
+      setReactivatingId(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -343,7 +383,20 @@ function SessionOrdersModal({
             </p>
             <h3 className="text-base font-semibold text-white mt-0.5">Pedidos da Sessão</h3>
           </div>
-          <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+          <div className="flex items-center gap-3">
+            {isAdmin && (
+              <label className="flex items-center gap-1.5 text-xs text-white/40 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showInactive}
+                  onChange={e => setShowInactive(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-violet-500"
+                />
+                Mostrar só NFs inativas
+              </label>
+            )}
+            <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+          </div>
         </div>
 
         <div className="overflow-y-auto flex-1">
@@ -358,17 +411,21 @@ function SessionOrdersModal({
                   <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Seller</th>
                   <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Status</th>
                   <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Bipagem</th>
+                  {isAdmin && (
+                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Ações</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {(sessionOrders as any[]).map(o => {
                   const done = o.scanned_items >= o.total_items && o.total_items > 0;
                   const partial = o.scanned_items > 0 && !done;
+                  const isInactive = o.is_inactive ?? (o.status === 'inactive');
                   return (
                     <tr
                       key={o.id}
-                      onClick={() => { onClose(); onSelectOrder(o.id); }}
-                      className="border-b border-white/5 hover:bg-white/4 cursor-pointer transition"
+                      onClick={() => { if (!isInactive) { onClose(); onSelectOrder(o.id); } }}
+                      className={`border-b border-white/5 transition ${isInactive ? 'opacity-50' : 'hover:bg-white/4 cursor-pointer'}`}
                     >
                       <td className="py-2.5 px-4 text-sm font-mono text-white/80">{o.nf_number}</td>
                       <td className="py-2.5 px-4 text-sm text-white/70 max-w-[160px] truncate">{o.customer_name}</td>
@@ -379,6 +436,27 @@ function SessionOrdersModal({
                           {o.scanned_items} de {o.total_items}
                         </span>
                       </td>
+                      {isAdmin && (
+                        <td className="py-2.5 px-4 text-right" onClick={e => e.stopPropagation()}>
+                          {isInactive ? (
+                            <button
+                              onClick={() => handleReactivate(o.id)}
+                              disabled={reactivatingId === o.id}
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                            >
+                              <RotateCcw size={12} /> {reactivatingId === o.id ? 'Reativando...' : 'Reativar'}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { setDeactivateTarget(o); setDeactivateReason(''); }}
+                              title="Inativar NF"
+                              className="inline-flex items-center gap-1 text-xs text-white/30 hover:text-red-400 transition"
+                            >
+                              <Ban size={12} /> Inativar
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -394,6 +472,50 @@ function SessionOrdersModal({
           </button>
         </div>
       </div>
+
+      {/* ── Inativar NF dialog ─────────────────────────────── */}
+      {deactivateTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={e => e.stopPropagation()}>
+          <div className="bg-gray-900 border border-red-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                <Ban size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Inativar NF</h3>
+                <p className="text-xs text-white/40">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
+              </div>
+            </div>
+            <p className="text-sm text-white/60 mb-3">
+              A NF some da operação (Pedidos, Manuseios, Dashboard) e só volta se você mesmo reativar. Informe o motivo:
+            </p>
+            <textarea
+              value={deactivateReason}
+              onChange={e => setDeactivateReason(e.target.value)}
+              placeholder="Ex: NF errada, duplicidade, pedido cancelado pelo cliente..."
+              rows={3}
+              autoFocus
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-red-500 resize-none"
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => { setDeactivateTarget(null); setDeactivateReason(''); }}
+                disabled={deactivating}
+                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeactivate}
+                disabled={deactivating || !deactivateReason.trim()}
+                className="flex-1 py-2.5 text-sm font-semibold text-red-400 border border-red-400/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
+              >
+                {deactivating ? 'Inativando...' : 'Inativar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -850,9 +972,13 @@ export default function OrdersPage() {
             className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
           >
             <option value="">Todos os status</option>
-            {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-              <option key={k} value={k}>{v.label}</option>
-            ))}
+            {Object.entries(STATUS_CONFIG)
+              // NF inativa não aparece nesta tabela (nem para admin) — só no
+              // toggle "Mostrar NFs inativas" dentro do modal de uma sessão.
+              .filter(([k]) => k !== 'inactive')
+              .map(([k, v]) => (
+                <option key={k} value={k}>{v.label}</option>
+              ))}
           </select>
 
           {/* Limpar filtros da tabela */}

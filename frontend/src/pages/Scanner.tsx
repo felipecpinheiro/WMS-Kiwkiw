@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from 'react-query';
 import {
   CheckCircle, XCircle, AlertTriangle, ScanLine, Package,
   LogOut, Pause, KeyRound, ClipboardList, Plus, ZoomIn, X,
+  Ban, RotateCcw,
 } from 'lucide-react';
 import { scanningApi, cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
@@ -38,6 +39,7 @@ interface SessionOrder {
   seller_id: number | null;
   carrier: string;
   status: string;
+  is_inactive: boolean;
   items_total: number;
   items_scanned: number;
   items: SessionOrderItem[];
@@ -180,6 +182,7 @@ export default function ScannerPage() {
 
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { id: 1, name: 'Operador' };
+  const isAdmin = user?.role === 'admin';
 
   // ── 1b: Restaura NF ativa do sessionStorage ao dar refresh ──
   const storedOrderId = sessionStorage.getItem(`scanner_${sessionId}_activeOrder`);
@@ -210,12 +213,18 @@ export default function ScannerPage() {
   const [savingProduct, setSavingProduct] = useState(false);
   // C: lightbox de imagem
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // ── Inativar/reativar NF (admin) ────────────────────────────
+  const [showInactive, setShowInactive] = useState(false);
+  const [deactivateTarget, setDeactivateTarget] = useState<SessionOrder | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState('');
+  const [deactivating, setDeactivating] = useState(false);
+  const [reactivatingId, setReactivatingId] = useState<number | null>(null);
 
   // Fetch orders
   const { data: ordersRaw = [], isLoading, isError, error } = useQuery(
-    ['session-orders', sessionId, sellerId],
+    ['session-orders', sessionId, sellerId, isAdmin && showInactive],
     async () => {
-      const r = await scanningApi.sessionOrders(Number(sessionId), sellerId);
+      const r = await scanningApi.sessionOrders(Number(sessionId), sellerId, isAdmin && showInactive);
       const raw = Array.isArray(r.data) ? r.data : (r.data?.orders ?? []);
       return (raw as any[]).map((o): SessionOrder => ({
         id: o.id,
@@ -225,6 +234,7 @@ export default function ScannerPage() {
         seller_id: o.seller_id ?? null,
         carrier: o.carrier ?? '',
         status: o.status,
+        is_inactive: o.is_inactive ?? (o.status === 'inactive'),
         items_total: o.total_items ?? o.items_total ?? 0,
         items_scanned: o.scanned_items ?? o.items_scanned ?? 0,
         items: (o.items ?? []).map((it: any) => ({
@@ -427,6 +437,10 @@ export default function ScannerPage() {
           o.id === data.order_id && o.status === 'pending'
             ? { ...o, status: 'scanning' } : o
         ));
+      } else if (data.blocked_reason === 'inactive') {
+        setFeedback({ state: 'error', title: '✗ NF inativada', message: data.message });
+        toast.error(data.message, { duration: 6000 });
+        setTimeout(() => navigate('/manuseios'), 2500);
       } else {
         setFeedback({ state: 'error', title: '✗ NFe não encontrada', message: data.message || 'Verifique a etiqueta' });
       }
@@ -534,6 +548,11 @@ export default function ScannerPage() {
         // completa de pedidos da sessão NÃO é mais recarregada a cada bipe —
         // o order_progress acima já mantém o pedido ativo consistente.
         qc.invalidateQueries(['scan-logs', sessionId]);
+      } else if (data.status === 'inactive') {
+        setFeedback({ state: 'error', title: '✗ NF inativada', message: data.message });
+        toast.error(data.message, { duration: 6000 });
+        setActiveOrderId(null);
+        setTimeout(() => navigate('/manuseios'), 2500);
       } else {
         setFeedback({ state: 'error', title: '✗ Código inválido', message: data.message ?? 'Produto não pertence a este pedido' });
       }
@@ -562,6 +581,41 @@ export default function ScannerPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') handleScan(barcodeInput);
+  };
+
+  // ── Inativar/reativar NF (admin) ────────────────────────────
+
+  const handleDeactivateOrder = async () => {
+    if (!deactivateTarget || !deactivateReason.trim()) return;
+    setDeactivating(true);
+    try {
+      const res = await scanningApi.deactivateOrder(deactivateTarget.id, deactivateReason.trim());
+      toast.success(res.data.message || 'NF inativada');
+      if (activeOrderId === deactivateTarget.id) {
+        setActiveOrderId(null);
+        setFeedback({ state: 'idle', title: '', message: '' });
+      }
+      setDeactivateTarget(null);
+      setDeactivateReason('');
+      qc.invalidateQueries(['session-orders', sessionId, sellerId]);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao inativar NF');
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
+  const handleReactivateOrder = async (orderId: number) => {
+    setReactivatingId(orderId);
+    try {
+      const res = await scanningApi.reactivateOrder(orderId);
+      toast.success(res.data.message || 'NF reativada');
+      qc.invalidateQueries(['session-orders', sessionId, sellerId]);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao reativar NF');
+    } finally {
+      setReactivatingId(null);
+    }
   };
 
   // ── Interrupt ────────────────────────────────────────────
@@ -730,7 +784,20 @@ export default function ScannerPage() {
 
         {/* Order list — informativo apenas (não clicável para abrir) */}
         <div className="flex-1 overflow-y-auto p-2">
-          <p className="text-[9px] text-white/25 uppercase tracking-widest px-2 mb-2">Pedidos da sessão</p>
+          <div className="flex items-center justify-between px-2 mb-2">
+            <p className="text-[9px] text-white/25 uppercase tracking-widest">Pedidos da sessão</p>
+            {isAdmin && (
+              <label className="flex items-center gap-1 text-[9px] text-white/30 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showInactive}
+                  onChange={e => setShowInactive(e.target.checked)}
+                  className="w-3 h-3 accent-violet-500"
+                />
+                Só NFs inativas
+              </label>
+            )}
+          </div>
           {isLoading ? (
             <p className="text-xs text-white/30 text-center py-4">Carregando...</p>
           ) : isError ? (
@@ -740,18 +807,52 @@ export default function ScannerPage() {
           ) : localOrders.map(order => {
             const isActive = order.id === activeOrderId;
             const pct = order.items_total > 0 ? Math.round((order.items_scanned / order.items_total) * 100) : 0;
-            const dotColor = order.status === 'completed' ? 'bg-green-400'
+            const dotColor = order.is_inactive ? 'bg-red-500/60'
+              : order.status === 'completed' ? 'bg-green-400'
               : order.status === 'scanning' ? 'bg-blue-400'
               : order.status === 'interrupted' ? 'bg-orange-400'
               : 'bg-gray-600';
 
+            if (order.is_inactive) {
+              return (
+                <div key={order.id}
+                  className="p-2.5 rounded-lg mb-1 border border-red-500/10 bg-red-500/5 opacity-60">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                    <p className="text-[10px] font-mono text-white/50 truncate flex-1">NF {order.nf_number}</p>
+                    <span className="text-[9px] font-semibold text-red-400/70">inativa</span>
+                  </div>
+                  {order.seller && (
+                    <p className="text-[9px] font-medium pl-4 truncate" style={{ color: '#9B87F0' }}>{order.seller}</p>
+                  )}
+                  <p className="text-xs text-white/70 truncate pl-4">{order.customer_name}</p>
+                  <button
+                    onClick={() => handleReactivateOrder(order.id)}
+                    disabled={reactivatingId === order.id}
+                    className="mt-1.5 ml-4 flex items-center gap-1 text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                  >
+                    <RotateCcw size={10} /> {reactivatingId === order.id ? 'Reativando...' : 'Reativar'}
+                  </button>
+                </div>
+              );
+            }
+
             return (
               <div key={order.id}
-                className={`p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-green-500/30' : 'border-transparent hover:bg-white/3'}`}>
+                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-green-500/30' : 'border-transparent hover:bg-white/3'}`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
                   <p className="text-[10px] font-mono text-white/50 truncate flex-1">NF {order.nf_number}</p>
                   <span className="text-[9px] text-white/30">{pct}%</span>
+                  {isAdmin && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeactivateTarget(order); setDeactivateReason(''); }}
+                      title="Inativar NF"
+                      className="opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition"
+                    >
+                      <Ban size={11} />
+                    </button>
+                  )}
                 </div>
                 {order.seller && (
                   <p className="text-[9px] font-medium pl-4 truncate" style={{ color: '#9B87F0' }}>{order.seller}</p>
@@ -1085,6 +1186,50 @@ export default function ScannerPage() {
                 className="flex-1 py-2.5 text-sm font-semibold text-orange-400 border border-orange-400/40 rounded-xl hover:bg-orange-500/10 transition"
               >
                 Interromper
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Inativar NF dialog (admin) ──────────────────────── */}
+      {deactivateTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-red-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                <Ban size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Inativar NF</h3>
+                <p className="text-xs text-white/40">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
+              </div>
+            </div>
+            <p className="text-sm text-white/60 mb-3">
+              A NF some da operação (Pedidos, Manuseios, Dashboard) e só volta se você mesmo reativar. Informe o motivo:
+            </p>
+            <textarea
+              value={deactivateReason}
+              onChange={e => setDeactivateReason(e.target.value)}
+              placeholder="Ex: NF errada, duplicidade, pedido cancelado pelo cliente..."
+              rows={3}
+              autoFocus
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-red-500 resize-none"
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => { setDeactivateTarget(null); setDeactivateReason(''); }}
+                disabled={deactivating}
+                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeactivateOrder}
+                disabled={deactivating || !deactivateReason.trim()}
+                className="flex-1 py-2.5 text-sm font-semibold text-red-400 border border-red-400/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
+              >
+                {deactivating ? 'Inativando...' : 'Inativar'}
               </button>
             </div>
           </div>

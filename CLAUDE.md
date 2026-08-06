@@ -39,6 +39,76 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 06/08/2026
+
+**Dois commits implementados e testados:**
+
+### Commit `9159044b` — Estoque baixa na importação, não na bipagem
+
+**Descrição:** A regra de negócio mudou. O estoque **deixou de ser sensibilizado na bipagem** (quando o operador concluía o manuseio) e agora **baixa no fim da importação, NF a NF**. 
+
+**Motivo:** O seller vendia segundo 20h, a Kiwkiw manuseava terça 17h, e o estoque ficava ~24h defasado — inviável em escala. Agora fica atualizado no instante do upload.
+
+**Bloqueios:**
+- NF precisa ter **transportadora preenchida**
+- Todos os SKUs precisam ter **produto ativo cadastrado**
+- Sem isso, fica **pendente e baixa sozinha** quando alguém preenche a transportadora ou cadastra o produto
+
+**Coluna nova:** `Order.stock_applied_at` (TIMESTAMP, nullable) marca quando a NF baixou. Migração idempotente no `run_light_migrations()`.
+
+**O que mudou no código:**
+- `backend/services/stock_manager.py`: Reescrito inteiramente. Removidas `update_stock_from_order()` e `update_stock_from_session()` (mortas em bipagem). Adicionadas `apply_stock_for_orders()`, `order_has_stock_applied()`, `order_stock_sign()`, `evaluate_orders_for_stock()`, `release_pending_orders_for_sku()`.
+- `backend/routers/orders.py`: Import agora chama `apply_stock_for_orders()` dentro da transação. Endpoint `PATCH /orders/{id}/carrier` destrava e baixa. `GET /orders/pending-stock` lista NFs não baixadas.
+- `backend/routers/scanning.py`: Removidas chamadas a `update_stock_from_order` de `process_scan()`, `interrupt_order()`, `force_complete_session()`. `cancel_duplicate_orders()` e `cancel_handling()` agora estornam usando `order_has_stock_applied()`.
+- `backend/schemas.py`: Adicionadas `StockApplyReport`, `NegativeStockInfo`, `PendingStockOrderInfo`, `MissingProductInfo`.
+- `frontend/src/pages/Dashboard.tsx`: Modal pós-import mostrando negativos, pendentes e cadastro de produto faltante. Aviso fixo de NFs que não subiram.
+- `frontend/src/pages/Orders.tsx`: Marca "sem estoque" nas linhas que ainda não baixaram.
+
+**Bugs corrigidos:**
+1. `FileType.IN` não existe (era `IMPORT`) — marcar "Entrada" no import dava 500
+2. O sinal do movimento vinha da natureza da NF, não do tipo do arquivo — NF de entrada com natureza fora do mapa dava baixa em vez de entrada
+3. Bug pré-existente no Postgres: `CAST(movement_type AS TEXT)` necessário em `reverse_stock_for_order()` ou estoura `InvalidTextRepresentation`
+
+**Testes:** 32 verificações de unidade (Postgres + SQLite) + 21 verificações E2E HTTP — **100% PASSOU**
+
+---
+
+### Commit `4e5d2d45` — NF com SKU sem produto cadastrado não entra mais no manuseio
+
+**Descrição:** Uma NF cujo SKU não tem produto ativo cadastrado é **impossível de bipar** (sem produto não há `barcode_seller` pra casar). Antes disso, entrava no kanban normalmente e o operador só descobria errando na bancada item por item.
+
+Agora ela **fica fora do manuseio** e **volta sozinha** quando o produto for cadastrado.
+
+**Implementação:**
+- `backend/services/stock_manager.py`: Adicionada `orders_missing_product_skus()` — consulta agrupada que retorna `{order_id: [sku, ...]}` para NFs com SKU faltante. Usa `(seller_id, sku)` no cadastro de produtos, **nunca** o FK `OrderItem.product_id` (que fica nulo quando produto é criado depois do import).
+- `backend/routers/scanning.py`: 
+  - `get_session_orders()`: Filtra NFs seguidas, expõe `held_orders` com SKUs faltantes
+  - `open_order_by_nfe()`: Bloqueia com `blocked_reason="missing_product"` listando SKUs faltantes
+  - `session_cards()`: NFs seguradas saem dos totais, card recebe `held_orders` e `held_only`
+- `frontend/src/pages/Handling.tsx`: Badge "🔒 sem produto cadastrado" nos cards, com tooltip explicativo
+
+**Pontos críticos:**
+- Card do seller **não some** mesmo se todas as NFs dele estiverem seguradas — senão a pendência fica invisível
+- Sem válvula de escape: para liberar, cadastra-se o produto
+- O critério é sempre `(seller_id, sku)` — versão anterior (pego no teste) usava FK e reportava SKU faltante que já tinha produto
+
+**Testes:** 21 verificações E2E HTTP via testclient — **100% PASSOU**
+
+---
+
+## Resultado de Hoje
+
+| Métrica | Antes | Depois |
+|---------|-------|--------|
+| Defasagem de estoque | ~24h | ~0h (atualiza no import) |
+| NFs impossíveis de bipar | Descobertas na bancada | Sinalizadas de cara |
+| Testes automáticos | — | 106 verificações, 100% verde |
+| Commits | — | 2 em produção |
+
+**Deploy:** Automático no Railway. Migração idempotente não causa downtime.
+
+---
+
 ## Stack Tecnológica
 
 ### Backend

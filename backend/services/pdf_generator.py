@@ -107,8 +107,8 @@ def generate_pdfs_for_session(
 
     for unit_name, unit_order_list in sorted(unit_orders.items()):
         output_dir = _resolve_pdf_dir(base_folder, unit_name, session.session_date)
-        exp_path = generate_separation_report(session, db, output_dir, orders=unit_order_list)
-        sep_path = generate_expedition_report(session, db, output_dir, orders=unit_order_list)
+        sep_path = generate_separation_report(session, db, output_dir, orders=unit_order_list)
+        exp_path = generate_expedition_report(session, db, output_dir, orders=unit_order_list)
         results.append((sep_path, exp_path))
 
     return results
@@ -118,14 +118,14 @@ def generate_pdfs_for_session(
 # RELATÓRIO DE EXPEDIÇÃO — Lista de picking consolidada por seller
 # Para o separador ir ao estoque e retirar os produtos.
 # ════════════════════════════════════════════════════════════════
-def generate_expedition_report(
+def generate_separation_report(
     session: models.PickingSession,
     db: Session,
     output_dir: str,
     orders: list | None = None,
 ) -> str:
     """
-    Relatório de Expedição = lista de PICKING consolidada.
+    Relatório de Separação = lista de PICKING consolidada.
     Agrupa por seller → SKU, mostrando quantidade total a separar no estoque.
     Design claro (branco) para impressão econômica.
     """
@@ -259,14 +259,14 @@ def generate_expedition_report(
 # ════════════════════════════════════════════════════════════════
 # RELATÓRIO DE SEPARAÇÃO — Resumo + detalhe por NF/cliente/transportadora
 # ════════════════════════════════════════════════════════════════
-def generate_separation_report(
+def generate_expedition_report(
     session: models.PickingSession,
     db: Session,
     output_dir: str,
     orders: list | None = None,
 ) -> str:
     """
-    Relatório de Separação = detalhado por NF/cliente/transportadora.
+    Relatório de Expedição = detalhado por NF/cliente/transportadora.
     Página 1: resumo por seller (pedidos + volumes).
     Páginas seguintes: seller | #NF | cliente | cód sku | nome produto | transportadora | qtd.
     - Quebra de página entre sellers.
@@ -623,10 +623,10 @@ def generate_separation_bytes(
 
     safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
     sellers_tag = _sellers_suffix(orders)
-    filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+    filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
-        path = generate_expedition_report(session, db, tmpdir, orders=orders)
+        path = generate_separation_report(session, db, tmpdir, orders=orders)
         with open(path, 'rb') as f:
             data = f.read()
 
@@ -657,10 +657,10 @@ def generate_expedition_bytes(
 
     safe_unit = _re.sub(r'[^\w\- ]', '', unit_name).strip().replace(' ', '_') or "SEM_UNIDADE"
     sellers_tag = _sellers_suffix(orders)
-    filename = f"SEPARACAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
+    filename = f"EXPEDICAO_{session.session_date.strftime('%Y%m%d')}_{safe_unit}_{sellers_tag}_{session.id}.pdf"
 
     with _tempfile.TemporaryDirectory() as tmpdir:
-        path = generate_separation_report(session, db, tmpdir, orders=orders)
+        path = generate_expedition_report(session, db, tmpdir, orders=orders)
         with open(path, 'rb') as f:
             data = f.read()
 

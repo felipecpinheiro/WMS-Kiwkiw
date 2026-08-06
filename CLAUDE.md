@@ -567,16 +567,14 @@ Os PDFs são gerados com **ReportLab** seguindo identidade visual da Kiwkiw:
 - O dashboard checa `bool(sess.separation_pdf or sess.check_separation)` — compatível com ambos os modos
 - Botões de PDF no histórico ficam destacados (verde) quando o PDF foi gerado; acinzentados caso contrário
 
-**⚠️ Atenção — nomes das funções vs. conteúdo dos relatórios (inversão intencional):**
+**Nomes das funções vs. conteúdo dos relatórios (corrigido em 06/08/2026):**
 
-Os nomes das funções internas (`generate_expedition_report` / `generate_separation_report`) estão **invertidos** em relação ao nome do arquivo gerado. Isso é intencional — resultado de uma correção de nomenclatura feita na sessão de 17/06/2026:
+Até 06/08/2026, os nomes das funções internas (`generate_expedition_report` / `generate_separation_report`) estavam **invertidos** em relação ao conteúdo que geravam — herança de uma correção de nomenclatura feita na sessão de 17/06/2026 que só ajustou o nome do arquivo, não o nome da função. Isso também fazia os endpoints on-demand (`generate_separation_bytes`/`generate_expedition_bytes`) devolverem o PDF com o nome de arquivo trocado (conteúdo certo, `filename` do download errado), e os botões do histórico no Dashboard mostravam o rótulo oposto ao papel real do botão. Corrigido de ponta a ponta: nome da função, nome do arquivo dos endpoints on-demand e rótulo dos botões agora batem entre si.
 
 | Função interna | Arquivo gerado | Conteúdo |
 |---|---|---|
-| `generate_expedition_report` | `SEPARACAO_...pdf` | Lista de picking consolidada por seller → SKU (colunas: Seller \| Cód SKU \| Qtd \| Nome Produto) |
-| `generate_separation_report` | `EXPEDICAO_...pdf` | Detalhe por NF/cliente/transportadora + romaneio por transportadora |
-
-**Não "corrigir" essa inversão** sem entender o histórico — o conteúdo de cada relatório é o correto, só os nomes das funções que ficaram herdados do código anterior.
+| `generate_separation_report` | `SEPARACAO_...pdf` | Lista de picking consolidada por seller → SKU (colunas: Seller \| Cód SKU \| Qtd \| Nome Produto) |
+| `generate_expedition_report` | `EXPEDICAO_...pdf` | Detalhe por NF/cliente/transportadora + romaneio por transportadora |
 
 **Nome do arquivo gerado:**
 ```
@@ -592,7 +590,7 @@ A unidade vem de `seller.unit.name` (ou `SEM_UNIDADE` se seller sem unidade asso
 4. Se o download falhar, o toast mostra a mensagem real vinda de `err.response.data.detail` (não um texto genérico) — corrigido em 27/07/2026 justamente para diagnosticar o bug abaixo
 
 **⚠️ Bug corrigido (27/07/2026) — PDF quebrava com seller de muitos SKUs:**
-Em `generate_expedition_report` (a função que gera o `SEPARACAO_...pdf`, picking list), a coluna Seller usava `SPAN` vertical mesclando todas as linhas de SKU daquele seller numa única célula. O ReportLab não consegue paginar uma tabela no meio de uma célula mesclada — quando um seller tinha ~60+ SKUs distintos na mesma sessão, a geração quebrava com um erro 500 confuso (`'>' not supported between instances of 'NoneType' and 'int'`, um bug interno do ReportLab ao tentar formatar a mensagem de erro real de "não cabe na página"). Corrigido removendo o `SPAN`: o nome do seller agora repete em cada linha em vez de mesclar. **Não reintroduzir esse `SPAN` na coluna Seller** — reproduz o mesmo travamento em qualquer sessão com seller concentrado.
+Em `generate_separation_report` (a função que gera o `SEPARACAO_...pdf`, picking list — nome trocado em 06/08/2026, era `generate_expedition_report` na época deste fix), a coluna Seller usava `SPAN` vertical mesclando todas as linhas de SKU daquele seller numa única célula. O ReportLab não consegue paginar uma tabela no meio de uma célula mesclada — quando um seller tinha ~60+ SKUs distintos na mesma sessão, a geração quebrava com um erro 500 confuso (`'>' not supported between instances of 'NoneType' and 'int'`, um bug interno do ReportLab ao tentar formatar a mensagem de erro real de "não cabe na página"). Corrigido removendo o `SPAN`: o nome do seller agora repete em cada linha em vez de mesclar. **Não reintroduzir esse `SPAN` na coluna Seller** — reproduz o mesmo travamento em qualquer sessão com seller concentrado.
 
 **CSV de auditoria** continua sendo salvo em `data/exports/` (temporário, para rastreio interno).
 
@@ -981,7 +979,7 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Foto quebrada ao editar produto | Segundo modal duplicado usava `src={photoPreview}` direto em vez de `photoSrc(photoPreview)` | Havia dois blocos JSX idênticos em Products.tsx — o segundo foi removido; sempre usar `photoSrc()` para converter URL relativa em absoluta |
 | `force_password_change` não persiste no localStorage após login | `Login.tsx` não salvava o campo `force_password_change` da resposta do token em `wms_user` | Adicionar `force_password_change: !!(res as any).force_password_change` ao objeto salvo em `wms_user` |
 | Modal de troca de senha não aparece para o role `client` | `client` não tem acesso a `/settings`; troca voluntária de senha não estava disponível | Adicionar botão "Alterar senha" na sidebar do `SellerPortal.tsx`; o modal bloqueante de senha temporária em `App.tsx` funciona para todos os roles |
-| PDF de expedição quebra (500) com seller de muitos SKUs | `SPAN` vertical mesclando a coluna Seller em todas as linhas do seller — ReportLab não pagina no meio de célula mesclada | Não usar `SPAN` vertical na coluna Seller de tabelas que podem crescer muito; repetir o valor por linha (ver `generate_expedition_report` em `pdf_generator.py`) |
+| PDF de separação (picking list) quebra (500) com seller de muitos SKUs | `SPAN` vertical mesclando a coluna Seller em todas as linhas do seller — ReportLab não pagina no meio de célula mesclada | Não usar `SPAN` vertical na coluna Seller de tabelas que podem crescer muito; repetir o valor por linha (ver `generate_separation_report` em `pdf_generator.py`, renomeada em 06/08/2026) |
 | Import cria seller duplicado (nome não bate com nenhum cadastro) | `get_or_create_seller` criava silenciosamente, sem unidade, sem avisar ninguém | Import agora pausa (`requires_confirmation` + `unmatched_sellers`) e exige decisão explícita (criar com unidade, ou vincular a existente) — nunca mais cria sozinho |
 | Seller aparece em "sem unidade" mas a tela de Sellers mostra ele com unidade | São dois `Seller.id` diferentes (duplicado homônimo), não um bug de exibição | Conferir por `seller_id`, não só pelo nome; usar `/sellers/corrigir` pra migrar os pedidos presos no duplicado |
 | Query nova de pedido (lista, card, KPI) | Seller inativo volta a vazar: **não existe filtro global**, cada query repete o recorte | Aplicar `Seller.active == True` **junto** do `status != CANCELLED`, como em `list_orders`, `get_session_orders`, `session_cards` e no `base_filter` do `/dashboard/master` |

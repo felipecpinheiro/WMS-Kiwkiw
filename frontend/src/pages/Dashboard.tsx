@@ -1027,7 +1027,7 @@ export default function DashboardPage() {
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 hover:bg-emerald-900/35' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Expedição{sess.separation_pdf ? ' ✓' : ''}
+                        <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
                       </button>
                       <button
                         onClick={() =>
@@ -1036,7 +1036,7 @@ export default function DashboardPage() {
                         }
                         className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-blue-300 bg-blue-900/25 border border-blue-500/20 hover:bg-blue-900/40' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
                       >
-                        <FileText size={11} /> Separação{sess.expedition_pdf ? ' ✓' : ''}
+                        <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
                       </button>
                       {sess.sellers_in_session?.length > 0 && (
                         <button

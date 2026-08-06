@@ -352,6 +352,32 @@ planilha antiga) continua **deliberadamente fora** do WMS.
 (que já compara `nf_number + seller_id` em **todo o histórico**, sem filtro de data) continua igual —
 o que mudou é o modal, que ficou explícito sobre o impacto imediato no estoque.
 
+### NF com SKU sem produto cadastrado fica FORA do manuseio (06/08/2026)
+
+Uma NF cujo SKU não tem produto ativo cadastrado é **impossível de bipar**: o match é pelo
+`barcode_seller` do produto ([scanning.py](backend/routers/scanning.py)) e sem produto não existe
+barcode. Antes disso ela entrava no kanban normalmente e o operador só descobria errando item por
+item na bancada, até desistir e interromper.
+
+Agora ela **não aparece no manuseio** e volta sozinha quando o produto for cadastrado (o mesmo
+cadastro destrava a baixa de estoque). Três pontos aplicam o filtro:
+
+| Onde | O quê |
+|---|---|
+| `GET /scanning/sessions/{id}/orders` | fora da lista e dos totais; devolve `held_orders` com NF + SKUs faltantes |
+| `GET /scanning/session-cards` | fora do total e do progresso; card ganha `held_orders` e `held_only` |
+| `POST /scanning/sessions/{id}/open-by-nfe` | bloqueia com `blocked_reason="missing_product"` e diz quais SKUs faltam |
+
+- **O card do seller NÃO some** mesmo se todas as NFs dele estiverem seguradas (`held_only=True`,
+  `total_orders=0`) — sumir esconderia a pendência, que é o oposto do objetivo.
+- **Não há válvula de escape** (decisão do dono do sistema): segurar é segurar. Para liberar,
+  cadastra-se o produto.
+- ⚠️ **O critério é `(seller_id, sku)` no cadastro, NUNCA o FK `OrderItem.product_id`.** Esse FK é
+  resolvido no import e fica **nulo quando o produto é cadastrado depois** — exatamente o caso que a
+  feature trata. Usar o FK reporta como "faltando" um SKU que já tem produto (bug pego em teste
+  durante a implementação). Usar sempre `orders_missing_product_skus()` de `stock_manager.py`, que
+  resolve tudo numa consulta agrupada.
+
 ### Bipagem
 - **Só `barcode_seller` é aceito** — o `barcode_kiwkiw` existe no modelo mas não é usado na bipagem
 - **Lock por (sessão+seller):** só 1 pedido com atividade real por seller por sessão. Pedido em `SCANNING` sem nenhum `ScanningLog` real = "lock fantasma" → liberado automaticamente

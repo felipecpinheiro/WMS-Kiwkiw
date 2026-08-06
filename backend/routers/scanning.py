@@ -23,6 +23,7 @@ from ..services.stock_manager import (
     apply_stock_for_order,
     reverse_stock_for_order,
     order_has_stock_applied,
+    orders_missing_product_skus,
 )
 from .. import models, schemas
 
@@ -151,6 +152,22 @@ def get_session_orders(
         orders_query = orders_query.filter(models.Order.seller_id == seller_id)
     orders = orders_query.order_by(models.Order.nf_number).all()
 
+    # ── NF com SKU sem produto cadastrado fica FORA do manuseio ────────────────
+    # Ela é impossível de bipar (sem produto não há barcode_seller pra casar), e
+    # antes disso o operador só descobria errando na bancada. Volta sozinha
+    # quando o produto for cadastrado. Ver order_ids_missing_product().
+    held_map = orders_missing_product_skus(db, [o.id for o in orders])
+    held_orders = [
+        {
+            "order_id": o.id,
+            "nf_number": o.nf_number,
+            "seller_name": o.seller.trade_name if o.seller else None,
+            "missing_skus": held_map[o.id],
+        }
+        for o in orders if o.id in held_map
+    ]
+    orders = [o for o in orders if o.id not in held_map]
+
     # Conta itens escaneados por pedido e por (pedido, sku) em 2 consultas agrupadas,
     # em vez de 1 query por pedido + 1 query por item de cada pedido (N+1 — ver CLAUDE.md).
     # Join com Order para respeitar reactivated_at: bipagem anterior ao corte de um
@@ -251,6 +268,10 @@ def get_session_orders(
         "pending_orders": total - completed,
         "completion_pct": round((completed / total * 100) if total > 0 else 0, 1),
         "orders": result,
+        # NFs seguradas por falta de produto cadastrado — não entram em `orders`
+        # nem nos totais. Expostas para a tela poder dizer que elas existem, em
+        # vez de simplesmente sumirem.
+        "held_orders": held_orders,
     }
 
 
@@ -290,6 +311,22 @@ def open_order_by_nfe(
     # Preencher em Dashboard → aviso fixo no topo (ou na hora do import).
     if not order.carrier:
         return {"success": False, "message": f"Pedido NF {order.nf_number} está sem transportadora. Preencha a transportadora no Dashboard antes de biper."}
+
+    # NF com SKU sem produto cadastrado é impossível de bipar (sem produto não
+    # existe barcode_seller pra casar). Bloqueia aqui com uma mensagem que diz
+    # o que fazer, em vez de deixar o operador errar item por item na bancada.
+    faltantes = orders_missing_product_skus(db, [order.id]).get(order.id)
+    if faltantes:
+        return {
+            "success": False,
+            "blocked_reason": "missing_product",
+            "message": (
+                f"NF {order.nf_number} não pode ser manuseada: "
+                f"{'SKU sem cadastro' if len(faltantes) == 1 else 'SKUs sem cadastro'} "
+                f"({', '.join(faltantes[:5])}{'…' if len(faltantes) > 5 else ''}). "
+                f"Cadastre o produto no Dashboard e a NF volta sozinha."
+            ),
+        }
 
     # ── Aviso de NF duplicada: mesma NF já sendo bipada por OUTRO operador ──
     # Não bloqueia (decisão do usuário em 01/08/2026) — dois operadores nunca
@@ -2052,6 +2089,12 @@ def session_cards(
 
     sessions = q.order_by(models.PickingSession.created_at.desc()).limit(100).all()
 
+    # NFs seguradas por falta de produto cadastrado — ficam fora do manuseio.
+    # UMA consulta para todas as sessões da tela (não uma por card/pedido).
+    held_ids = set(orders_missing_product_skus(
+        db, [o.id for s in sessions for o in s.orders]
+    ).keys())
+
     cards = []
     for session in sessions:
         # Agrupa ordens por seller dentro desta sessão
@@ -2104,6 +2147,18 @@ def session_cards(
             ]
             if not active_orders:
                 continue  # seller totalmente cancelado/inativo — remove o card
+
+            # NF com SKU sem produto cadastrado sai do manuseio e dos totais —
+            # é impossível de bipar. Fica contabilizada em `held_orders` para o
+            # card poder avisar que ela existe. Volta sozinha ao cadastrar.
+            held_here = [o for o in active_orders if o.id in held_ids]
+            active_orders = [o for o in active_orders if o.id not in held_ids]
+            if not active_orders:
+                # Tudo que sobrou está segurado — o card ainda aparece, mas só
+                # para mostrar a pendência (senão o seller sumiria do kanban).
+                held_only_card = True
+            else:
+                held_only_card = False
 
             orders = active_orders
             total = len(orders)
@@ -2161,6 +2216,10 @@ def session_cards(
                 "in_progress_orders": in_prog,
                 "pending_orders": pending,
                 "pending_carrier_orders": pending_carrier,
+                # NFs fora do manuseio por falta de produto cadastrado.
+                # Não entram em total_orders nem no progresso.
+                "held_orders": len(held_here),
+                "held_only": held_only_card,
             })
 
     return cards

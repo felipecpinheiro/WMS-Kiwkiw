@@ -11,7 +11,7 @@ from typing import List, Optional, Dict
 from collections import defaultdict
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, text
+from sqlalchemy import func, text, bindparam
 
 from .. import models
 from ..timezone_utils import now_brasilia, today_brasilia
@@ -325,6 +325,51 @@ def apply_stock_for_order(order, db: Session, operator_id: Optional[int] = None)
     preenchida, produto cadastrado). Mesmo relatório do lote.
     """
     return apply_stock_for_orders([order], db, operator_id=operator_id)
+
+
+def orders_missing_product_skus(db: Session, order_ids: List[int]) -> Dict[int, List[str]]:
+    """
+    Dos pedidos informados, quais têm SKU SEM produto ativo cadastrado no
+    seller — e QUAIS SKUs são. Devolve {order_id: [sku, ...]}; pedido que não
+    aparece no dicionário está completo.
+
+    Esses pedidos são impossíveis de bipar: o match da bipagem é pelo
+    `barcode_seller` do produto, e sem produto não existe barcode — o operador
+    levaria erro atrás de erro até desistir e interromper. Por isso ficam fora
+    do manuseio até alguém cadastrar o produto (que também destrava a baixa de
+    estoque, via release_pending_orders_for_sku).
+
+    ⚠️ O critério é `(seller_id, sku)` no cadastro de produtos, NUNCA o FK
+    `OrderItem.product_id`: esse FK é resolvido no import e fica NULO quando o
+    produto é cadastrado depois — exatamente o caso que esta função existe pra
+    tratar. Usar o FK reporta como "faltando" um SKU que já tem produto.
+
+    UMA consulta agrupada, não uma por pedido — é chamada de tela de lista.
+    """
+    if not order_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT oi.order_id, oi.sku
+          FROM order_items oi
+          JOIN orders o ON o.id = oi.order_id
+         WHERE oi.order_id IN :ids
+           AND NOT EXISTS (
+                 SELECT 1
+                   FROM products p
+                  WHERE p.seller_id = o.seller_id
+                    AND p.sku = oi.sku
+                    AND p.active
+           )
+    """).bindparams(bindparam("ids", expanding=True)), {"ids": list(order_ids)}).fetchall()
+
+    out: Dict[int, List[str]] = {}
+    for order_id, sku in rows:
+        out.setdefault(order_id, [])
+        if sku not in out[order_id]:
+            out[order_id].append(sku)
+    for skus in out.values():
+        skus.sort()
+    return out
 
 
 def release_pending_orders_for_sku(

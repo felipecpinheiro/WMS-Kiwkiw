@@ -218,6 +218,10 @@ export interface SessionCard {
   all_checks_ok: boolean;
   file_type?: string;
   pending_carrier_orders?: number;
+  // NFs fora do manuseio por falta de produto cadastrado — impossíveis de
+  // bipar (sem produto não há barcode). Não entram em total_orders.
+  held_orders?: number;
+  held_only?: boolean;
 }
 
 export interface DuplicateOrderInfo {

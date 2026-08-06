@@ -292,6 +292,18 @@ function HandlingCard({
               🚚 {card.pending_carrier_orders} sem transportadora
             </span>
           )}
+          {/* NF com SKU sem produto cadastrado não entra no manuseio: sem
+              produto não há código de barras pra bipar. Volta sozinha quando
+              o produto for cadastrado (Dashboard). */}
+          {!!card.held_orders && (
+            <span
+              title="Essas NFs não podem ser bipadas porque algum SKU não tem produto cadastrado. Cadastre o produto no Dashboard e elas voltam sozinhas."
+              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+              text-red-300 bg-red-900/25 border border-red-500/20"
+            >
+              🔒 {card.held_orders} sem produto cadastrado
+            </span>
+          )}
         </div>
         <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold
           border flex-shrink-0 ${info.color} ${info.bg} ${info.border}`}>

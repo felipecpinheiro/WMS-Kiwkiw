@@ -229,6 +229,11 @@ def open_order_by_nfe(
     if order_status == "interrupted":
         return {"success": False, "message": f"Pedido NF {order.nf_number} foi interrompido e não pode ser reaberto. Contate o supervisor."}
 
+    # Pedido sem transportadora não pode ser bipado — ver CLAUDE.md.
+    # Preencher em Dashboard → aviso fixo no topo (ou na hora do import).
+    if not order.carrier:
+        return {"success": False, "message": f"Pedido NF {order.nf_number} está sem transportadora. Preencha a transportadora no Dashboard antes de biper."}
+
     # ── Aviso de NF duplicada: mesma NF já sendo bipada por OUTRO operador ──
     # Não bloqueia (decisão do usuário em 01/08/2026) — dois operadores nunca
     # deveriam abrir a mesma NF, mas se acontecer, avisa em vez de travar.
@@ -472,6 +477,16 @@ def process_scan(
         return schemas.ScanResponse(
             success=False,
             message=f"Pedido {order.nf_number} já está {order_status}. Não é possível bipar.",
+            status="error",
+            items_remaining=0,
+        )
+
+    # Pedido sem transportadora não pode ser bipado — mesma trava de
+    # open_order_by_nfe, aqui como segunda camada de defesa. Ver CLAUDE.md.
+    if not order.carrier:
+        return schemas.ScanResponse(
+            success=False,
+            message=f"Pedido {order.nf_number} está sem transportadora. Preencha antes de continuar a bipagem.",
             status="error",
             items_remaining=0,
         )
@@ -1837,6 +1852,11 @@ def session_cards(
 
             pending = total - completed - in_prog
 
+            # Pedidos sem transportadora — bloqueados pra bipagem (ver
+            # open_order_by_nfe/process_scan). Reaproveita o loop de `orders`
+            # já em memória, sem query nova.
+            pending_carrier = sum(1 for o in orders if not o.carrier)
+
             # Derive unit from seller relationship
             unit_id_val = None
             unit_name_val = None
@@ -1865,6 +1885,7 @@ def session_cards(
                 "completed_orders": completed,
                 "in_progress_orders": in_prog,
                 "pending_orders": pending,
+                "pending_carrier_orders": pending_carrier,
             })
 
     return cards

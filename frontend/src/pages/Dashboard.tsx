@@ -333,6 +333,7 @@ export default function DashboardPage() {
         duplicates: dups = [],
         inactive_sellers: inactives = [],
         unmatched_sellers: unmatched = [],
+        missing_carrier_orders: missingCarrierOrders = [],
       } = data;
 
       // Backend achou sellers inativos referenciados no arquivo → exibe modal de decisão.
@@ -371,8 +372,13 @@ export default function DashboardPage() {
       }
       warnings.slice(0, 3).forEach((w: string) => toast(w, { icon: 'ℹ️' }));
 
-      // Downloads automáticos em sequência
-      if (session_id) {
+      // Pedido(s) sem transportadora → bipagem e PDFs ficam bloqueados (ver
+      // CLAUDE.md). Abre o modal na hora em vez de tentar baixar o PDF; ao
+      // completar, handleCarrierSave dispara o download sozinho.
+      if (missingCarrierOrders.length > 0) {
+        setCarrierModalOrders(missingCarrierOrders);
+      } else if (session_id) {
+        // Downloads automáticos em sequência
         if (generateSepPdf) {
           try {
             await ordersApi.downloadSessionPdf(session_id, 'separation');
@@ -545,9 +551,31 @@ export default function DashboardPage() {
     } catch {
       toast.error('Erro ao salvar transportadoras');
     }
+
+    // Sessões tocadas por este lote — se alguma ficou 100% completa, a
+    // bipagem já libera sozinha (backend checa na hora); aqui só disparamos
+    // o download automático dos PDFs, como pedido pela cliente.
+    const affectedSessionIds = Array.from(
+      new Set(carrierModalOrders.map((o: any) => o.session_id).filter((v: any) => v != null))
+    );
     setCarrierModalOrders([]);
     qc.invalidateQueries(['dashboard', targetDate]);
-    refetch();
+    const fresh = await refetch();
+    const stillPending = new Set(
+      ((fresh.data?.checks?.pending_carrier_sessions ?? []) as any[]).map(p => p.session_id)
+    );
+    for (const sid of affectedSessionIds) {
+      if (!stillPending.has(sid)) {
+        try {
+          await ordersApi.downloadSessionPdf(sid, 'separation');
+          await ordersApi.downloadSessionPdf(sid, 'expedition');
+          toast.success(`Sessão #${sid}: transportadora completa — PDFs gerados`);
+        } catch (err: any) {
+          const detail = err?.response?.data?.detail;
+          toast.error(detail ? `Sessão #${sid}: ${detail}` : `Sessão #${sid}: erro ao gerar PDF`);
+        }
+      }
+    }
   };
 
   if (isLoading) {
@@ -584,6 +612,31 @@ export default function DashboardPage() {
           <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
         </div>
       )}
+
+      {/* ⚠️ Aviso fixo: sessão(ões) com pedido sem transportadora — bipagem e PDFs
+          ficam bloqueados até preencher. Não some sozinho ao fechar o modal sem
+          terminar; some só quando a transportadora é preenchida de verdade. */}
+      {Array.isArray(stats?.checks?.pending_carrier_sessions) &&
+        (stats.checks.pending_carrier_sessions as any[]).length > 0 && (
+          <div className="flex flex-col gap-2 bg-amber-900/25 border border-amber-500/30 rounded-xl px-4 py-3">
+            {(stats.checks.pending_carrier_sessions as any[]).map((p: any) => (
+              <div key={p.session_id} className="flex items-center gap-3">
+                <span className="text-amber-400 flex-shrink-0">🚚</span>
+                <p className="flex-1 text-sm text-amber-300">
+                  Sessão #{p.session_id} sem transportadora — {p.count} pedido(s) bloqueado(s) pra bipagem e PDF
+                </p>
+                <button
+                  onClick={() => setCarrierModalOrders(
+                    ((stats?.checks?.missing_carriers ?? []) as any[]).filter((mc: any) => mc.session_id === p.session_id)
+                  )}
+                  className="flex-shrink-0 text-xs font-semibold text-amber-300 hover:underline"
+                >
+                  Preencher aqui →
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">

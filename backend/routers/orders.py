@@ -29,6 +29,24 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "data", "uploads")
 EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports")
 
 
+def _missing_carrier_orders(db: Session, session_id: int) -> list:
+    """
+    Pedidos da sessão sem transportadora — bloqueiam bipagem (ver open_order_by_nfe
+    e process_scan em scanning.py) e geração de PDF de separação/expedição até
+    serem preenchidos (PATCH /orders/{id}/carrier). Ver CLAUDE.md.
+    """
+    return db.query(models.Order).options(
+        joinedload(models.Order.seller)
+    ).filter(
+        models.Order.session_id == session_id,
+        models.Order.status != models.OrderStatus.CANCELLED,
+        (models.Order.carrier == None) | (models.Order.carrier == ""),
+        models.Order.seller_id.in_(
+            db.query(models.Seller.id).filter(models.Seller.active == True).scalar_subquery()
+        ),
+    ).all()
+
+
 # Endpoint SÍNCRONO de propósito: todo o trabalho aqui (leitura de Excel, laço de
 # persistência) é bloqueante. Declarado como `def`, o FastAPI o executa no
 # threadpool; como `async def` ele rodaria no event loop e travaria a API inteira
@@ -134,25 +152,46 @@ def import_orders(
                 db.rollback()
                 result.warnings.append(f"Aviso: CSV de auditoria não gerado: {str(e)}")
 
-            # Modo local (SQLite) → salva PDFs em disco e registra caminho na sessão.
-            # Modo produção (PostgreSQL) → PDFs gerados sob demanda via endpoint.
-            database_url = os.getenv("DATABASE_URL", "")
-            is_local = not database_url.startswith(("postgresql", "postgres"))
-            if is_local:
-                from ..routers.settings import _get_or_create as _get_setting
-                pdf_base = _get_setting(db, "pdf_base_folder").value or os.path.join(BASE_DIR, "data", "exports", "pdfs")
-                try:
-                    pdf_results = generate_pdfs_for_session(session, db, pdf_base)
-                    if pdf_results:
-                        sep_path, exp_path = pdf_results[0]
-                        session.separation_pdf = sep_path
-                        session.expedition_pdf = exp_path
-                        session.check_separation = True
-                        session.check_planning = True
-                        db.commit()
-                        result.warnings.append("PDFs de separação e expedição salvos (modo local)")
-                except Exception as e:
-                    result.warnings.append(f"Aviso: PDF local não gerado: {str(e)}")
+            # ── Transportadora pendente ────────────────────────────────────
+            # Pedido sem transportadora não pode ser bipado nem ter PDF gerado
+            # (ver CLAUDE.md). A pessoa completa pelo modal do Dashboard — na
+            # hora (abre sozinho com missing_carrier_orders) ou depois, pelo
+            # aviso fixo alimentado por GET /dashboard/master.
+            missing = _missing_carrier_orders(db, session.id)
+            if missing:
+                result.warnings.append(
+                    f"{len(missing)} pedido(s) sem transportadora — bipagem e PDFs ficam bloqueados até completar"
+                )
+                result.missing_carrier_orders = [
+                    schemas.MissingCarrierOrderInfo(
+                        order_id=o.id,
+                        session_id=o.session_id,
+                        nf_number=o.nf_number,
+                        seller_name=o.seller.trade_name if o.seller else "?",
+                        customer_name=o.customer_name,
+                    )
+                    for o in missing
+                ]
+            else:
+                # Modo local (SQLite) → salva PDFs em disco e registra caminho na sessão.
+                # Modo produção (PostgreSQL) → PDFs gerados sob demanda via endpoint.
+                database_url = os.getenv("DATABASE_URL", "")
+                is_local = not database_url.startswith(("postgresql", "postgres"))
+                if is_local:
+                    from ..routers.settings import _get_or_create as _get_setting
+                    pdf_base = _get_setting(db, "pdf_base_folder").value or os.path.join(BASE_DIR, "data", "exports", "pdfs")
+                    try:
+                        pdf_results = generate_pdfs_for_session(session, db, pdf_base)
+                        if pdf_results:
+                            sep_path, exp_path = pdf_results[0]
+                            session.separation_pdf = sep_path
+                            session.expedition_pdf = exp_path
+                            session.check_separation = True
+                            session.check_planning = True
+                            db.commit()
+                            result.warnings.append("PDFs de separação e expedição salvos (modo local)")
+                    except Exception as e:
+                        result.warnings.append(f"Aviso: PDF local não gerado: {str(e)}")
 
     return result
 
@@ -169,6 +208,13 @@ def download_separation_pdf(
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    missing = _missing_carrier_orders(db, session_id)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(missing)} pedido(s) desta sessão estão sem transportadora. Preencha antes de gerar o PDF.",
+        )
 
     try:
         data, filename = generate_separation_bytes(session, db)
@@ -196,6 +242,13 @@ def download_expedition_pdf(
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    missing = _missing_carrier_orders(db, session_id)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(missing)} pedido(s) desta sessão estão sem transportadora. Preencha antes de gerar o PDF.",
+        )
 
     try:
         data, filename = generate_expedition_bytes(session, db)

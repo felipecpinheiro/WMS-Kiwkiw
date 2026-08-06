@@ -757,6 +757,9 @@ export default function ScannerPage() {
                   <p className="text-[9px] font-medium pl-4 truncate" style={{ color: '#9B87F0' }}>{order.seller}</p>
                 )}
                 <p className="text-xs text-white/70 truncate pl-4">{order.customer_name}</p>
+                {!order.carrier && order.status !== 'completed' && (
+                  <p className="text-[9px] font-semibold text-amber-400 pl-4 mt-0.5">🚚 sem transportadora</p>
+                )}
                 <div className="w-full bg-white/10 rounded-full h-0.5 mt-1.5 ml-4">
                   <div className={`h-0.5 rounded-full ${order.status === 'completed' ? 'bg-green-400' : 'bg-blue-400'}`}
                     style={{ width: `${pct}%` }} />

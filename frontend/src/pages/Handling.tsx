@@ -286,6 +286,12 @@ function HandlingCard({
               </span>
             )}
           </div>
+          {!!card.pending_carrier_orders && (
+            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+              text-amber-300 bg-amber-900/25 border border-amber-500/20">
+              🚚 {card.pending_carrier_orders} sem transportadora
+            </span>
+          )}
         </div>
         <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold
           border flex-shrink-0 ${info.color} ${info.bg} ${info.border}`}>

@@ -93,6 +93,7 @@ export interface DashboardChecks {
   all_ok: boolean;
   missing_products: string[];
   missing_carriers?: any[];
+  pending_carrier_sessions?: { session_id: number; count: number }[];
 }
 
 export interface DashboardStats {
@@ -212,6 +213,7 @@ export interface SessionCard {
   status: string;
   all_checks_ok: boolean;
   file_type?: string;
+  pending_carrier_orders?: number;
 }
 
 export interface DuplicateOrderInfo {
@@ -233,6 +235,14 @@ export interface UnmatchedSellerInfo {
   nf_numbers: string[];
 }
 
+export interface MissingCarrierOrderInfo {
+  order_id: number;
+  session_id: number;
+  nf_number: string;
+  seller_name: string;
+  customer_name: string | null;
+}
+
 export type SellerLinkDecision =
   | { action: 'create'; unit_id: number }
   | { action: 'link'; seller_id: number };
@@ -250,6 +260,7 @@ export interface ImportResult {
   duplicates: DuplicateOrderInfo[];
   inactive_sellers: InactiveSellerInfo[];
   unmatched_sellers: UnmatchedSellerInfo[];
+  missing_carrier_orders: MissingCarrierOrderInfo[];
 }
 
 export interface ScanRequest {

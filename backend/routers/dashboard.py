@@ -400,6 +400,7 @@ def master_dashboard(
             orders_no_carrier = [
                 {
                     "order_id": o.id,
+                    "session_id": o.session_id,
                     "nf_number": o.nf_number,
                     "seller_name": o.seller.trade_name if o.seller else "?",
                     "seller_id": o.seller_id,
@@ -410,6 +411,17 @@ def master_dashboard(
                 ).filter(*base_filter, no_carrier_filter).limit(30).all()
             ]
     checks["missing_carriers"] = orders_no_carrier[:30]
+
+    # Agrega por sessão em memória (mesma lista já buscada acima, sem query
+    # nova) — alimenta o aviso fixo do Dashboard ("Sessão #X sem transportadora").
+    pending_by_session: dict = {}
+    for o in orders_no_carrier:
+        sid = o["session_id"]
+        if sid is not None:
+            pending_by_session[sid] = pending_by_session.get(sid, 0) + 1
+    checks["pending_carrier_sessions"] = [
+        {"session_id": sid, "count": cnt} for sid, cnt in pending_by_session.items()
+    ]
 
     # ── Checagem: Produtos cadastrados ────────────────────────────────────────
     # Antes: 1 lazy-load de order.items por pedido + 1 query de Product por item

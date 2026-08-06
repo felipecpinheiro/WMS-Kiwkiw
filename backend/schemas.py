@@ -699,6 +699,15 @@ class UnmatchedSellerInfo(BaseModel):
     nf_numbers: List[str] = []
 
 
+class MissingCarrierOrderInfo(BaseModel):
+    """Pedido importado sem transportadora — bloqueia bipagem e PDFs até ser preenchido."""
+    order_id: int
+    session_id: int
+    nf_number: str
+    seller_name: str
+    customer_name: Optional[str] = None
+
+
 class ImportResult(BaseModel):
     """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
     success: bool = False
@@ -714,3 +723,4 @@ class ImportResult(BaseModel):
     duplicates: List[DuplicateOrderInfo] = []
     inactive_sellers: List[InactiveSellerInfo] = []
     unmatched_sellers: List[UnmatchedSellerInfo] = []
+    missing_carrier_orders: List[MissingCarrierOrderInfo] = []

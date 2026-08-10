@@ -351,8 +351,11 @@ acompanhar em escala. **Agora a baixa acontece no fim da IMPORTAÇÃO, NF a NF.*
 2. **todos os SKUs com produto ATIVO cadastrado** no seller
 
 Sem isso ela fica pendente (`Order.stock_applied_at` vazio) e **baixa sozinha** quando a pendência for
-resolvida — `PATCH /orders/{id}/carrier` e criar/reativar/renomear SKU de produto chamam
-`release_pending_orders_for_sku()`. Não existe botão de "aplicar estoque": é sempre automático.
+resolvida — `PATCH /orders/{id}/carrier` e criar/reativar SKU de produto chamam
+`release_pending_orders_for_sku()`. **Renomear SKU não destrava nada**: `ProductUpdate` não tem o
+campo `sku`, o `PUT /cadastros/products/{id}` não aceita trocar o SKU (Pydantic descarta em
+silêncio) — a frase anterior aqui estava errada. Não existe botão de "aplicar estoque": é sempre
+automático.
 
 **Onde tudo isso mora:** `backend/services/stock_manager.py`, com um cabeçalho explicando a regra.
 
@@ -817,6 +820,52 @@ Acesse: http://localhost:5173
 | Variável | Usado para |
 |----------|-----------|
 | `VITE_API_URL` | URL base do backend (default: `http://localhost:8000`) |
+
+---
+
+## Backup do Banco de Produção (Postgres/Railway) — configurado em 10/08/2026
+
+Backup manual do Postgres de produção já existia desde 24/07/2026 (script `backup_wms.ps1`, ver
+memória `rotina-backup-postgres-railway`), mas **nunca tinha sido agendado** — só rodava quando
+alguém lembrava. Em 10/08/2026 foi criada a tarefa agendada no Windows, mais um segundo PC como
+cópia redundante e um aviso de falha.
+
+**Tudo isso fica fora do repositório, de propósito** (`D:\KiwKiw\backups_bd\`), para o commit
+continuar limpo e permitir rollback. Nada aqui é código do WMS — é infraestrutura de operação na
+máquina do usuário.
+
+### Máquina principal (a do usuário)
+- Tarefa do Agendador do Windows: **`WMS Kiwkiw - Backup Postgres`** — diária às 12:00, logon
+  interativo (sem senha do Windows guardada), `-WindowStyle Hidden` (roda sem abrir janela),
+  `StartWhenAvailable` (se o PC estiver desligado às 12h, roda assim que ligar), permitida na
+  bateria, limite de execução de 1h.
+- `backup_wms.ps1` decide o que falta (não "que dia é hoje") e mantém rotação avô-pai-filho:
+  `diario\` (5), `semanal\` (4), `mensal\` (12).
+- `backup_config.ps1` guarda `WMS_DB_URL` (URL pública do Railway, com senha) — **nunca colar essa
+  URL no chat nem commitar**.
+
+### Segundo PC (redundância física)
+- Kit portátil em `D:\KiwKiw\backups_bd\kit_outro_pc\` (e `kit_outro_pc.zip` para envio), com:
+  - `backup_wms.ps1` — mesma lógica, mas **autodetecta o `pg_dump.exe`** (tenta o PATH, senão varre
+    `Program Files\PostgreSQL\*\bin` pegando a versão mais recente) em vez do caminho fixo da
+    versão 18 usado na máquina principal. Necessário porque a outra máquina pode ter uma versão
+    diferente do PostgreSQL instalada.
+  - `instalar_tarefa.ps1` — cria a mesma tarefa agendada (12:00) na máquina de destino, sem exigir
+    que a pessoa mexa no Agendador manualmente.
+  - `LEIA-ME.txt` — passo a passo em português para quem for instalar.
+- ⚠️ **Decisão consciente do usuário (10/08/2026):** o kit usa a **mesma credencial de produção**
+  (leitura e escrita), não um usuário `wms_backup` só-leitura dedicado — que foi a alternativa
+  sugerida e recusada. Revogar o acesso dessa segunda máquina no futuro exige trocar a senha do
+  Postgres da aplicação inteira, não só a de um usuário isolado.
+
+### Aviso de falha (as duas máquinas)
+- Sucesso continua **silencioso** (só uma linha em `backup_log.txt`) — de propósito, é rotina
+  diária.
+- Falha agora dispara uma **notificação nativa do Windows** (balão via
+  `System.Windows.Forms.NotifyIcon`, sem instalar nada) com o motivo. Dispara em dois casos:
+  `pg_dump` retornou erro, ou (só no kit portátil) `pg_dump.exe` não foi encontrado na máquina.
+- Antes disso, uma falha só aparecia numa linha `ERRO` no log que ninguém olhava — já tinha
+  acontecido uma vez em 24/07/2026 sem ninguém perceber na hora.
 
 ---
 

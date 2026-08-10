@@ -28,6 +28,12 @@ backend/run_local_teste_hoje.py
 backend/run_local_teste_hoje.bat
 .claude/launch.json
 
+# Bateria de performance — protocolo, histórico e relatórios (uso local)
+# O comando .claude/commands/perf.md CONTINUA versionado de propósito.
+PERFORMANCE_TESTES.md
+performance_historico.json
+performance_relatorios/
+
 # Arquivos gerados pelo sistema
 data/exports/
 data/media/

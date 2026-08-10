@@ -1082,6 +1082,26 @@ duplicados criados pela rodada, **0** pedidos concluídos sem baixa de estoque, 
 "duplicados" que aparecem numa varredura ingênua são do pedido 2102, de 29/07, e **já vêm assim no
 dump de produção** — não são da rodada.)
 
+### Como repetir essa medição — `/perf` (02/08/2026)
+
+A bateria virou um procedimento repetível. **O protocolo, o histórico de todas as rodadas e as
+armadilhas conhecidas estão em `PERFORMANCE_TESTES.md`, na raiz** — arquivo **não versionado** (está
+no `.gitignore`, junto de `performance_historico.json` e `performance_relatorios/`). O comando
+`/perf` (`.claude/commands/perf.md`, esse sim versionado) dispara tudo.
+
+**Antes de mexer em qualquer coisa de performance, leia esse arquivo** — ele diz o que já foi
+medido, o que já está corrigido e o que continua em aberto, evitando refazer diagnóstico.
+
+Uma rodada leva ~1h e faz sozinha: restaura banco descartável do backup mais recente, escolhe o dia
+mais movimentado dos últimos 7 dias, sobe backend local com o código atual (inclusive alterações não
+commitadas), smoke test (aborta se falhar), carga de 45 min com 17 usuários simultâneos, coleta
+latências + contadores do Postgres + integridade, compara com a rodada anterior e gera PDF. Orquestra
+`D:\KiwKiw\plano_performance\stress_bipagem\perf_runner.py`.
+
+⚠️ **O alerta de regressão tem filtro de ruído de propósito** (mín. 20 chamadas, p95 ≥ 50ms, delta
+≥ 25ms além dos 20%). Sem ele o relatório acusava "regressão" num endpoint chamado 1× que foi de 84ms
+para 107ms. Não afrouxar esses limites sem entender isso.
+
 ---
 
 ## Validação de FK nos cadastros (30/07/2026)

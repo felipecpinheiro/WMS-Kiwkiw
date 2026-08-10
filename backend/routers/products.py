@@ -215,9 +215,20 @@ def update_product(
         user_id=current_user.id,
     ))
 
-    # Editar o SKU (ou reativar por aqui) pode destravar NF que estava segurada
-    # por falta deste produto — ver create_product.
+    # Reativar por aqui (active=True) pode destravar NF que estava segurada por
+    # falta deste produto — ver create_product.
+    #
+    # ⚠️ Renomear SKU por este endpoint NÃO acontece: `ProductUpdate` não tem o
+    # campo `sku` e o Pydantic o descarta em silêncio. O comentário anterior
+    # dizia que sim.
+    #
+    # ⚠️ O flush é obrigatório: a sessão é autoflush=False, então o SKU novo (ou
+    # o active=True) ainda está só na memória e o SELECT lá dentro leria o
+    # estado ANTIGO do banco — não acharia nada para destravar e a NF ficaria
+    # pendente em silêncio, com a tela dizendo "Produto atualizado!".
+    # create_product não sofre disso porque já dá flush ao criar.
     if product.active:
+        db.flush()
         release_pending_orders_for_sku(
             product.seller_id, product.sku, db, operator_id=current_user.id
         )
@@ -281,6 +292,9 @@ def reactivate_product(
         detail=f"Produto reativado: SKU={product.sku} | Seller={seller.trade_name if seller else product.seller_id}",
         user_id=current_user.id,
     ))
+    # ⚠️ Mesmo motivo do flush em update_product: sem ele o active=True fica só
+    # na memória e o release não enxerga o produto reativado.
+    db.flush()
     release_pending_orders_for_sku(
         product.seller_id, product.sku, db, operator_id=current_user.id
     )

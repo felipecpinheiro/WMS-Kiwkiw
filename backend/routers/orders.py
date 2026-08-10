@@ -25,6 +25,9 @@ from ..services.stock_manager import (
     apply_stock_for_order,
     reverse_stock_for_order,
     evaluate_orders_for_stock,
+    release_pending_orders_for_sku,
+    relink_sku_in_pending_orders,
+    STOCK_ERA_CUTOFF,
 )
 from ..timezone_utils import today_brasilia, now_brasilia
 
@@ -405,6 +408,12 @@ def list_pending_stock_orders(
         joinedload(models.Order.seller),
     ).join(models.Seller, models.Order.seller_id == models.Seller.id).filter(
         models.Order.stock_applied_at.is_(None),
+        # Corte de era: NF anterior a 06/08/2026 tem a coluna vazia mas o
+        # estoque já baixado pela regra antiga. Sem este filtro o aviso somava
+        # o histórico inteiro (6.703 NFs em 10/08/2026) e, pior, oferecia
+        # "resolver" notas que baixariam o estoque uma segunda vez.
+        # Ver STOCK_ERA_CUTOFF em services/stock_manager.py.
+        models.Order.imported_at >= STOCK_ERA_CUTOFF,
         models.Order.status.notin_([
             models.OrderStatus.CANCELLED,
             models.OrderStatus.INACTIVE,
@@ -449,6 +458,252 @@ def list_pending_stock_orders(
         pending_orders=pending,
         missing_products=list(missing.values()),
         negatives=[],
+    )
+
+
+# ⚠️ Assim como /pending-stock, as duas rotas de lote abaixo ficam ANTES de
+# `/{order_id}` — senão o FastAPI tenta casar "batch-carrier" com order_id:int.
+@router.patch("/batch-carrier", response_model=schemas.BatchCarrierResult)
+def batch_update_carrier(
+    payload: schemas.BatchCarrierRequest,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Preenche a transportadora de VÁRIAS NFs de uma vez (10/08/2026).
+
+    Existe porque a falta de transportadora é a pendência mais comum e chegou a
+    segurar 6.703 NFs num dia só — resolver uma a uma pelo PATCH
+    /orders/{id}/carrier é inviável na prática.
+
+    ⚠️ UMA chamada a apply_stock_for_orders para o lote inteiro. Chamar
+    apply_stock_for_order por NF traria de volta o N+1 que já derrubou esta
+    base três vezes (ver CLAUDE.md).
+
+    Transação única: se qualquer linha falhar, nada é gravado.
+    """
+    updates = payload.updates or []
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nenhuma transportadora informada")
+
+    # Transportadora vazia não destrava nada e ainda apagaria o valor de quem
+    # já tinha — recusa antes de tocar no banco.
+    empty = [u.order_id for u in updates if not (u.carrier or "").strip()]
+    if empty:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(empty)} NF(s) sem transportadora preenchida",
+        )
+
+    by_id = {u.order_id: u.carrier.strip() for u in updates}
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id.in_(list(by_id.keys()))).all()
+
+    found = {o.id for o in orders}
+    missing = [oid for oid in by_id if oid not in found]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pedido(s) não encontrado(s): {', '.join(map(str, missing[:10]))}",
+        )
+
+    for order in orders:
+        order.carrier = by_id[order.id]
+
+    report = apply_stock_for_orders(orders, db, operator_id=current_user.id)
+    applied = set(report["applied"])
+
+    for order in orders:
+        db.add(models.AuditLog(
+            entity_type="Order", entity_id=order.id, action="UPDATE_CARRIER",
+            user_id=current_user.id,
+            detail=(
+                f"Transportadora (lote): {order.carrier}."
+                + (" Estoque baixado automaticamente." if order.id in applied else "")
+            ),
+        ))
+    db.add(models.AuditLog(
+        entity_type="Order", entity_id=0, action="BATCH_UPDATE_CARRIER",
+        user_id=current_user.id,
+        detail=(
+            f"Lote de transportadoras: {len(orders)} NF(s) atualizada(s), "
+            f"{len(applied)} baixaram estoque."
+        ),
+    ))
+    db.commit()
+
+    return schemas.BatchCarrierResult(
+        updated=len(orders),
+        stock_applied=len(applied),
+        still_pending=len(orders) - len(applied),
+        negatives=report["negatives"],
+    )
+
+
+@router.post("/batch-resolve-sku", response_model=schemas.BatchSkuResult)
+def batch_resolve_sku(
+    payload: schemas.BatchSkuRequest,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Resolve em lote os SKUs sem produto cadastrado que seguram a baixa
+    (10/08/2026). Duas ações por SKU:
+
+      create -> cadastra o produto com o SKU que veio na NF. É o caminho
+                normal; o cadastro completo (barcode, caixa) fica para depois,
+                o importante é não parar o fluxo.
+      link   -> "esse SKU na verdade é este outro produto". Reescreve os itens
+                das NFs pendentes para o SKU do produto escolhido. Ver
+                relink_sku_in_pending_orders para o porquê e os limites.
+
+    Transação única: se qualquer resolução falhar, nada é gravado.
+    """
+    resolutions = payload.resolutions or []
+    if not resolutions:
+        raise HTTPException(status_code=400, detail="Nenhuma resolução informada")
+
+    created = linked = reactivated = orders_relinked = 0
+    applied_orders: set = set()
+    negatives: list = []
+
+    for r in resolutions:
+        sku = (r.sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=400, detail="Resolução sem SKU")
+
+        seller = db.query(models.Seller).filter(models.Seller.id == r.seller_id).first()
+        if not seller:
+            raise HTTPException(status_code=404, detail=f"Seller {r.seller_id} não encontrado")
+
+        if r.action == "create":
+            name = (r.name or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SKU '{sku}': informe o nome do produto",
+                )
+            existing = db.query(models.Product).filter(
+                models.Product.seller_id == r.seller_id,
+                models.Product.sku == sku,
+            ).first()
+            if existing:
+                # Num lote, 400 aqui derrubaria as outras dezenas de linhas por
+                # causa de um SKU que alguém cadastrou no meio do caminho.
+                # Inativo -> reativa (era o que a pessoa queria); ativo -> nada
+                # a fazer, só destrava.
+                if not existing.active:
+                    existing.active = True
+                    # ⚠️ A sessão é autoflush=False: sem este flush a reativação
+                    # fica só na memória e o SELECT de _registered_sku_pairs
+                    # continua vendo o produto inativo — a NF não baixaria, em
+                    # silêncio. Pego em teste.
+                    db.flush()
+                    reactivated += 1
+                    db.add(models.AuditLog(
+                        entity_type="Product", entity_id=existing.id, action="REACTIVATE",
+                        user_id=current_user.id,
+                        detail=f"Produto reativado ao resolver pendência de estoque: SKU={sku} | Seller={seller.trade_name}",
+                    ))
+                product = existing
+            else:
+                product = models.Product(
+                    seller_id=r.seller_id,
+                    sku=sku,
+                    name=name,
+                    barcode_seller=(r.barcode_seller or "").strip() or None,
+                )
+                db.add(product)
+                db.flush()
+                created += 1
+                db.add(models.AuditLog(
+                    entity_type="Product", entity_id=product.id, action="CREATE",
+                    user_id=current_user.id,
+                    detail=f"Produto criado ao resolver pendência de estoque: SKU={sku} | Nome={name} | Seller={seller.trade_name}",
+                ))
+
+            report = release_pending_orders_for_sku(
+                r.seller_id, sku, db, operator_id=current_user.id
+            )
+
+        elif r.action == "link":
+            if not r.target_product_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SKU '{sku}': nenhum produto escolhido para vincular",
+                )
+            target = db.query(models.Product).filter(
+                models.Product.id == r.target_product_id
+            ).first()
+            if not target:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Produto {r.target_product_id} não encontrado",
+                )
+            if target.seller_id != r.seller_id:
+                # Estoque é indexado por (seller_id, sku): apontar para produto
+                # de outro seller baixaria o estoque de quem não vendeu.
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Produto '{target.sku}' é de outro seller — não pode ser vinculado ao SKU '{sku}'",
+                )
+            if not target.active:
+                # Vincular a produto inativo deixaria a NF presa do mesmo jeito.
+                target.active = True
+                # Mesmo motivo do flush no ramo "create": sem ele, o caso em que
+                # o produto escolhido tem o MESMO SKU da NF não passa pelo flush
+                # interno do relink e a NF fica pendente sem ninguém perceber.
+                db.flush()
+                reactivated += 1
+                db.add(models.AuditLog(
+                    entity_type="Product", entity_id=target.id, action="REACTIVATE",
+                    user_id=current_user.id,
+                    detail=f"Produto reativado ao vincular SKU '{sku}': SKU={target.sku} | Seller={seller.trade_name}",
+                ))
+
+            result = relink_sku_in_pending_orders(
+                r.seller_id, sku, target, db, operator_id=current_user.id
+            )
+            report = result["stock"]
+            if target.sku != sku:
+                linked += 1
+                orders_relinked += result["orders_touched"]
+                db.add(models.AuditLog(
+                    entity_type="Product", entity_id=target.id, action="RELINK_SKU",
+                    user_id=current_user.id,
+                    detail=(
+                        f"SKU '{sku}' das NFs pendentes reapontado para '{target.sku}' "
+                        f"({result['orders_touched']} NF(s)) | Seller={seller.trade_name}"
+                    ),
+                ))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ação inválida '{r.action}' para o SKU '{sku}' (use 'create' ou 'link')",
+            )
+
+        applied_orders.update(report["applied"])
+        negatives.extend(report["negatives"])
+
+    db.add(models.AuditLog(
+        entity_type="Product", entity_id=0, action="BATCH_RESOLVE_SKU",
+        user_id=current_user.id,
+        detail=(
+            f"Lote de SKUs pendentes: {created} criado(s), {linked} vinculado(s), "
+            f"{reactivated} reativado(s) — {len(applied_orders)} NF(s) baixaram estoque."
+        ),
+    ))
+    db.commit()
+
+    return schemas.BatchSkuResult(
+        created=created,
+        linked=linked,
+        reactivated=reactivated,
+        orders_relinked=orders_relinked,
+        stock_applied=len(applied_orders),
+        negatives=negatives,
     )
 
 

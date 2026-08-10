@@ -295,6 +295,34 @@ export interface StockApplyReport {
   negatives: NegativeStockInfo[];
 }
 
+// Resolução em lote das pendências que seguram a baixa (10/08/2026).
+// Subir arquivo é o core da operação — resolver NF a NF trava o dia inteiro.
+
+export interface BatchCarrierResult {
+  updated: number;
+  stock_applied: number;
+  still_pending: number;
+  negatives: NegativeStockInfo[];
+}
+
+export interface SkuResolutionItem {
+  seller_id: number;
+  sku: string;
+  action: 'create' | 'link';
+  name?: string;
+  barcode_seller?: string;
+  target_product_id?: number;
+}
+
+export interface BatchSkuResult {
+  created: number;
+  linked: number;
+  reactivated: number;
+  orders_relinked: number;
+  stock_applied: number;
+  negatives: NegativeStockInfo[];
+}
+
 export interface ImportResult {
   success: boolean;
   message: string;
@@ -434,6 +462,14 @@ export const ordersApi = {
       negatives: NegativeStockInfo[];
       pending: PendingStockOrderInfo | null;
     }>(`/orders/${orderId}/carrier`, { carrier }),
+  // Preenche transportadora de várias NFs numa chamada só. O backend baixa o
+  // estoque do lote inteiro de uma vez — não chamar updateCarrier em laço.
+  batchCarrier: (updates: { order_id: number; carrier: string }[]) =>
+    api.patch<BatchCarrierResult>('/orders/batch-carrier', { updates }, { timeout: 120000 }),
+  // Resolve em lote os SKUs sem produto: cria o produto ou aponta o SKU da NF
+  // para um produto que já existe (só nas NFs que ainda não baixaram).
+  batchResolveSku: (resolutions: SkuResolutionItem[]) =>
+    api.post<BatchSkuResult>('/orders/batch-resolve-sku', { resolutions }, { timeout: 120000 }),
   // NFs que ainda não baixaram estoque e o motivo — aviso fixo do Dashboard.
   pendingStock: (sessionId?: number) =>
     api.get<StockApplyReport>('/orders/pending-stock', {

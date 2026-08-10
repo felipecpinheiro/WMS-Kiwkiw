@@ -77,6 +77,43 @@ STOCK_BLOCKED_STATUSES = (
 )
 
 
+# ── CORTE DE ERA (10/08/2026) ──────────────────────────────────────────────
+# `stock_applied_at` nasceu em 06/08/2026 e NÃO houve backfill. Toda NF anterior
+# a isso tem a coluna vazia, inclusive as que já baixaram estoque pela regra
+# antiga (na conclusão da bipagem). Sem este corte:
+#
+#   1. o aviso do Dashboard contava o histórico inteiro (6.703 NFs em 10/08,
+#      quase todas já corretas);
+#   2. pior — "resolver" uma delas (preencher transportadora, cadastrar
+#      produto) chamava a baixa DE NOVO e o estoque saía duas vezes. Reproduzido
+#      em teste: 90 -> 80, dois movimentos para a mesma NF.
+#
+# O corte é 07/08 e não 06/08 de propósito: a feature subiu em algum momento do
+# dia 06 e uma NF importada antes do deploy naquele mesmo dia também é da era
+# antiga. Esconder uma NF a mais só deixa de mexer no estoque; deixar uma a
+# menos de fora corrompe o estoque em silêncio.
+#
+# ⚠️ Consequência aceita pelo dono do sistema em 10/08/2026: NF anterior ao
+# corte que ficou PENDENTE de verdade (nunca bipada, nunca baixou) fica
+# invisível no aviso para sempre. Foi a opção escolhida sabendo disso.
+STOCK_ERA_CUTOFF = datetime(2026, 8, 7, 0, 0, 0)
+
+
+def is_pre_stock_era(order) -> bool:
+    """
+    Esta NF é anterior à baixa-na-importação? Se for, o estoque dela já foi
+    tratado pela regra antiga e ninguém deve mexer.
+
+    ⚠️ `imported_at` ausente conta como NÃO sendo da era antiga (ou seja,
+    baixa normalmente). É o caso do próprio import, onde o objeto pode ainda
+    não ter o default preenchido — tratar como era antiga ali faria a
+    importação parar de baixar estoque em silêncio, que é justamente o
+    desastre oposto.
+    """
+    imported = getattr(order, "imported_at", None)
+    return imported is not None and imported < STOCK_ERA_CUTOFF
+
+
 def order_stock_sign(order) -> models.MovementType:
     """
     Sinal do movimento a partir do file_type do pedido.
@@ -217,10 +254,15 @@ def apply_stock_for_orders(
                          current_stock, applied_qty, was_negative_before}]
       missing_skus  -> {(seller_id, sku)} agregado, para o modal de cadastro
     """
+    # ⚠️ `is_pre_stock_era` é a trava que impede a BAIXA DUPLA de NF antiga —
+    # não é cosmética. A coluna sozinha não basta: NF anterior a 06/08/2026 tem
+    # a coluna vazia e o estoque já baixado. Sem isso, preencher a transportadora
+    # de uma nota velha subtraía o mesmo item de novo.
     candidates = [
         o for o in orders
         if o.status not in STOCK_BLOCKED_STATUSES
         and not getattr(o, "stock_applied_at", None)
+        and not is_pre_stock_era(o)
     ]
 
     applied: List[int] = []
@@ -372,6 +414,103 @@ def orders_missing_product_skus(db: Session, order_ids: List[int]) -> Dict[int, 
     return out
 
 
+def pending_orders_with_sku(db: Session, seller_id: int, sku: str) -> List:
+    """
+    NFs deste seller que ainda NÃO baixaram estoque e contêm este SKU.
+
+    É o recorte que o modal de pendências mostra e o único que pode ser
+    reescrito com segurança (ver relink_sku_in_pending_orders).
+    """
+    return db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(
+        models.Order.seller_id == seller_id,
+        models.Order.stock_applied_at.is_(None),
+        # Corte de era direto no SQL: sem ele, cadastrar um produto varria as
+        # NFs antigas que contêm aquele SKU e rebaixava todas de uma vez, em
+        # silêncio — o caminho mais perigoso dos três, porque roda sozinho.
+        models.Order.imported_at >= STOCK_ERA_CUTOFF,
+        models.Order.status.notin_(STOCK_BLOCKED_STATUSES),
+        models.Order.id.in_(
+            db.query(models.OrderItem.order_id)
+              .filter(models.OrderItem.sku == sku)
+              .scalar_subquery()
+        ),
+    ).all()
+
+
+def relink_sku_in_pending_orders(
+    seller_id: int,
+    sku: str,
+    target_product,
+    db: Session,
+    operator_id: Optional[int] = None,
+) -> Dict:
+    """
+    "Esse SKU da NF na verdade é este outro produto" (10/08/2026).
+
+    Reescreve `order_items.sku` das NFs PENDENTES deste seller: o que veio como
+    `sku` passa a apontar para o SKU de `target_product`. Existe porque alguns
+    sellers cadastram dois SKUs quase idênticos para o mesmo item por
+    divergência interna deles — a NF chega com um SKU que não existe no
+    cadastro, mas o produto físico existe com outro código.
+
+    ⚠️ SÓ toca em NF que ainda não baixou estoque. NF já baixada tem
+    `stock_movements` gravados naquele SKU; reescrever o item deixaria o
+    movimento órfão, apontando para um SKU que não está mais no pedido.
+    `pending_orders_with_sku` já aplica esse recorte.
+
+    ⚠️ Isto NÃO cria um de-para persistente (decisão do dono do sistema em
+    10/08/2026): vale só para as NFs que estão pendentes agora. Se o mesmo SKU
+    errado vier num import futuro, ele fica pendente de novo. A tabela de
+    de-para (aba `ACERTO SKU` da planilha antiga) continua fora do WMS.
+
+    Se a NF já tiver o SKU de destino nela, as quantidades são SOMADAS numa
+    linha só — mesmo comportamento que o import já tem para SKU repetido.
+
+    Devolve {"orders_touched": n, "stock": <relatório de apply_stock_for_orders>}.
+    """
+    old_sku = str(sku)
+    new_sku = target_product.sku
+
+    orders = pending_orders_with_sku(db, seller_id, old_sku)
+    touched = 0
+
+    if new_sku != old_sku:
+        for order in orders:
+            old_items = [it for it in order.items if it.sku == old_sku]
+            if not old_items:
+                continue
+
+            target_item = next((it for it in order.items if it.sku == new_sku), None)
+            if target_item is None:
+                # Promove a primeira linha do SKU errado a linha do SKU certo.
+                target_item = old_items.pop(0)
+                target_item.sku = new_sku
+                target_item.product_name = target_product.name or target_item.product_name
+            target_item.product_id = target_product.id
+
+            # Sobras (SKU de destino já existia na NF, ou o SKU errado aparecia
+            # em mais de uma linha): soma na linha sobrevivente e descarta.
+            # `cascade="all, delete-orphan"` em Order.items faz o DELETE.
+            for extra in old_items:
+                target_item.quantity = (target_item.quantity or 0) + (extra.quantity or 0)
+                order.items.remove(extra)
+
+            touched += 1
+
+        # autoflush=False nesta sessão: sem o flush explícito o UPDATE/DELETE
+        # dos itens só sairia depois dos INSERTs de movimento.
+        db.flush()
+
+    # A coleção em memória já reflete a reescrita, então dá para baixar direto.
+    report = apply_stock_for_orders(orders, db, operator_id=operator_id) if orders else {
+        "applied": [], "pending": [], "negatives": [], "missing_skus": {}
+    }
+    return {"orders_touched": touched, "stock": report}
+
+
 def release_pending_orders_for_sku(
     seller_id: int,
     sku: str,
@@ -387,19 +526,7 @@ def release_pending_orders_for_sku(
     (outro SKU sem cadastro, transportadora), então NF com mais de uma
     pendência continua segura até a última ser resolvida.
     """
-    orders = db.query(models.Order).options(
-        joinedload(models.Order.items),
-        joinedload(models.Order.seller),
-    ).filter(
-        models.Order.seller_id == seller_id,
-        models.Order.stock_applied_at.is_(None),
-        models.Order.status.notin_(STOCK_BLOCKED_STATUSES),
-        models.Order.id.in_(
-            db.query(models.OrderItem.order_id)
-              .filter(models.OrderItem.sku == sku)
-              .scalar_subquery()
-        ),
-    ).all()
+    orders = pending_orders_with_sku(db, seller_id, sku)
     if not orders:
         return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
     return apply_stock_for_orders(orders, db, operator_id=operator_id)

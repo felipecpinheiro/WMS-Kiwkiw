@@ -3,7 +3,7 @@
  * Cockpit gerencial com visão geral do dia: pedidos, unidades, sellers, checagens e auditoria.
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,7 +13,7 @@ import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
   ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport } from '../api';
+import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport, PendingStockOrderInfo, MissingProductInfo, SkuResolutionItem } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -198,6 +198,435 @@ function CarrierModal({ orders, onClose, onSave }: {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════
+// RESOLUÇÃO EM LOTE DAS PENDÊNCIAS DE ESTOQUE (10/08/2026)
+// ══════════════════════════════════════════════════════════════════
+// O aviso vermelho do Dashboard listava a pendência mas não resolvia: a pessoa
+// tinha que sair pra tela de Pedidos e completar NF a NF (chegou a 6.703 numa
+// sexta). Subir arquivo é o core da operação — não pode parar por isso.
+//
+// São dois modais separados de propósito, um por tipo de pendência. NF que tem
+// as DUAS pendências aparece nos dois e só baixa quando a última for resolvida
+// (quem decide isso é o backend, em apply_stock_for_orders).
+
+/** Agrupa por seller preservando uma ordem estável (nome, depois id). */
+function groupBySeller<T extends { seller_id: number; seller_name: string | null }>(rows: T[]) {
+  const map = new Map<number, { seller_id: number; seller_name: string; rows: T[] }>();
+  for (const r of rows) {
+    if (!map.has(r.seller_id)) {
+      map.set(r.seller_id, { seller_id: r.seller_id, seller_name: r.seller_name || 'Sem seller', rows: [] });
+    }
+    map.get(r.seller_id)!.rows.push(r);
+  }
+  return Array.from(map.values()).sort((a, b) => a.seller_name.localeCompare(b.seller_name));
+}
+
+// Linha memoizada: sem isso, cada tecla digitada re-renderiza as 6.703 linhas.
+// As props mudam só para a linha digitada — `onChange`/`onToggle` mantêm a
+// identidade entre renders porque não dependem de `values`.
+const CarrierRow = memo(function CarrierRow({
+  order, rowIndex, value, checked, onChange, onToggle,
+}: {
+  order: PendingStockOrderInfo;
+  rowIndex: number;
+  value: string;
+  checked: boolean;
+  onChange: (orderId: number, v: string) => void;
+  onToggle: (rowIndex: number, shiftKey: boolean) => void;
+}) {
+  const filled = value.trim().length > 0;
+  return (
+    <div
+      className="grid items-center rounded gap-1 px-1"
+      style={{
+        gridTemplateColumns: '1.5rem 8rem 1fr 2fr',
+        background: checked ? 'rgba(109,89,222,0.14)' : filled ? 'rgba(109,89,222,0.06)' : 'transparent',
+        // Deixa o navegador pular layout/paint das linhas fora da tela.
+        contentVisibility: 'auto',
+        containIntrinsicSize: '28px',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() => { /* controlado pelo onClick, que traz o shiftKey */ }}
+        onClick={(e) => onToggle(rowIndex, e.shiftKey)}
+        className="accent-violet-500 cursor-pointer"
+      />
+      <span className="text-xs font-mono text-white/60 truncate" title={order.nf_number}>{order.nf_number}</span>
+      <span className="text-xs text-white/35 truncate" title={order.customer_name || ''}>{order.customer_name || '—'}</span>
+      <input
+        value={value}
+        onChange={(e) => onChange(order.order_id, e.target.value)}
+        placeholder="transportadora…"
+        className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-white/80 placeholder-white/20"
+        style={{
+          background: 'transparent',
+          borderBottomColor: filled ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)',
+        }}
+      />
+    </div>
+  );
+});
+
+/** Modal 1 — transportadora em lote, agrupado por seller. */
+function PendingCarrierModal({ orders, onClose, onSave }: {
+  orders: PendingStockOrderInfo[];
+  onClose: () => void;
+  onSave: (updates: { order_id: number; carrier: string }[]) => Promise<void>;
+}) {
+  const [values, setValues] = useState<Record<number, string>>({});
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [confirmPartial, setConfirmPartial] = useState(false);
+  const lastIndexRef = useRef<number | null>(null);
+  const broadcastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const groups = useMemo(() => groupBySeller(orders), [orders]);
+  // Ordem achatada — é sobre ela que o Shift+clique calcula o intervalo.
+  const flat = useMemo(() => groups.flatMap(g => g.rows), [groups]);
+
+  useEffect(() => () => { if (broadcastRef.current) clearTimeout(broadcastRef.current); }, []);
+
+  // Digitar numa linha selecionada propaga para TODAS as selecionadas, sem
+  // clique nenhum. A propagação é adiada ~150ms: a linha digitada responde na
+  // hora e as outras só re-renderizam quando a pessoa para de digitar — senão
+  // cada tecla redesenharia milhares de linhas.
+  // useCallback é obrigatório aqui: sem identidade estável o memo das linhas
+  // não segura nada e cada tecla redesenha a lista inteira.
+  const handleChange = useCallback((orderId: number, v: string) => {
+    setValues(prev => ({ ...prev, [orderId]: v }));
+    setConfirmPartial(false);
+    if (selected.has(orderId) && selected.size > 1) {
+      if (broadcastRef.current) clearTimeout(broadcastRef.current);
+      broadcastRef.current = setTimeout(() => {
+        setValues(prev => {
+          const next = { ...prev };
+          selected.forEach(id => { next[id] = v; });
+          return next;
+        });
+      }, 150);
+    }
+  }, [selected]);
+
+  const handleToggle = useCallback((rowIndex: number, shiftKey: boolean) => {
+    const id = flat[rowIndex].order_id;
+    // ⚠️ A âncora do Shift é lida e regravada AQUI, fora do setState. O updater
+    // precisa ser puro: em StrictMode o React o invoca duas vezes, e escrever o
+    // ref lá dentro fazia a 2ª passada já enxergar a âncora nova — o intervalo
+    // colapsava e só as duas pontas ficavam marcadas. Pego no navegador.
+    const anchor = lastIndexRef.current;
+    lastIndexRef.current = rowIndex;
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (shiftKey && anchor !== null) {
+        const [a, b] = [anchor, rowIndex].sort((x, y) => x - y);
+        // O intervalo assume o estado que a linha clicada vai passar a ter.
+        const turnOn = !next.has(id);
+        for (let i = a; i <= b; i++) {
+          if (turnOn) next.add(flat[i].order_id);
+          else next.delete(flat[i].order_id);
+        }
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, [flat]);
+
+  const allSelected = selected.size === flat.length && flat.length > 0;
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(flat.map(o => o.order_id)));
+    lastIndexRef.current = null;
+  };
+
+  const filledEntries = flat
+    .map(o => ({ order_id: o.order_id, carrier: (values[o.order_id] ?? '').trim() }))
+    .filter(e => e.carrier.length > 0);
+  const emptyRows = flat.filter(o => !(values[o.order_id] ?? '').trim());
+
+  const handleSave = async () => {
+    if (!filledEntries.length) { toast.error('Nenhuma transportadora preenchida'); return; }
+    // Avisa QUAIS NFs ficaram sem preencher, mas não prende a pessoa: com
+    // milhares de NFs, exigir tudo de uma vez impediria salvar o progresso.
+    if (emptyRows.length && !confirmPartial) { setConfirmPartial(true); return; }
+    setSaving(true);
+    try { await onSave(filledEntries); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-4xl flex flex-col" style={{ maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+          <div>
+            <h3 className="font-semibold text-white text-sm">🚚 Resolver transportadoras</h3>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              {flat.length} NF(s) sem transportadora · {filledEntries.length} preenchida(s)
+              {selected.size > 0 && ` · ${selected.size} selecionada(s)`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 pt-3 flex-shrink-0">
+          <div className="flex items-center gap-2 text-[11px] text-violet-300/90 bg-violet-900/20 border border-violet-500/25 rounded-lg px-3 py-2">
+            <ClipboardPaste size={13} className="flex-shrink-0" />
+            <span>
+              Marque várias NFs (clique, ou <b>Shift+clique</b> para pegar o intervalo) e digite a
+              transportadora em <b>uma</b> delas — vai para todas as selecionadas sozinho.
+            </span>
+          </div>
+          <label className="flex items-center gap-2 mt-2 text-[11px] text-white/50 cursor-pointer w-fit">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-violet-500" />
+            Selecionar todas ({flat.length})
+          </label>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0">
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/25 mb-1 px-1 gap-1 sticky top-0 bg-[#14122A] py-1"
+               style={{ gridTemplateColumns: '1.5rem 8rem 1fr 2fr' }}>
+            <span /><span>NF</span><span>Cliente</span><span>Transportadora</span>
+          </div>
+          {groups.map(g => {
+            const base = flat.findIndex(o => o.seller_id === g.seller_id);
+            return (
+              <div key={g.seller_id} className="mb-2">
+                <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-white/8">
+                  {g.seller_name} <span className="text-white/25 font-normal">({g.rows.length})</span>
+                </div>
+                <div className="space-y-0.5 mt-0.5">
+                  {g.rows.map((o, i) => (
+                    <CarrierRow
+                      key={o.order_id}
+                      order={o}
+                      rowIndex={base + i}
+                      value={values[o.order_id] ?? ''}
+                      checked={selected.has(o.order_id)}
+                      onChange={handleChange}
+                      onToggle={handleToggle}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {confirmPartial && emptyRows.length > 0 && (
+          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-amber-300 bg-amber-900/20 border border-amber-500/30 rounded-lg px-3 py-2">
+            <b>{emptyRows.length} NF(s) ainda sem transportadora:</b>{' '}
+            {emptyRows.slice(0, 12).map(o => o.nf_number).join(', ')}
+            {emptyRows.length > 12 && ` … e mais ${emptyRows.length - 12}`}
+            <div className="text-amber-400/70 mt-1">
+              Elas continuam pendentes. Clique de novo para salvar só as preenchidas.
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+          <button onClick={() => { setValues({}); setSelected(new Set()); setConfirmPartial(false); }}
+                  className="text-xs text-white/30 hover:text-white/60 transition">Limpar tudo</button>
+          <div className="flex gap-2">
+            <button onClick={onClose}
+                    className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving || filledEntries.length === 0}
+                    className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+              {saving ? 'Salvando…'
+                : confirmPartial ? `Salvar mesmo assim (${filledEntries.length})`
+                : `Aplicar ${filledEntries.length} transportadora(s)`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal 2 — SKUs sem produto cadastrado, agrupado por seller, uma linha por SKU. */
+function PendingSkuModal({ missing, onClose, onSave }: {
+  missing: MissingProductInfo[];
+  onClose: () => void;
+  onSave: (resolutions: SkuResolutionItem[]) => Promise<void>;
+}) {
+  // Chave da linha: (seller, sku) — é como o estoque é indexado.
+  const keyOf = (m: MissingProductInfo) => `${m.seller_id}:${m.sku}`;
+  const [choice, setChoice] = useState<Record<string, string>>({});   // '' | 'create' | id do produto
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [confirmPartial, setConfirmPartial] = useState(false);
+
+  const groups = useMemo(() => groupBySeller(missing), [missing]);
+  const sellerIds = useMemo(
+    () => Array.from(new Set(missing.map(m => m.seller_id))).sort((a, b) => a - b),
+    [missing],
+  );
+
+  // Produtos de cada seller para o dropdown de "vincular". Traz inativos
+  // também: vincular a um inativo é permitido e o backend reativa.
+  const { data: productsBySeller, isLoading: loadingProducts } = useQuery(
+    ['pending-sku-products', sellerIds.join(',')],
+    async () => {
+      const out: Record<number, any[]> = {};
+      for (const sid of sellerIds) {
+        const { data } = await cadastrosApi.products({ seller_id: sid, active_only: false, page_size: 0 });
+        out[sid] = data.items;
+      }
+      return out;
+    },
+    { enabled: sellerIds.length > 0, staleTime: 60000 },
+  );
+
+  const rows = useMemo(() => groups.flatMap(g => g.rows), [groups]);
+  const decided = rows.filter(m => (choice[keyOf(m)] ?? '') !== '');
+  const undecided = rows.filter(m => (choice[keyOf(m)] ?? '') === '');
+
+  const handleSave = async () => {
+    if (!decided.length) { toast.error('Nenhum SKU resolvido'); return; }
+    const semNome = decided.filter(m =>
+      choice[keyOf(m)] === 'create' && !(names[keyOf(m)] ?? m.product_name ?? '').trim()
+    );
+    if (semNome.length) {
+      toast.error(`Informe o nome do produto: ${semNome.slice(0, 5).map(m => m.sku).join(', ')}`);
+      return;
+    }
+    if (undecided.length && !confirmPartial) { setConfirmPartial(true); return; }
+
+    const resolutions: SkuResolutionItem[] = decided.map(m => {
+      const c = choice[keyOf(m)];
+      if (c === 'create') {
+        return {
+          seller_id: m.seller_id, sku: m.sku, action: 'create',
+          name: (names[keyOf(m)] ?? m.product_name ?? '').trim(),
+        };
+      }
+      return {
+        seller_id: m.seller_id, sku: m.sku, action: 'link',
+        target_product_id: Number(c),
+      };
+    });
+    setSaving(true);
+    try { await onSave(resolutions); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-5xl flex flex-col" style={{ maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+          <div>
+            <h3 className="font-semibold text-white text-sm">📦 Resolver SKUs sem produto</h3>
+            <p className="text-[11px] text-white/40 mt-0.5">
+              {rows.length} SKU(s) segurando a baixa · {decided.length} resolvido(s)
+            </p>
+          </div>
+          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 pt-3 flex-shrink-0">
+          <div className="text-[11px] text-violet-300/90 bg-violet-900/20 border border-violet-500/25 rounded-lg px-3 py-2">
+            <b>Cadastrar agora</b> cria o produto com o nome que veio na NF — o cadastro completo
+            (barcode, caixa) fica pra depois. <b>Escolher um produto da lista</b> diz que esse SKU
+            da NF na verdade é aquele item, e reaponta as NFs pendentes pra ele.
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0">
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/25 mb-1 px-1 gap-2"
+               style={{ gridTemplateColumns: '10rem 1fr 1.2fr 1.4fr' }}>
+            <span>SKU da NF</span><span>Nome na NF</span><span>NFs afetadas</span><span>Ação</span>
+          </div>
+          {groups.map(g => (
+            <div key={g.seller_id} className="mb-3">
+              <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-white/8">
+                {g.seller_name} <span className="text-white/25 font-normal">({g.rows.length} SKU)</span>
+              </div>
+              <div className="space-y-1 mt-1">
+                {g.rows.map(m => {
+                  const k = keyOf(m);
+                  const c = choice[k] ?? '';
+                  const products = productsBySeller?.[m.seller_id] ?? [];
+                  const nfs = m.nf_numbers.join(', ');
+                  return (
+                    <div key={k} className="grid items-center gap-2 px-1 py-1 rounded"
+                         style={{ gridTemplateColumns: '10rem 1fr 1.2fr 1.4fr',
+                                  background: c ? 'rgba(109,89,222,0.10)' : 'transparent' }}>
+                      <span className="text-xs font-mono text-white/70 truncate" title={m.sku}>{m.sku}</span>
+                      <span className="text-xs text-white/40 truncate" title={m.product_name || ''}>
+                        {m.product_name || '—'}
+                      </span>
+                      {/* NFs em texto corrido; o que não couber fica no title (hover) */}
+                      <span className="text-[11px] text-white/35 truncate cursor-help" title={nfs}>
+                        {nfs}
+                      </span>
+                      <div className="flex gap-1 items-center min-w-0">
+                        <select
+                          value={c}
+                          onChange={(e) => { setChoice(prev => ({ ...prev, [k]: e.target.value })); setConfirmPartial(false); }}
+                          className="flex-1 min-w-0 bg-[#1B1836] border border-white/10 rounded px-2 py-1 text-xs text-white/80 outline-none focus:border-violet-500"
+                        >
+                          <option value="">— escolher —</option>
+                          <option value="create">+ Cadastrar agora com este SKU</option>
+                          {loadingProducts && <option disabled>carregando produtos…</option>}
+                          {products.map((p: any) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {p.sku} — {p.name}{p.active ? '' : '  [INATIVO — reativar]'}
+                            </option>
+                          ))}
+                        </select>
+                        {c === 'create' && (
+                          <input
+                            value={names[k] ?? m.product_name ?? ''}
+                            onChange={(e) => setNames(prev => ({ ...prev, [k]: e.target.value }))}
+                            placeholder="nome do produto"
+                            className="flex-1 min-w-0 bg-transparent border-0 border-b border-white/10 outline-none text-xs px-1 py-1 text-white/80 placeholder-white/20 focus:border-violet-500"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {confirmPartial && undecided.length > 0 && (
+          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-amber-300 bg-amber-900/20 border border-amber-500/30 rounded-lg px-3 py-2">
+            <b>{undecided.length} SKU(s) ainda sem decisão:</b>{' '}
+            {undecided.slice(0, 12).map(m => m.sku).join(', ')}
+            {undecided.length > 12 && ` … e mais ${undecided.length - 12}`}
+            <div className="text-amber-400/70 mt-1">
+              As NFs deles continuam pendentes. Clique de novo para aplicar só os resolvidos.
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+          <button onClick={() => { setChoice({}); setConfirmPartial(false); }}
+                  className="text-xs text-white/30 hover:text-white/60 transition">Limpar tudo</button>
+          <div className="flex gap-2">
+            <button onClick={onClose}
+                    className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving || decided.length === 0}
+                    className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+              {saving ? 'Salvando…'
+                : confirmPartial ? `Aplicar mesmo assim (${decided.length})`
+                : `Aplicar ${decided.length} resolução(ões)`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -238,6 +667,11 @@ export default function DashboardPage() {
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [newProductForm, setNewProductForm] = useState<Record<string, { name: string; barcode: string }>>({});
   const [savingProductKey, setSavingProductKey] = useState<string | null>(null);
+
+  // Modais de resolução em lote das pendências (10/08/2026). Os dois ficam
+  // disponíveis ao mesmo tempo; cada botão some quando aquela pendência acaba.
+  const [pendingCarrierOpen, setPendingCarrierOpen] = useState(false);
+  const [pendingSkuOpen, setPendingSkuOpen] = useState(false);
 
   // Modal de cancelamento de pedidos duplicados (por sessão + sellers selecionados)
   const [cancelDupSession, setCancelDupSession] = useState<{ session_id: number; sellers: { seller_id: number; seller_name: string }[] } | null>(null);
@@ -606,6 +1040,62 @@ export default function DashboardPage() {
     }
   };
 
+  // ── Resolução em lote das pendências de estoque (10/08/2026) ──────────────
+  // Uma chamada só para o lote inteiro: o backend baixa o estoque de todas as
+  // NFs de uma vez. Nunca chamar updateCarrier/createProduct em laço aqui.
+
+  const afterPendingResolved = async (negatives: any[], appliedCount: number) => {
+    qc.invalidateQueries('orders-pending-stock');
+    qc.invalidateQueries(['dashboard', targetDate]);
+    await refetch();
+    // Baixar estoque pode ter jogado SKU pra negativo — mesmo modal do import.
+    if (negatives.length > 0) {
+      setStockReport({
+        applied_orders: appliedCount,
+        pending_orders: [],
+        missing_products: [],
+        negatives,
+      });
+      setStockModalOpen(true);
+    }
+  };
+
+  const handleBatchCarrierSave = async (updates: { order_id: number; carrier: string }[]) => {
+    try {
+      const { data } = await ordersApi.batchCarrier(updates);
+      setPendingCarrierOpen(false);
+      toast.success(
+        `${data.updated} transportadora(s) salva(s) — ${data.stock_applied} NF(s) baixaram estoque`
+        + (data.still_pending ? ` · ${data.still_pending} ainda presa(s) por SKU sem produto` : ''),
+        { duration: 6000 },
+      );
+      await afterPendingResolved(data.negatives ?? [], data.stock_applied);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao salvar transportadoras');
+    }
+  };
+
+  const handleBatchSkuSave = async (resolutions: SkuResolutionItem[]) => {
+    try {
+      const { data } = await ordersApi.batchResolveSku(resolutions);
+      setPendingSkuOpen(false);
+      const partes = [];
+      if (data.created) partes.push(`${data.created} produto(s) cadastrado(s)`);
+      if (data.linked) partes.push(`${data.linked} SKU(s) vinculado(s) em ${data.orders_relinked} NF(s)`);
+      if (data.reactivated) partes.push(`${data.reactivated} reativado(s)`);
+      toast.success(
+        `${partes.join(' · ')} — ${data.stock_applied} NF(s) baixaram estoque`,
+        { duration: 6000 },
+      );
+      // O relink altera os SKUs dos itens; a lista de produtos em cache fica velha.
+      qc.invalidateQueries('pending-sku-products');
+      qc.invalidateQueries('products');
+      await afterPendingResolved(data.negatives ?? [], data.stock_applied);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao resolver SKUs');
+    }
+  };
+
   const handleCarrierSave = async (updates: Record<number, string>) => {
     const { ordersApi } = await import('../api');
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
@@ -723,23 +1213,27 @@ export default function DashboardPage() {
               })()}
             </p>
           </div>
-          {pendingStock!.missing_products.length > 0 && (
-            <button
-              onClick={() => {
-                setStockReport({
-                  applied_orders: 0,
-                  pending_orders: pendingStock!.pending_orders,
-                  missing_products: pendingStock!.missing_products,
-                  negatives: [],
-                });
-                setNewProductForm({});
-                setStockModalOpen(true);
-              }}
-              className="flex-shrink-0 text-xs text-red-400 hover:underline mt-0.5"
-            >
-              Resolver →
-            </button>
-          )}
+          {/* Um botão por tipo de pendência — só aparece o que existe de fato,
+              e some sozinho quando aquele tipo acaba. Resolver aqui evita
+              trocar de tela no meio do fluxo de importação. */}
+          <div className="flex flex-col gap-1.5 flex-shrink-0">
+            {pendingStock!.pending_orders.some(p => p.missing_carrier) && (
+              <button
+                onClick={() => setPendingCarrierOpen(true)}
+                className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              >
+                🚚 Resolver transportadoras
+              </button>
+            )}
+            {pendingStock!.missing_products.length > 0 && (
+              <button
+                onClick={() => setPendingSkuOpen(true)}
+                className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              >
+                📦 Resolver SKUs sem produto
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1345,6 +1839,25 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modais de resolução em lote das pendências de estoque (10/08/2026).
+          Cada um filtra o aviso pelo SEU tipo de pendência: NF que está sem
+          transportadora E sem SKU aparece nos dois, e só baixa quando a última
+          for resolvida (quem decide é apply_stock_for_orders, no backend). */}
+      {pendingCarrierOpen && (
+        <PendingCarrierModal
+          orders={(pendingStock?.pending_orders ?? []).filter(p => p.missing_carrier)}
+          onClose={() => setPendingCarrierOpen(false)}
+          onSave={handleBatchCarrierSave}
+        />
+      )}
+      {pendingSkuOpen && (
+        <PendingSkuModal
+          missing={pendingStock?.missing_products ?? []}
+          onClose={() => setPendingSkuOpen(false)}
+          onSave={handleBatchSkuSave}
+        />
       )}
 
       {/* Modal de transportadoras */}

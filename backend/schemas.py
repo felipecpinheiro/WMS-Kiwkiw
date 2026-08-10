@@ -750,6 +750,60 @@ class StockApplyReport(BaseModel):
     negatives: List[NegativeStockInfo] = []
 
 
+# ============================================================
+# RESOLUÇÃO EM LOTE DAS PENDÊNCIAS DE ESTOQUE (10/08/2026)
+# ============================================================
+# Subir arquivo é o core da operação: parar tudo para completar transportadora
+# NF a NF (foram 6.703 de uma vez) inviabiliza o dia. Estes dois lotes existem
+# para resolver o aviso do Dashboard sem trocar de tela.
+
+class CarrierUpdateItem(BaseModel):
+    order_id: int
+    carrier: str
+
+
+class BatchCarrierRequest(BaseModel):
+    updates: List[CarrierUpdateItem] = []
+
+
+class BatchCarrierResult(BaseModel):
+    updated: int = 0             # transportadoras gravadas
+    stock_applied: int = 0       # dessas, quantas NFs baixaram estoque agora
+    still_pending: int = 0       # continuam presas — faltava também SKU sem produto
+    negatives: List[NegativeStockInfo] = []
+
+
+class SkuResolutionItem(BaseModel):
+    """
+    Uma decisão sobre um SKU sem produto cadastrado.
+
+    action="create" -> cria o produto com o SKU que veio na NF (usa `name`).
+    action="link"   -> este SKU na verdade é o produto `target_product_id`;
+                       os itens das NFs PENDENTES são reescritos para o SKU
+                       dele. Se o produto estiver inativo, é reativado — senão
+                       a NF continuaria presa. Ver relink_sku_in_pending_orders.
+    """
+    seller_id: int
+    sku: str
+    action: str                              # "create" | "link"
+    name: Optional[str] = None               # create
+    barcode_seller: Optional[str] = None     # create
+    target_product_id: Optional[int] = None  # link
+
+
+class BatchSkuRequest(BaseModel):
+    resolutions: List[SkuResolutionItem] = []
+
+
+class BatchSkuResult(BaseModel):
+    created: int = 0
+    linked: int = 0
+    reactivated: int = 0
+    orders_relinked: int = 0
+    stock_applied: int = 0
+    negatives: List[NegativeStockInfo] = []
+
+
 class ImportResult(BaseModel):
     """Resultado completo de uma importação (equivale ao retorno de import_excel_orders)."""
     success: bool = False

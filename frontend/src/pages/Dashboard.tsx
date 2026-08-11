@@ -11,7 +11,7 @@ import {
 } from 'recharts';
 import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
-  ChevronRight, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
+  ChevronRight, ChevronDown, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
 } from 'lucide-react';
 import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport, PendingStockOrderInfo, MissingProductInfo, SkuResolutionItem } from '../api';
 
@@ -20,6 +20,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 import { todayBrasiliaStr } from '../timezone';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // ─── Componentes auxiliares ─────────────────────────────────
 
@@ -633,6 +634,8 @@ export default function DashboardPage() {
   // Data alvo do cockpit — default hoje (Brasília), mas usuário pode escolher dias anteriores
   const [targetDate, setTargetDate] = useState(todayBrasiliaStr);
   const [uploading, setUploading] = useState(false);
+  const isMobile = useIsMobile();
+  const [checksExpanded, setChecksExpanded] = useState(false);
   const todayStr = todayBrasiliaStr();
   const isToday = targetDate === todayStr;
 
@@ -1398,17 +1401,37 @@ export default function DashboardPage() {
           </div>
 
           {/* Checagens do dia */}
-          {stats.checks && (
+          {stats.checks && (() => {
+            const checkList = [
+              { label: 'Transportadora',       ok: !!stats.checks.transport },
+              { label: 'PDF Separação',        ok: !!stats.checks.separation },
+              { label: 'PDF Expedição',        ok: !!stats.checks.planning },
+              { label: 'Chaves NF únicas',     ok: !!stats.checks.stock },
+              { label: 'Produtos cadastrados', ok: !!stats.checks.products_registered },
+            ];
+            const pendingCount = checkList.filter(c => !c.ok).length;
+            const showBody = !isMobile || checksExpanded;
+            return (
             <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-              <h2 className="text-sm font-semibold text-white/80 mb-3">Checagens do Dia</h2>
+              <button
+                type="button"
+                onClick={() => isMobile && setChecksExpanded(v => !v)}
+                className={`w-full flex items-center justify-between ${showBody ? 'mb-3' : ''} ${isMobile ? 'cursor-pointer' : 'cursor-default'}`}
+              >
+                <h2 className="text-sm font-semibold text-white/80">Checagens do Dia</h2>
+                {isMobile && (
+                  <span className={`flex items-center gap-1.5 text-xs font-medium ${pendingCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {pendingCount > 0 ? `${pendingCount} pendente(s)` : 'tudo OK'}
+                    <ChevronDown size={13} className={`transition-transform ${checksExpanded ? 'rotate-180' : ''}`} />
+                  </span>
+                )}
+              </button>
+              {showBody && (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                <CheckItem label="Transportadora" ok={!!stats.checks.transport} />
-                <CheckItem label="PDF Separação" ok={!!stats.checks.separation} />
-                <CheckItem label="PDF Expedição" ok={!!stats.checks.planning} />
-                <CheckItem label="Chaves NF únicas" ok={!!stats.checks.stock} />
-                <CheckItem label="Produtos cadastrados" ok={!!stats.checks.products_registered} />
+                {checkList.map(c => <CheckItem key={c.label} label={c.label} ok={c.ok} />)}
               </div>
-              {stats.checks.all_ok && (
+              )}
+              {showBody && stats.checks.all_ok && (
                 <div className="mt-3 p-2.5 bg-emerald-900/30 border border-emerald-500/20 rounded-lg text-center">
                   <p className="text-xs text-emerald-300 font-semibold">
                     ✓ Todas as checagens OK — pronto para bipagem
@@ -1417,7 +1440,8 @@ export default function DashboardPage() {
               )}
 
               {/* Produtos sem cadastro */}
-              {!stats.checks.products_registered &&
+              {showBody &&
+                !stats.checks.products_registered &&
                 Array.isArray(stats.checks.missing_products) &&
                 stats.checks.missing_products.length > 0 && (
                   <div className="mt-3 p-3 bg-red-900/25 border border-red-500/20 rounded-lg">
@@ -1446,7 +1470,8 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-              {!stats.checks.transport &&
+              {showBody &&
+                !stats.checks.transport &&
                 Array.isArray(stats.checks.missing_carriers) &&
                 (stats.checks.missing_carriers as any[]).length > 0 && (
                   <div className="mt-3 p-3 bg-amber-900/25 border border-amber-500/20 rounded-lg">
@@ -1472,7 +1497,8 @@ export default function DashboardPage() {
                   </div>
                 )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Alertas */}
           {stats.alerts && stats.alerts.length > 0 && (
@@ -1670,7 +1696,7 @@ export default function DashboardPage() {
               <div className="space-y-2">
                 {stats.sessions_today.map((sess: any) => (
                   <div key={sess.session_id}
-                    className="flex items-start gap-3 p-3 bg-white/4 rounded-lg border border-white/8">
+                    className="flex flex-col sm:flex-row items-start gap-3 p-3 bg-white/4 rounded-lg border border-white/8">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-semibold text-white/80">
@@ -1696,7 +1722,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
                     {/* PDFs — geração sob demanda; indicador se já salvo em disco */}
-                    <div className="flex flex-col gap-1.5 flex-shrink-0">
+                    <div className="flex flex-row sm:flex-col flex-wrap gap-1.5 flex-shrink-0 w-full sm:w-auto">
                       <button
                         onClick={() =>
                           ordersApi.downloadSessionPdf(sess.session_id, 'separation')

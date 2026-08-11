@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
+import { Eye, EyeOff } from 'lucide-react';
 import { authApi } from '../api';
 
 interface LoginForm {
@@ -17,6 +18,7 @@ interface LoginForm {
 export default function LoginPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>();
 
   const onSubmit = async (data: LoginForm) => {
@@ -51,7 +53,7 @@ export default function LoginPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4"
+      className="min-h-screen flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-14 sm:pt-4"
       style={{ background: 'linear-gradient(160deg, #0C0B18 0%, #100E22 50%, #0C0B18 100%)' }}
     >
       {/* Decorative blobs */}
@@ -104,10 +106,11 @@ export default function LoginPage() {
                 type="email"
                 autoComplete="email"
                 placeholder="seu@email.com"
-                className="w-full rounded-xl px-3 py-2.5 text-white text-sm placeholder-white/20 outline-none transition focus:ring-2 focus:ring-violet-500/50"
+                className="w-full rounded-xl px-3 py-3 text-white placeholder-white/20 outline-none transition focus:ring-2 focus:ring-violet-500/50"
                 style={{
                   background: 'rgba(255,255,255,0.06)',
                   border: errors.email ? '1px solid rgba(248,113,113,0.6)' : '1px solid rgba(255,255,255,0.10)',
+                  fontSize: '16px',
                 }}
                 {...register('email', {
                   required: 'E-mail obrigatório',
@@ -124,17 +127,29 @@ export default function LoginPage() {
               <label className="block text-xs font-medium mb-1.5" style={{ color: 'rgba(255,255,255,0.50)' }}>
                 Senha
               </label>
-              <input
-                type="password"
-                autoComplete="current-password"
-                placeholder="••••••••"
-                className="w-full rounded-xl px-3 py-2.5 text-white text-sm placeholder-white/20 outline-none transition focus:ring-2 focus:ring-violet-500/50"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: errors.password ? '1px solid rgba(248,113,113,0.6)' : '1px solid rgba(255,255,255,0.10)',
-                }}
-                {...register('password', { required: 'Senha obrigatória' })}
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  className="w-full rounded-xl pl-3 pr-11 py-3 text-white placeholder-white/20 outline-none transition focus:ring-2 focus:ring-violet-500/50"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: errors.password ? '1px solid rgba(248,113,113,0.6)' : '1px solid rgba(255,255,255,0.10)',
+                    fontSize: '16px',
+                  }}
+                  {...register('password', { required: 'Senha obrigatória' })}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(v => !v)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  className="absolute right-0 top-0 h-full w-11 flex items-center justify-center text-white/35 hover:text-white/60 transition"
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
               {errors.password && (
                 <p className="text-red-400 text-xs mt-1">{errors.password.message}</p>
               )}
@@ -144,7 +159,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full text-white font-semibold py-2.5 rounded-xl transition-all text-sm mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full text-white font-semibold py-3.5 rounded-xl transition-all text-sm mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
               style={{
                 background: loading ? '#5B47C8' : 'linear-gradient(135deg, #7B63E8 0%, #5B47C8 100%)',
                 boxShadow: loading ? 'none' : '0 4px 16px rgba(123,99,232,0.35)',

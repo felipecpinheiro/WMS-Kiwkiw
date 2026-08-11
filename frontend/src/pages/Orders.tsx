@@ -10,11 +10,13 @@ import { format } from 'date-fns';
 import {
   Search, ScanLine, Package, Settings,
   ArrowDownToLine, ArrowUpFromLine, DollarSign, XCircle, Download,
-  Ban, RotateCcw,
+  Ban, RotateCcw, SlidersHorizontal, Truck,
 } from 'lucide-react';
 import { scanningApi, ordersApi } from '../api';
 import type { Order, PickingSession } from '../api';
 import { usePermissions } from '../hooks/usePermissions';
+import { useIsMobile } from '../hooks/useIsMobile';
+import BottomSheet from '../components/BottomSheet';
 import toast from 'react-hot-toast';
 
 // ─── Utilitários ─────────────────────────────────────────────
@@ -220,6 +222,46 @@ function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
         )}
       </td>
     </tr>
+  );
+}
+
+// ─── Cartão de pedido (mobile) ───────────────────────────────
+
+function OrderCard({ order, onClick }: { order: Order; onClick: () => void }) {
+  const semEstoque = !order.stock_applied_at && order.status !== 'cancelled' && order.status !== 'inactive';
+  return (
+    <div
+      onClick={onClick}
+      className="bg-gray-900/60 border border-white/8 rounded-xl p-3.5 active:bg-white/5 transition cursor-pointer"
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-sm font-mono font-semibold text-white/90">{order.nf_number}</span>
+        <StatusBadge status={order.status} />
+      </div>
+      <p className="text-sm text-white/80 truncate">{order.customer_name}</p>
+      <div className="flex items-center gap-2 mt-1 flex-wrap">
+        <span className="text-xs text-white/40">{order.seller_name}</span>
+        {order.carrier && (
+          <span className="text-xs text-white/30 flex items-center gap-1">
+            <Truck size={10} /> {order.carrier}
+          </span>
+        )}
+      </div>
+      {(semEstoque || order.for_billing) && (
+        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+          {semEstoque && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-500/30">
+              sem estoque
+            </span>
+          )}
+          {order.for_billing && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 border border-amber-500/20 flex items-center gap-0.5">
+              <DollarSign size={9} /> faturar
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -666,6 +708,8 @@ const PAGE_SIZE = 1000;
 
 export default function OrdersPage() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [sellerFilter, setSellerFilter] = useState('');
@@ -837,6 +881,11 @@ export default function OrdersPage() {
   const uniqueSellers = Array.from(new Set(orders.map(o => o.seller_name).filter(Boolean))).sort();
   const uniqueCarriers = Array.from(new Set(orders.map(o => o.carrier).filter(Boolean))).sort();
 
+  // Contagem de filtros ativos — mostrado no botão "Filtros" do mobile
+  const activeFilterCount = [
+    fileTypeFilter, billingFilter, dateFrom, dateTo, sellerFilter, carrierFilter, statusFilter,
+  ].filter(Boolean).length;
+
   // Sessões filtradas (quando filtro de sessão está ativo)
   // Sellers por sessão — derivado dos pedidos carregados (sem chamada extra)
   const sellersBySession = (sessions as any[]).reduce((acc: Record<number, string[]>, s: any) => {
@@ -870,7 +919,8 @@ export default function OrdersPage() {
         <p className="text-sm text-white/50 mt-0.5">Gerencie sessões de picking e visualize todos os pedidos</p>
       </div>
 
-      {/* Filtros de nível de arquivo — afetam sessões + pedidos */}
+      {/* Filtros de nível de arquivo — afetam sessões + pedidos (desktop; no mobile ficam na folha "Filtros") */}
+      {!isMobile && (
       <div className="bg-gray-900 border border-white/8 rounded-xl p-3 flex items-center gap-3 flex-wrap">
         <span className="text-xs font-medium text-white/50">Filtros do arquivo:</span>
 
@@ -919,6 +969,7 @@ export default function OrdersPage() {
           </button>
         )}
       </div>
+      )}
 
       {/* Sessões de picking */}
       <div>
@@ -959,6 +1010,8 @@ export default function OrdersPage() {
         <div className="p-4 border-b border-white/8 flex items-center gap-3 flex-wrap">
           <h2 className="text-sm font-semibold text-white/80 flex-1">Todos os Pedidos</h2>
 
+          {!isMobile && (
+          <>
           {/* Filtro de seller */}
           <select
             value={sellerFilter}
@@ -1004,27 +1057,58 @@ export default function OrdersPage() {
               Limpar
             </button>
           )}
+          </>
+          )}
 
           {/* Busca */}
-          <div className="relative">
+          <div className={`relative ${isMobile ? 'flex-1 min-w-0' : ''}`}>
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
             <input
               type="text"
               placeholder="Buscar NF, cliente, seller..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-7 pr-3 py-1.5 text-xs border border-white/12 rounded-lg outline-none focus:ring-2 focus:ring-violet-500 w-56"
+              className={`pl-7 pr-3 py-1.5 text-xs border border-white/12 rounded-lg outline-none focus:ring-2 focus:ring-violet-500 ${isMobile ? 'w-full' : 'w-56'}`}
             />
           </div>
 
-          {/* Exportar */}
-          <button onClick={handleExport} disabled={exporting || filtered.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-violet-300 bg-violet-900/25 hover:bg-violet-900/40 border border-violet-500/30 rounded-lg transition disabled:opacity-50">
-            <Download size={13} />
-            {exporting ? 'Exportando...' : `Exportar (${filtered.length})`}
-          </button>
+          {isMobile ? (
+            <button
+              onClick={() => setFiltersOpen(true)}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
+            >
+              <SlidersHorizontal size={13} />
+              Filtros
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-violet-500 text-white text-[9px] font-bold flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          ) : (
+            /* Exportar */
+            <button onClick={handleExport} disabled={exporting || filtered.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-violet-300 bg-violet-900/25 hover:bg-violet-900/40 border border-violet-500/30 rounded-lg transition disabled:opacity-50">
+              <Download size={13} />
+              {exporting ? 'Exportando...' : `Exportar (${filtered.length})`}
+            </button>
+          )}
         </div>
 
+        {isMobile ? (
+          <div className="p-3 space-y-2">
+            {paginated.map(order => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                onClick={() => setSelectedOrderId(order.id)}
+              />
+            ))}
+            {sorted.length === 0 && (
+              <p className="text-center text-sm text-white/35 py-10">Nenhum pedido encontrado</p>
+            )}
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1056,6 +1140,7 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        )}
 
         <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
           {sorted.length} pedido(s) exibido(s)
@@ -1111,6 +1196,119 @@ export default function OrdersPage() {
           onClose={() => setConfigSession(null)}
           onSave={handleSessionConfigSave}
         />
+      )}
+
+      {/* Folha de filtros (mobile) */}
+      {isMobile && (
+        <BottomSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filtros">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Tipo da movimentação (arquivo)</label>
+              <select
+                value={fileTypeFilter}
+                onChange={e => setFileTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todos os tipos</option>
+                <option value="Saída">Saída (Expedição)</option>
+                <option value="Entrada">Entrada (Recebimento)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Faturamento</label>
+              <select
+                value={billingFilter}
+                onChange={e => setBillingFilter(e.target.value as '' | 'yes' | 'no')}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todos (faturamento)</option>
+                <option value="yes">Apenas faturáveis</option>
+                <option value="no">Apenas não faturáveis</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Período (data de importação)</label>
+              <div className="flex items-center gap-2">
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+                <span className="text-white/25 text-xs">→</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Seller</label>
+              <select
+                value={sellerFilter}
+                onChange={e => setSellerFilter(e.target.value)}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todos os sellers</option>
+                {uniqueSellers.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Transportadora</label>
+              <select
+                value={carrierFilter}
+                onChange={e => setCarrierFilter(e.target.value)}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todas as transportadoras</option>
+                {uniqueCarriers.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Status</label>
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todos os status</option>
+                {Object.entries(STATUS_CONFIG)
+                  .filter(([k]) => k !== 'inactive')
+                  .map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={() => {
+                    setFileTypeFilter(''); setBillingFilter(''); setDateFrom(''); setDateTo('');
+                    setSellerFilter(''); setCarrierFilter(''); setStatusFilter('');
+                  }}
+                  className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                >
+                  Limpar tudo
+                </button>
+              )}
+              <button
+                onClick={() => setFiltersOpen(false)}
+                className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-600 rounded-xl hover:bg-violet-500 transition"
+              >
+                Ver {sorted.length} pedido(s)
+              </button>
+            </div>
+
+            <button
+              onClick={() => { handleExport(); setFiltersOpen(false); }}
+              disabled={exporting || filtered.length === 0}
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 text-sm text-violet-300 bg-violet-900/25 hover:bg-violet-900/40 border border-violet-500/30 rounded-xl transition disabled:opacity-50"
+            >
+              <Download size={14} />
+              {exporting ? 'Exportando...' : `Exportar (${filtered.length})`}
+            </button>
+          </div>
+        </BottomSheet>
       )}
     </div>
   )

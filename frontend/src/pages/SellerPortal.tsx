@@ -11,7 +11,7 @@ import {
   Package, TrendingDown, CheckCircle, Clock, LogOut,
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
-  BarChart2, List, CalendarDays, KeyRound,
+  BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -22,6 +22,8 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 import { todayBrasiliaStr } from '../timezone';
+import { useIsMobile } from '../hooks/useIsMobile';
+import BottomSheet from '../components/BottomSheet';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +82,7 @@ function SkuDetailModal({
 }: {
   sellerId: number; sku: string; onClose: () => void;
 }) {
+  const isMobile = useIsMobile();
   const [days, setDays] = useState(90);
   const { data, isLoading } = useQuery(
     ['sku-history-portal', sellerId, sku, days],
@@ -87,35 +90,23 @@ function SkuDetailModal({
     { keepPreviousData: true },
   );
 
-  return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-white/8 sticky top-0 bg-gray-900 z-10">
-          <div>
-            <h2 className="text-base font-semibold text-white font-mono">{sku}</h2>
-            <p className="text-xs text-white/35 mt-0.5">{data?.product_name}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <select
-              value={days}
-              onChange={e => setDays(Number(e.target.value))}
-              className="border border-white/12 rounded-lg px-2 py-1.5 text-xs bg-gray-800 text-white outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value={30}>30 dias</option>
-              <option value={60}>60 dias</option>
-              <option value={90}>90 dias</option>
-              <option value={180}>180 dias</option>
-            </select>
-            <button onClick={onClose} className="text-white/35 hover:text-white/60">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
+  const periodSelect = (
+    <select
+      value={days}
+      onChange={e => setDays(Number(e.target.value))}
+      className="border border-white/12 rounded-lg px-2 py-1.5 text-xs bg-gray-800 text-white outline-none focus:ring-2 focus:ring-violet-500"
+    >
+      <option value={30}>30 dias</option>
+      <option value={60}>60 dias</option>
+      <option value={90}>90 dias</option>
+      <option value={180}>180 dias</option>
+    </select>
+  );
 
-        {isLoading ? (
-          <div className="flex items-center justify-center h-48 text-white/35 text-sm">Carregando...</div>
-        ) : data ? (
-          <div className="p-5 space-y-5">
+  const body = isLoading ? (
+    <div className="flex items-center justify-center h-48 text-white/35 text-sm">Carregando...</div>
+  ) : data ? (
+          <div className={isMobile ? 'space-y-5' : 'p-5 space-y-5'}>
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
@@ -164,9 +155,38 @@ function SkuDetailModal({
               </div>
             )}
           </div>
-        ) : (
-          <p className="text-center text-sm text-white/35 py-10">Nenhum dado encontrado para este SKU.</p>
-        )}
+  ) : (
+    <p className="text-center text-sm text-white/35 py-10">Nenhum dado encontrado para este SKU.</p>
+  );
+
+  if (isMobile) {
+    return (
+      <BottomSheet open onClose={onClose} title={sku}>
+        <div className="flex items-center justify-between -mt-1 mb-4">
+          <p className="text-xs text-white/35">{data?.product_name}</p>
+          {periodSelect}
+        </div>
+        {body}
+      </BottomSheet>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-white/8 sticky top-0 bg-gray-900 z-10">
+          <div>
+            <h2 className="text-base font-semibold text-white font-mono">{sku}</h2>
+            <p className="text-xs text-white/35 mt-0.5">{data?.product_name}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {periodSelect}
+            <button onClick={onClose} className="text-white/35 hover:text-white/60">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        {body}
       </div>
     </div>
   );
@@ -176,6 +196,7 @@ function SkuDetailModal({
 
 export default function SellerPortalPage() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : {};
   const sellerId = user.seller_id;
@@ -194,6 +215,7 @@ export default function SellerPortalPage() {
   const [movDateTo,   setMovDateTo]   = useState(today);
   const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
   const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
+  const [movFiltersOpen, setMovFiltersOpen] = useState(false);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
 
   // ── Dados ──────────────────────────────────────────────────────────────────
@@ -304,6 +326,7 @@ export default function SellerPortalPage() {
 
   const completionPct  = dashboard?.completion_rate ?? 0;
   const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
+  const lowStockCount  = (stock as any[]).filter((s: any) => s.level === 'BAIXO').length;
   const ordersCompleted = dashboard?.orders_completed ?? 0;
   const ordersPending   = dashboard?.orders_pending ?? 0;
   const ordersInterrupted = orders.filter((o: any) => o.status === 'interrupted').length;
@@ -324,7 +347,8 @@ export default function SellerPortalPage() {
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#0C0B18' }}>
 
-      {/* ══ SIDEBAR ════════════════════════════════════════════════════════════ */}
+      {/* ══ SIDEBAR (desktop) ════════════════════════════════════════════════ */}
+      {!isMobile && (
       <aside
         className="w-56 flex flex-col flex-shrink-0 border-r"
         style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)' }}
@@ -435,6 +459,7 @@ export default function SellerPortalPage() {
           </button>
         </div>
       </aside>
+      )}
 
       {/* Modal alterar senha */}
       {showPwdModal && (
@@ -475,8 +500,42 @@ export default function SellerPortalPage() {
       )}
 
       {/* ══ CONTEÚDO PRINCIPAL ════════════════════════════════════════════════ */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+
+        {/* Topo (mobile) — nome do seller + acesso rápido a senha/logout */}
+        {isMobile && (
+          <div className="flex items-center gap-1.5 px-4 py-3 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            <div className="flex-1 min-w-0">
+              <p className="text-[9px] uppercase tracking-widest font-bold" style={{ color: 'rgba(255,255,255,0.35)' }}>Seller</p>
+              <p className="text-sm font-bold text-white truncate">{sellerName}</p>
+            </div>
+            <button
+              onClick={() => setShowPwdModal(true)}
+              aria-label="Alterar senha"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-white/40 hover:text-violet-400 hover:bg-violet-900/15 transition"
+            >
+              <KeyRound size={16} />
+            </button>
+            <button
+              onClick={handleLogout}
+              aria-label="Sair"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-white/40 hover:text-red-400 hover:bg-red-900/15 transition"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        )}
+
       <main className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-5">
+        <div className={isMobile ? 'p-4 space-y-4' : 'p-6 space-y-5'}>
+
+          {/* Aviso de estoque baixo (mobile) — substitui os KPIs fixos da sidebar */}
+          {isMobile && lowStockCount > 0 && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-red-500/25 px-3.5 py-2.5" style={{ background: 'rgba(226,75,74,0.08)' }}>
+              <span className="text-base font-bold text-red-400">{lowStockCount}</span>
+              <span className="text-xs text-red-300/85 flex-1">SKU{lowStockCount > 1 ? 's' : ''} em nível baixo de estoque</span>
+            </div>
+          )}
 
           {/* Header */}
           <div>
@@ -581,6 +640,53 @@ export default function SellerPortalPage() {
                   className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
 
+              {isMobile ? (
+                <div className="space-y-2">
+                  {filteredStock.length > 0 ? filteredStock.map((s: any) => {
+                    const stockVal = s.current_stock ?? s.final_stock ?? 0;
+                    const fs       = s.forecast_status ?? '';
+                    const noStock  = stockVal <= 0;
+                    const stripe =
+                      s.level === 'ALTO'  ? '#7B63E8' :
+                      s.level === 'MÉDIO' ? '#F0C87E' : '#E24B4A';
+                    const forecastCls =
+                      fs === 'Sem Produto'            ? 'bg-red-900/60 text-red-300 font-bold' :
+                      fs === 'Sem Dados Suficientes'  ? 'bg-gray-700/50 text-white/35' :
+                      fs === 'Baixo'                  ? 'bg-red-900/50 text-red-300 font-semibold' :
+                      fs === 'Médio'                  ? 'bg-yellow-900/40 text-yellow-300' :
+                      fs === 'Alto'                   ? 'bg-green-900/40 text-green-300' : 'bg-gray-700/40 text-white/40';
+                    return (
+                      <div
+                        key={s.sku}
+                        onClick={() => setSelectedSku(s.sku)}
+                        className="flex gap-2.5 p-3 rounded-xl border border-white/8 bg-gray-900 active:bg-white/5 cursor-pointer"
+                      >
+                        <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: stripe }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-sm font-semibold text-white/90 truncate">{s.product_name}</span>
+                            <span className={`text-base font-bold tabular-nums flex-shrink-0 ${noStock ? 'text-red-400' : 'text-white'}`}>{stockVal}</span>
+                          </div>
+                          <p className="text-[11px] font-mono text-white/30 mt-0.5">{s.sku}</p>
+                          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                            <span className="text-[11px] text-white/40">entradas <b className="text-teal-400 font-medium">+{s.total_in ?? s.entries ?? 0}</b></span>
+                            <span className="text-[11px] text-white/40">saídas <b className="text-red-400 font-medium">-{s.total_out ?? s.exits ?? 0}</b></span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${forecastCls}`}>{fs || s.level || '—'}</span>
+                          </div>
+                          {s.days_remaining != null && (
+                            <p className="text-[11px] text-white/50 mt-1">previsão: {s.days_remaining} dia{s.days_remaining === 1 ? '' : 's'}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <p className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</p>
+                  )}
+                  {filteredStock.length > 0 && (
+                    <p className="text-xs text-white/30 text-center pt-1">{filteredStock.length} SKU(s) — toque para ver o gráfico</p>
+                  )}
+                </div>
+              ) : (
               <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
                 <table className="w-full table-fixed">
                   <thead>
@@ -651,6 +757,7 @@ export default function SellerPortalPage() {
                   {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar · Previsão baseada na média dos últimos 60 dias
                 </div>
               </div>
+              )}
             </>
           )}
 
@@ -659,35 +766,51 @@ export default function SellerPortalPage() {
             <>
               {/* Barra de busca + tipo + exportar */}
               <div className="flex gap-3 items-center flex-wrap">
-                <div className="relative flex-1 min-w-[200px]">
+                <div className="relative flex-1 min-w-[160px]">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar SKU, produto ou NF..."
                     className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
-                {/* Filtro tipo */}
-                <select
-                  value={movTypeFilter}
-                  onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-                  className="px-3 py-2 rounded-lg text-sm border border-white/12 bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
-                >
-                  <option value="">Todos os tipos</option>
-                  <option value="Entrada">Entrada</option>
-                  <option value="Saída">Saída</option>
-                </select>
-                {sellerId && (
+                {isMobile ? (
                   <button
-                    onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); }}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-white/12 text-white/60 hover:text-white hover:bg-white/5 hover:border-white/20"
+                    onClick={() => setMovFiltersOpen(true)}
+                    className="relative flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
                   >
-                    <Download size={14} />
-                    Exportar CSV
+                    <SlidersHorizontal size={13} />
+                    Filtros
+                    {(movTypeFilter || movDateFrom !== oneYearAgo || movDateTo !== today) && (
+                      <span className="absolute -top-1.5 -right-1.5 w-2.5 h-2.5 rounded-full bg-violet-500" />
+                    )}
                   </button>
+                ) : (
+                  <>
+                    {/* Filtro tipo */}
+                    <select
+                      value={movTypeFilter}
+                      onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
+                      className="px-3 py-2 rounded-lg text-sm border border-white/12 bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                    >
+                      <option value="">Todos os tipos</option>
+                      <option value="Entrada">Entrada</option>
+                      <option value="Saída">Saída</option>
+                    </select>
+                    {sellerId && (
+                      <button
+                        onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); }}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-white/12 text-white/60 hover:text-white hover:bg-white/5 hover:border-white/20"
+                      >
+                        <Download size={14} />
+                        Exportar CSV
+                      </button>
+                    )}
+                  </>
                 )}
                 <span className="text-xs text-white/30 ml-auto">{filteredMovements.length} registros</span>
               </div>
 
-              {/* Filtro de datas das movimentações */}
+              {/* Filtro de datas das movimentações (desktop; no mobile fica na folha "Filtros") */}
+              {!isMobile && (
               <div className="flex gap-3 flex-wrap items-center bg-gray-900/60 border border-white/8 rounded-xl px-4 py-3">
                 <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
                 <span className="text-xs text-white/40">De</span>
@@ -699,7 +822,39 @@ export default function SellerPortalPage() {
                   className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
                   style={{ background: '#14122A', colorScheme: 'dark' }} />
               </div>
+              )}
 
+              {isMobile ? (
+                <div className="space-y-2">
+                  {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => {
+                    const isIn = m.movement_type === 'Entrada';
+                    return (
+                      <div key={m.id ?? i} className="p-3 rounded-xl border border-white/8 bg-gray-900">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-white/90 truncate">{m.product_name}</span>
+                          <span className={`text-base font-bold tabular-nums flex-shrink-0 ${isIn ? 'text-teal-400' : 'text-red-400'}`}>
+                            {isIn ? '+' : '-'}{m.quantity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] font-mono text-white/30 mt-0.5">{m.sku}</p>
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${isIn ? 'bg-teal-900/30 text-teal-300' : 'bg-red-900/30 text-red-300'}`}>
+                            {m.movement_type}
+                          </span>
+                          <span className="text-[11px] text-white/35">
+                            {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                          </span>
+                          {m.nf_number && (
+                            <span className="text-[11px] font-mono text-white/25">NF {m.nf_number}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <p className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</p>
+                  )}
+                </div>
+              ) : (
               <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
                 <table className="w-full">
                   <thead>
@@ -763,11 +918,36 @@ export default function SellerPortalPage() {
                   {filteredMovements.length} movimentação(ões)
                 </div>
               </div>
+              )}
             </>
           )}
 
         </div>
       </main>
+
+      {/* Abas inferiores (mobile) */}
+      {isMobile && (
+        <nav
+          className="flex flex-shrink-0 border-t"
+          style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          {navItems.map(({ id, label, icon: Icon }) => {
+            const isActive = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => { setTab(id); setSearch(''); }}
+                className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
+                style={{ color: isActive ? '#9B87F0' : 'rgba(255,255,255,0.40)' }}
+              >
+                <Icon size={18} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+      )}
+      </div>
 
       {/* ── Modal de detalhe do SKU ─────────────────────────────────────────── */}
       {selectedSku && sellerId && (
@@ -776,6 +956,61 @@ export default function SellerPortalPage() {
           sku={selectedSku}
           onClose={() => setSelectedSku(null)}
         />
+      )}
+
+      {/* Folha de filtros de movimentações (mobile) */}
+      {isMobile && (
+        <BottomSheet open={movFiltersOpen} onClose={() => setMovFiltersOpen(false)} title="Filtros">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Tipo</label>
+              <select
+                value={movTypeFilter}
+                onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
+                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                <option value="">Todos os tipos</option>
+                <option value="Entrada">Entrada</option>
+                <option value="Saída">Saída</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1.5">Período</label>
+              <div className="flex items-center gap-2">
+                <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
+                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+                <span className="text-white/25 text-xs">→</span>
+                <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
+                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              {(movTypeFilter || movDateFrom !== oneYearAgo || movDateTo !== today) && (
+                <button
+                  onClick={() => { setMovTypeFilter(''); setMovDateFrom(oneYearAgo); setMovDateTo(today); }}
+                  className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                >
+                  Limpar
+                </button>
+              )}
+              <button
+                onClick={() => setMovFiltersOpen(false)}
+                className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-600 rounded-xl hover:bg-violet-500 transition"
+              >
+                Ver {filteredMovements.length} registro(s)
+              </button>
+            </div>
+            {sellerId && (
+              <button
+                onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); setMovFiltersOpen(false); }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 text-sm rounded-xl border border-white/12 text-white/70 hover:text-white hover:bg-white/5 transition"
+              >
+                <Download size={14} />
+                Exportar CSV
+              </button>
+            )}
+          </div>
+        </BottomSheet>
       )}
     </div>
   );

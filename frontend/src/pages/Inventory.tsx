@@ -8,8 +8,10 @@ import { useQuery, useQueryClient } from 'react-query';
 import { useForm } from 'react-hook-form';
 import {
   Package, TrendingDown, TrendingUp, Download, Search, Upload, FileUp,
-  X, BarChart2, Calendar, ClipboardPaste, FileSpreadsheet, Pencil,
+  X, BarChart2, Calendar, ClipboardPaste, FileSpreadsheet, Pencil, SlidersHorizontal,
 } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
+import BottomSheet from '../components/BottomSheet';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, Legend,
@@ -24,6 +26,20 @@ const LEVEL_CONFIG: Record<string, { label: string; color: string }> = {
   MÉDIO: { label: 'Médio', color: 'bg-amber-900/40 text-amber-300 border border-amber-500/20' },
   BAIXO: { label: 'Baixo', color: 'bg-red-900/40 text-red-300 border border-red-500/20' },
 };
+
+// Faixa de cor lateral do cartão (mobile) — mesma semântica do pill de Nível
+const STRIPE_COLOR: Record<string, string> = {
+  ALTO: '#7B63E8',
+  MÉDIO: '#F0C87E',
+  BAIXO: '#E24B4A',
+};
+
+const SORT_OPTIONS: { label: string; col: string }[] = [
+  { label: 'SKU',       col: 'SKU' },
+  { label: 'Produto',   col: 'Produto' },
+  { label: 'Estoque atual', col: 'Atual' },
+  { label: 'Projeção',  col: 'Projeção' },
+];
 
 
 // ── Modal de Importação de Histórico de Estoque ───────────────────────────────
@@ -1601,6 +1617,8 @@ export default function InventoryPage() {
   const [sellerId, setSellerId] = useState<number | null>(null);
   const [tab, setTab] = useState<'stock' | 'movements'>('stock');
   const [search, setSearch] = useState('');
+  const isMobile = useIsMobile();
+  const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [movSearch, setMovSearch] = useState('');
   const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
   const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
@@ -1832,15 +1850,26 @@ export default function InventoryPage() {
         {tab === 'stock' && (
           <>
             {/* Barra de busca */}
-            <div className="relative mb-4 max-w-xs">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Buscar SKU ou produto..."
-                className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-white/10 text-white placeholder-white/25 outline-none focus:ring-2 focus:ring-violet-500/50"
-                style={{ background: '#14122A' }}
-              />
+            <div className={`flex items-center gap-2 mb-4 ${isMobile ? '' : 'max-w-xs'}`}>
+              <div className="relative flex-1 min-w-0">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar SKU ou produto..."
+                  className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-white/10 text-white placeholder-white/25 outline-none focus:ring-2 focus:ring-violet-500/50"
+                  style={{ background: '#14122A' }}
+                />
+              </div>
+              {isMobile && (
+                <button
+                  onClick={() => setSortSheetOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
+                >
+                  <SlidersHorizontal size={13} />
+                  Ordenar
+                </button>
+              )}
             </div>
 
             {/* Banner de alerta: SKUs sem cadastro em Produtos */}
@@ -1871,6 +1900,50 @@ export default function InventoryPage() {
             {loadingStock ? (
               <div className="flex items-center justify-center py-16">
                 <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : isMobile ? (
+              <div className="space-y-2">
+                {sortedStock.map((item: any) => {
+                  const level    = item.level || 'ALTO';
+                  const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['ALTO'];
+                  const days     = item.days_remaining;
+                  return (
+                    <div
+                      key={item.sku}
+                      onClick={() => setDetailSku(item.sku)}
+                      className="flex gap-2.5 p-3 rounded-xl border border-white/8 bg-white/[0.03] active:bg-white/5 cursor-pointer"
+                    >
+                      <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: STRIPE_COLOR[level] || STRIPE_COLOR.ALTO }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          {item.product_registered === false ? (
+                            <span className="text-sm font-semibold text-red-400 truncate">{item.product_name || item.sku}</span>
+                          ) : (
+                            <span className="text-sm font-semibold text-white truncate">{item.product_name}</span>
+                          )}
+                          <span className="text-base font-bold text-white flex-shrink-0 tabular-nums">{item.current_stock}</span>
+                        </div>
+                        <p className="text-[11px] font-mono text-white/30 mt-0.5">{item.sku}</p>
+                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                          <span className="text-[11px] text-white/40">entrada <b className="text-emerald-400 font-medium">+{item.total_in ?? 0}</b></span>
+                          <span className="text-[11px] text-white/40">saída <b className="text-red-400 font-medium">-{item.total_out ?? 0}</b></span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full ${levelCfg.color}`}>{levelCfg.label}</span>
+                          {item.product_registered === false && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">SEM CADASTRO</span>
+                          )}
+                        </div>
+                        {days != null && (
+                          <p className={`text-[11px] mt-1 ${projectionColor(days)}`}>projeção: acaba em {days} dia{days === 1 ? '' : 's'}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {sortedStock.length === 0 && (
+                  <p className="text-center text-white/30 text-sm py-12">
+                    {search ? 'Nenhum produto encontrado para a busca' : 'Nenhum produto no estoque'}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="rounded-xl border border-white/8 overflow-hidden">
@@ -2151,6 +2224,39 @@ export default function InventoryPage() {
           sku={detailSku}
           onClose={() => setDetailSku(null)}
         />
+      )}
+
+      {/* Folha de ordenação (mobile) */}
+      {isMobile && (
+        <BottomSheet open={sortSheetOpen} onClose={() => setSortSheetOpen(false)} title="Ordenar por">
+          <div className="space-y-1.5">
+            {SORT_OPTIONS.map(opt => {
+              const active = stockSort.col === opt.col;
+              return (
+                <button
+                  key={opt.col}
+                  onClick={() => {
+                    setStockSort(prev => ({
+                      col: opt.col,
+                      dir: prev.col === opt.col && prev.dir === 'asc' ? 'desc' : 'asc',
+                    }));
+                    setSortSheetOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition ${
+                    active ? 'text-white font-medium' : 'text-white/60'
+                  }`}
+                  style={active ? {
+                    background: 'rgba(123,99,232,0.18)',
+                    border: '1px solid rgba(123,99,232,0.28)',
+                  } : { border: '1px solid transparent' }}
+                >
+                  {opt.label}
+                  {active && <span className="text-violet-300">{stockSort.dir === 'asc' ? '↑ crescente' : '↓ decrescente'}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </BottomSheet>
       )}
 
     </div>

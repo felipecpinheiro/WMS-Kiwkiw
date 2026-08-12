@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from 'react-query';
 import { useLocation } from 'react-router-dom';
 import {
   Search, Pencil, Trash2, Camera, X, Check, Upload, ClipboardList,
-  ChevronLeft, ChevronRight, RotateCcw, EyeOff,
+  ChevronLeft, ChevronRight, RotateCcw, EyeOff, Download,
 } from 'lucide-react';
 import { cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
@@ -39,7 +39,7 @@ const EMPTY_FORM: ProductForm = {
 
 // Colunas da tabela de colagem: SKU · Seller · Nome · Val. Unit. · Caixa · Cód. Barras Seller
 const PASTE_HEADERS = ['SKU *', 'Seller *', 'Nome *', 'Val. Unit.', 'Caixa', 'Cód. Barras'];
-const MAX_ROWS = 200;
+const MAX_ROWS = 500;
 const EMPTY_GRID = (): string[][] => Array(100).fill(null).map(() => Array(6).fill(''));
 
 function normalizeRect(r1: number, c1: number, r2: number, c2: number) {
@@ -296,11 +296,16 @@ export default function ProductsPage() {
     const [ar, ac] = anchor;
     setGridHistory(h => [...h.slice(-20), grid.map(r => [...r])]);
     const newGrid = grid.map(r => [...r]);
-    pastedRows.slice(0, MAX_ROWS - ar).forEach((row, ri) => {
+    const fittingRows = pastedRows.slice(0, MAX_ROWS - ar);
+    fittingRows.forEach((row, ri) => {
       const targetRow = ar + ri;
       if (targetRow >= newGrid.length) newGrid.push(Array(6).fill(''));
       row.slice(0, 6 - ac).forEach((cell, ci) => { newGrid[targetRow][ac + ci] = cell.trim(); });
     });
+    if (pastedRows.length > fittingRows.length) {
+      const leftOver = pastedRows.length - fittingRows.length;
+      toast.error(`${leftOver} linha(s) não couberam (limite de ${MAX_ROWS}) e ficaram de fora — cole o restante em uma nova rodada.`, { duration: 8000 });
+    }
     const pasteR2 = Math.min(ar + pastedRows.length - 1, MAX_ROWS - 1);
     const pasteC2 = Math.min(ac + Math.max(...pastedRows.map(r => r.length)) - 1, 5);
     setCursor([pasteR2, pasteC2]);
@@ -323,6 +328,26 @@ export default function ProductsPage() {
     setGrid(g => g.map((r, ridx) => ridx === ri ? r.map((c, cidx) => cidx === ci ? val : c) : r));
 
   const handlePasteSave = async () => {
+    // Linhas do próprio lote colado que repetem (seller, SKU) — o backend recusa
+    // o lote inteiro se isso chegar até ele, então barra aqui e deixa quem colou decidir.
+    const seenAt: Record<string, number> = {};
+    const dupPairs: string[] = [];
+    grid.forEach((row, ri) => {
+      const sku = row[0]?.trim();
+      const seller = row[1]?.trim();
+      if (!sku || !seller) return;
+      const key = `${seller.toLowerCase()}||${sku}`;
+      if (seenAt[key] !== undefined) {
+        dupPairs.push(`SKU "${sku}" (${seller}) nas linhas ${seenAt[key] + 1} e ${ri + 1}`);
+      } else {
+        seenAt[key] = ri;
+      }
+    });
+    if (dupPairs.length) {
+      toast.error(`SKU repetido no lote — corrija antes de salvar:\n${dupPairs.join('\n')}`, { duration: 12000 });
+      return;
+    }
+
     const items = grid.filter(row => row[0]?.trim() && row[2]?.trim()).map(row => ({
       sku: row[0].trim(),
       seller_name: row[1].trim(),
@@ -350,6 +375,14 @@ export default function ProductsPage() {
 
   const validRows = grid.filter(r => r[0]?.trim() && r[2]?.trim()).length;
 
+  const handleDownloadTemplate = async () => {
+    try {
+      await cadastrosApi.downloadBulkUploadTemplate();
+    } catch {
+      toast.error('Erro ao baixar modelo');
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
 
@@ -368,6 +401,11 @@ export default function ProductsPage() {
             <input ref={uploadRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden"
               onChange={handleExcelUpload} disabled={uploading} />
           </label>
+          <button onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
+            <Download size={14} />
+            Baixar Modelo
+          </button>
           <button onClick={() => { setGrid(EMPTY_GRID()); setShowPasteModal(true); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
             <ClipboardList size={14} /> Colar Produtos

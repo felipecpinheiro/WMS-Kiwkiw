@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 
 from ..database import get_db
 from ..auth import (
@@ -1170,8 +1171,52 @@ def bulk_paste_products(
             db.add(p)
             results["created"] += 1
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Há SKUs repetidos dentro do próprio lote colado (mesmo seller + SKU em mais de uma linha). Corrija as linhas duplicadas e cole novamente.",
+        )
     return results
+
+
+@router.get("/products/bulk-upload/template")
+def download_bulk_upload_template(
+    current_user: models.User = Depends(require_manager_or_above),
+):
+    """
+    Planilha-modelo para o Upload Excel de produtos. Colunas por extenso
+    (mesma ordem da grade "Colar Produtos"), todas já aceitas pelo parser
+    de bulk_upload_products — não é um contrato à parte, é só o mesmo
+    formato mostrado de um jeito baixável.
+    """
+    import io
+    import openpyxl
+    from fastapi.responses import StreamingResponse
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Produtos"
+
+    headers = ["SKU", "Seller", "Nome", "Valor Unitário", "Caixa", "Código de Barras"]
+    ws.append(headers)
+    ws.append(["12345", "Nome do Seller", "Nome do Produto", 19.9, "Própria", "7891234567890"])
+    ws.append(["67890", "Nome do Seller", "Outro Produto", 34.5, "P", ""])
+
+    for col_idx, header in enumerate(headers, 1):
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max(18, len(header) + 4)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="modelo_upload_produtos.xlsx"'},
+    )
 
 
 # Síncrono de propósito: planilha de 20k+ linhas com commit em lotes.

@@ -775,6 +775,8 @@ export const cadastrosApi = {
       timeout: 300000, // 5 min — planilhas grandes (20k+ linhas)
     });
   },
+  downloadBulkUploadTemplate: () =>
+    downloadAuthenticatedFile('/cadastros/products/bulk-upload/template', 'modelo_upload_produtos.xlsx'),
   kits: (sellerId?: number) => api.get('/cadastros/kits', { params: { seller_id: sellerId } }),
   kitExpansionLog: (sellerId?: number, kitSku?: string) =>
     api.get('/cadastros/kits/expansion-log', { params: { seller_id: sellerId, kit_sku: kitSku } }),

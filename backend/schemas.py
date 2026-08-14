@@ -653,6 +653,7 @@ class KitBulkImport(BaseModel):
 class OpenByNfeRequest(BaseModel):
     nfe_key: str
     operator_id: Optional[int] = None
+    force_seller_lock: bool = False
 
 
 # ============================================================

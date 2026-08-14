@@ -550,8 +550,8 @@ export const scanningApi = {
     sessionId: number,
     data: { file_type?: 'Entrada' | 'Saída'; for_billing?: boolean },
   ) => api.patch(`/scanning/sessions/${sessionId}/config`, data),
-  openByNfe: (sessionId: number, nfeKey: string) =>
-    api.post(`/scanning/sessions/${sessionId}/open-by-nfe`, { nfe_key: nfeKey }),
+  openByNfe: (sessionId: number, nfeKey: string, forceSellerLock?: boolean) =>
+    api.post(`/scanning/sessions/${sessionId}/open-by-nfe`, { nfe_key: nfeKey, force_seller_lock: !!forceSellerLock }),
   scanLogs: (sessionId: number) =>
     api.get(`/scanning/sessions/${sessionId}/scan-logs`),
   sessionCards: (params?: Record<string, any>) =>

@@ -367,13 +367,18 @@ def open_order_by_nfe(
             if has_real_activity:
                 seller_name = (order.seller.name
                                if order.seller else f"Seller {order.seller_id}")
-                return {
-                    "success": False,
-                    "message": (
-                        f"A NF {conflicting.nf_number} de {seller_name} está sendo bipada. "
-                        "Finalize ou interrompa-a antes de abrir outro pedido do mesmo seller."
-                    ),
-                }
+                if not request.force_seller_lock:
+                    return {
+                        "success": False,
+                        "blocked_reason": "seller_locked",
+                        "message": (
+                            f"Outro operador está bipando {seller_name}. "
+                            "Continuar mesmo assim?"
+                        ),
+                    }
+                # force_seller_lock=True: operador confirmou que quer abrir
+                # mesmo com outro pedido do mesmo seller em bipagem. Segue o
+                # fluxo normal de abertura abaixo, sem travar.
             else:
                 # Lock fantasma: sem atividade real → libera o pedido travado
                 conflicting.status = models.OrderStatus.PENDING

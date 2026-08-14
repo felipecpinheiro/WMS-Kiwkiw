@@ -13,7 +13,8 @@ Documentação interativa (Swagger):
 
 import os
 import sys
-from fastapi import FastAPI
+import time
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -346,6 +347,19 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+SLOW_REQUEST_THRESHOLD_SECONDS = 3.0
+
+
+@app.middleware("http")
+async def log_slow_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    if duration >= SLOW_REQUEST_THRESHOLD_SECONDS:
+        print(f"SLOW REQUEST: {request.method} {request.url.path} -> {int(duration * 1000)}ms")
+    return response
+
 
 # Arquivos estáticos
 MEDIA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "media")

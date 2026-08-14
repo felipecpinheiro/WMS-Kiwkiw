@@ -808,7 +808,7 @@ def configure_order(
         )
         if new_file_type != order.file_type:
             if order.stock_applied_at:
-                reverse_stock_for_order(
+                result = reverse_stock_for_order(
                     order, db,
                     observation=(
                         f"ESTORNO — tipo da NF {order.nf_number} alterado para '{file_type}' "
@@ -817,6 +817,21 @@ def configure_order(
                     ),
                     operator_id=current_user.id,
                 )
+                if result == -1:
+                    # NF órfã (nenhum movimento vinculado — ex: vínculo perdido numa
+                    # reconciliação de estoque). NÃO reaplicar automaticamente: o
+                    # efeito desta NF já pode estar embutido no saldo reconciliado,
+                    # e um novo lançamento duplicaria a quantidade. Bloqueia a troca
+                    # de tipo até conferência manual.
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Não foi possível confirmar a baixa atual da NF {order.nf_number} "
+                            f"(nenhum movimento de estoque vinculado a ela). A troca de tipo foi "
+                            f"bloqueada para evitar duplicar o estoque — verifique manualmente "
+                            f"antes de tentar de novo."
+                        ),
+                    )
                 order.file_type = new_file_type
                 apply_stock_for_order(order, db, operator_id=current_user.id)
                 resigned = True

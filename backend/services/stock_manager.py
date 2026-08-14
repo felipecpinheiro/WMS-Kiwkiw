@@ -547,7 +547,16 @@ def reverse_stock_for_order(
     baixa/estorno/reativação a NF já teve, e nunca edita ou apaga o movimento
     original — os dois lados ficam auditáveis.
 
-    Devolve quantos SKUs foram estornados (0 = não havia o que estornar).
+    Devolve quantos SKUs foram estornados (0 = havia movimento mas o saldo já
+    era zero — reversão legítima, sem nada a fazer).
+
+    Devolve -1 quando NÃO existe nenhum movimento vinculado a este order_id —
+    NF órfã (ex: vínculo perdido numa reconciliação de estoque a partir de
+    planilha externa). Nesse caso NÃO zera stock_applied_at: não sabemos se a
+    NF está ou não refletida no estoque atual, e zerar às cegas habilitaria
+    uma baixa duplicada se algo tentar reaplicar estoque para ela depois.
+    Quem chama deve tratar esse caso mostrando aviso para conferência manual,
+    em vez de assumir que o estorno funcionou.
     """
     # ⚠️ CAST(... AS TEXT) é obrigatório: em produção movement_type é um ENUM
     # NATIVO do Postgres, e comparar a coluna direto com 'Entrada' (que não é
@@ -563,6 +572,9 @@ def reverse_stock_for_order(
          WHERE order_id = :oid
          GROUP BY sku
     """), {"oid": order.id}).fetchall()
+
+    if not rows:
+        return -1
 
     reversed_count = 0
     for row in rows:

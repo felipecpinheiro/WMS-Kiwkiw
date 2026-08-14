@@ -511,6 +511,8 @@ def update_session_config(
         # deixaria os movimentos com o sinal errado, em silêncio. Então:
         # estorna com o sinal antigo, troca, e baixa de novo com o novo.
         resigned_orders = 0
+        skipped_order_ids = []  # NFs órfãs — ficam de fora da troca de tipo
+        skipped_nf_numbers = []
         if new_file_type != session.file_type:
             applied_orders = db.query(models.Order).options(
                 joinedload(models.Order.items),
@@ -520,7 +522,7 @@ def update_session_config(
                 models.Order.stock_applied_at.isnot(None),
             ).all()
             for order in applied_orders:
-                reverse_stock_for_order(
+                result = reverse_stock_for_order(
                     order, db,
                     observation=(
                         f"ESTORNO — tipo do arquivo da sessão {session_id} alterado para "
@@ -528,18 +530,37 @@ def update_session_config(
                     ),
                     operator_id=current_user.id,
                 )
+                if result == -1:
+                    # NF órfã (nenhum movimento vinculado — ex: vínculo perdido numa
+                    # reconciliação de estoque). Não reaplica: duplicaria o estoque
+                    # já refletido no saldo reconciliado. Fica de fora da troca de
+                    # tipo desta sessão, pra não ficar com file_type divergente do
+                    # que baixou de fato; precisa de conferência manual.
+                    skipped_order_ids.append(order.id)
+                    skipped_nf_numbers.append(order.nf_number)
+                    continue
                 order.file_type = new_file_type
                 apply_stock_for_order(order, db, operator_id=current_user.id)
                 resigned_orders += 1
 
         session.file_type = new_file_type
-        # Propaga para todos os pedidos da sessão
-        db.query(models.Order).filter(
+        # Propaga para todos os pedidos da sessão, exceto as NFs órfãs deixadas
+        # de fora acima (essas mantêm o file_type antigo até conferência manual)
+        propagate_q = db.query(models.Order).filter(
             models.Order.session_id == session_id
-        ).update({"file_type": session.file_type}, synchronize_session=False)
+        )
+        if skipped_order_ids:
+            propagate_q = propagate_q.filter(models.Order.id.notin_(skipped_order_ids))
+        propagate_q.update({"file_type": session.file_type}, synchronize_session=False)
         changed_fields.append("file_type")
         if resigned_orders:
             changed_fields.append(f"estoque re-lançado em {resigned_orders} NF(s)")
+        if skipped_nf_numbers:
+            changed_fields.append(
+                f"ATENÇÃO: {len(skipped_nf_numbers)} NF(s) não foram alteradas por falta de "
+                f"confirmação de reversão de estoque — verifique manualmente: "
+                f"{', '.join(skipped_nf_numbers)}"
+            )
 
     if payload.for_billing is not None:
         session.for_billing = bool(payload.for_billing)
@@ -1020,13 +1041,15 @@ def cancel_handling_session(
     seller_name = orders[0].seller.trade_name if orders[0].seller else f"Seller {seller_id}"
     cancelled = 0
     stock_reversed_count = 0
+    stock_reversal_failed = []  # NFs órfãs — não foi possível confirmar reversão automática
 
     for order in orders:
         # Estorna ANTES de trocar o status — depois de CANCELLED o pedido
         # entra em STOCK_BLOCKED_STATUSES e a NF não pode mais ser reavaliada.
         reversed_here = False
+        reversal_failed = False
         if order_has_stock_applied(order, db):
-            reverse_stock_for_order(
+            result = reverse_stock_for_order(
                 order, db,
                 observation=(
                     f"ESTORNO — NF {order.nf_number} cancelada (manuseio desnecessário) por "
@@ -1035,8 +1058,12 @@ def cancel_handling_session(
                 ),
                 operator_id=current_user.id,
             )
-            reversed_here = True
-            stock_reversed_count += 1
+            if result == -1:
+                reversal_failed = True
+                stock_reversal_failed.append(order.nf_number)
+            else:
+                reversed_here = True
+                stock_reversed_count += 1
 
         order.status = models.OrderStatus.CANCELLED
 
@@ -1054,6 +1081,15 @@ def cancel_handling_session(
         ))
 
         # AuditLog individual
+        if reversal_failed:
+            estoque_detail = (
+                "Não foi possível confirmar reversão automática de estoque "
+                "(nenhum movimento vinculado a esta NF) — verificar manualmente."
+            )
+        elif reversed_here:
+            estoque_detail = "Estoque revertido via movimento de estorno."
+        else:
+            estoque_detail = "Estoque não impactado (NF ainda não havia baixado)."
         db.add(models.AuditLog(
             entity_type="Order",
             entity_id=order.id,
@@ -1061,9 +1097,7 @@ def cancel_handling_session(
             detail=(
                 f"Pedido NF {order.nf_number} ({order.customer_name}) "
                 f"cancelado pelo admin (manuseio desnecessário). "
-                f"Seller: {seller_name}. Sessão: {session_id}. "
-                + ("Estoque revertido via movimento de estorno."
-                   if reversed_here else "Estoque não impactado (NF ainda não havia baixado).")
+                f"Seller: {seller_name}. Sessão: {session_id}. {estoque_detail}"
             ),
             user_id=current_user.id,
         ))
@@ -1093,21 +1127,31 @@ def cancel_handling_session(
         detail=(
             f"Cancelamento em lote | Admin: {current_user.name} | "
             f"Seller: {seller_name} | Pedidos cancelados: {cancelled} | "
-            f"Com reversão de estoque: {stock_reversed_count} | Sessão: {session_id}"
+            f"Com reversão de estoque: {stock_reversed_count} | "
+            f"Falha ao confirmar reversão: {len(stock_reversal_failed)} | Sessão: {session_id}"
         ),
         user_id=current_user.id,
     ))
 
     db.commit()
 
+    message = (
+        f"{cancelled} pedido(s) de {seller_name} cancelados — "
+        f"{stock_reversed_count} com reversão de estoque."
+    )
+    if stock_reversal_failed:
+        message += (
+            f" ATENÇÃO: {len(stock_reversal_failed)} NF(s) sem confirmação de reversão "
+            f"automática — verifique manualmente o estoque destas NFs: "
+            f"{', '.join(stock_reversal_failed)}."
+        )
+
     return {
         "success": True,
         "cancelled": cancelled,
         "stock_reversed": stock_reversed_count,
-        "message": (
-            f"{cancelled} pedido(s) de {seller_name} cancelados — "
-            f"{stock_reversed_count} com reversão de estoque."
-        ),
+        "stock_reversal_failed": stock_reversal_failed,
+        "message": message,
     }
 
 
@@ -1210,11 +1254,13 @@ def cancel_duplicate_orders(
     now = now_brasilia()
     cancelled = 0
     stock_reversed_count = 0
+    stock_reversal_failed = []  # NFs órfãs — não foi possível confirmar reversão automática
     summary_lines = []
     bucket_by_order = {p["order_id"]: p["bucket"] for p in preview}
 
     for order in orders:
         bucket = bucket_by_order.get(order.id, "pending")
+        reversal_failed = False
 
         if bucket == "stock_reversal":
             reversed_skus = reverse_stock_for_order(
@@ -1226,10 +1272,19 @@ def cancel_duplicate_orders(
                 ),
                 operator_id=current_user.id,
             )
-            stock_reversed_count += 1
-            summary_lines.append(
-                f"NF {order.nf_number} foi cancelada — estoque revertido ({reversed_skus} SKU(s))"
-            )
+            if reversed_skus == -1:
+                reversal_failed = True
+                stock_reversal_failed.append(order.nf_number)
+                summary_lines.append(
+                    f"NF {order.nf_number} foi cancelada — ATENÇÃO: não foi possível confirmar "
+                    f"reversão automática de estoque (nenhum movimento vinculado a esta NF). "
+                    f"Verifique manualmente."
+                )
+            else:
+                stock_reversed_count += 1
+                summary_lines.append(
+                    f"NF {order.nf_number} foi cancelada — estoque revertido ({reversed_skus} SKU(s))"
+                )
         elif bucket == "partial_scan":
             summary_lines.append(f"NF {order.nf_number}: bipagem parcial descartada (sem impacto de estoque)")
         else:
@@ -1249,6 +1304,15 @@ def cancel_duplicate_orders(
             error_message=f"Cancelado por {current_user.name} — pedido duplicado",
         ))
 
+        if reversal_failed:
+            estoque_detail = (
+                "Não foi possível confirmar reversão automática de estoque "
+                "(nenhum movimento vinculado a esta NF) — verificar manualmente."
+            )
+        elif bucket == "stock_reversal":
+            estoque_detail = "Estoque revertido via movimento de estorno."
+        else:
+            estoque_detail = "Estoque não impactado (pedido não havia sido concluído)."
         db.add(models.AuditLog(
             entity_type="Order",
             entity_id=order.id,
@@ -1256,8 +1320,7 @@ def cancel_duplicate_orders(
             detail=(
                 f"Pedido NF {order.nf_number} ({order.customer_name}) cancelado por duplicidade de upload. "
                 f"Seller: {order.seller.trade_name if order.seller else order.seller_id}. Sessão: {session_id}. "
-                + ("Estoque revertido via movimento de estorno." if bucket == "stock_reversal"
-                   else "Estoque não impactado (pedido não havia sido concluído).")
+                + estoque_detail
             ),
             user_id=current_user.id,
         ))
@@ -1270,19 +1333,28 @@ def cancel_duplicate_orders(
         detail=(
             f"Cancelamento de pedidos duplicados em lote | Usuário: {current_user.name} | "
             f"Sellers: {seller_ids} | Pedidos cancelados: {cancelled} | "
-            f"Com reversão de estoque: {stock_reversed_count} | Sessão: {session_id}"
+            f"Com reversão de estoque: {stock_reversed_count} | "
+            f"Falha ao confirmar reversão: {len(stock_reversal_failed)} | Sessão: {session_id}"
         ),
         user_id=current_user.id,
     ))
 
     db.commit()
 
+    final_message = f"{cancelled} pedido(s) cancelado(s) — {stock_reversed_count} com reversão de estoque."
+    if stock_reversal_failed:
+        final_message += (
+            f" ATENÇÃO: {len(stock_reversal_failed)} NF(s) sem confirmação de reversão automática "
+            f"— verifique manualmente o estoque destas NFs: {', '.join(stock_reversal_failed)}."
+        )
+
     return {
         "requires_confirmation": False,
         "cancelled": cancelled,
         "stock_reversed": stock_reversed_count,
+        "stock_reversal_failed": stock_reversal_failed,
         "summary": summary_lines,
-        "message": f"{cancelled} pedido(s) cancelado(s) — {stock_reversed_count} com reversão de estoque.",
+        "message": final_message,
     }
 
 
@@ -1326,6 +1398,7 @@ def deactivate_order(
     # ⚠️ Não olhar o status aqui: desde 06/08/2026 a NF baixa estoque na
     # importação, então PENDING já pode estar baixado.
     stock_reversed = False
+    stock_reversal_failed = False
     if order_has_stock_applied(order, db):
         reversed_skus = reverse_stock_for_order(
             order, db,
@@ -1336,7 +1409,10 @@ def deactivate_order(
             ),
             operator_id=current_user.id,
         )
-        stock_reversed = reversed_skus > 0
+        if reversed_skus == -1:
+            stock_reversal_failed = True
+        else:
+            stock_reversed = reversed_skus > 0
 
     order.status = models.OrderStatus.INACTIVE
 
@@ -1353,25 +1429,44 @@ def deactivate_order(
             error_message=f"Inativado pelo admin {current_user.name} — motivo: {reason}",
         ))
 
+    if stock_reversal_failed:
+        estoque_detail = (
+            "Não foi possível confirmar reversão automática de estoque "
+            "(nenhum movimento vinculado a esta NF) — verificar manualmente."
+        )
+    elif stock_reversed:
+        estoque_detail = "Estoque revertido via movimento de estorno."
+    else:
+        estoque_detail = "Estoque não impactado (pedido ainda não havia sido concluído)."
     db.add(models.AuditLog(
         entity_type="Order",
         entity_id=order.id,
         action="DEACTIVATE_NF",
         detail=(
             f"NF {order.nf_number} ({order.customer_name}) inativada por {current_user.name}. "
-            f"Seller: {seller_name}. Motivo: {reason}. "
-            + ("Estoque revertido via movimento de estorno." if stock_reversed
-               else "Estoque não impactado (pedido ainda não havia sido concluído).")
+            f"Seller: {seller_name}. Motivo: {reason}. " + estoque_detail
         ),
         user_id=current_user.id,
     ))
 
     db.commit()
 
+    message = f"NF {order.nf_number} inativada"
+    if stock_reversal_failed:
+        message += (
+            " — ATENÇÃO: não foi possível confirmar reversão automática de estoque "
+            "(nenhum movimento vinculado a esta NF). Verifique manualmente."
+        )
+    elif stock_reversed:
+        message += " — estoque revertido."
+    else:
+        message += "."
+
     return {
         "success": True,
-        "message": f"NF {order.nf_number} inativada" + (" — estoque revertido." if stock_reversed else "."),
+        "message": message,
         "stock_reversed": stock_reversed,
+        "stock_reversal_failed": stock_reversal_failed,
     }
 
 

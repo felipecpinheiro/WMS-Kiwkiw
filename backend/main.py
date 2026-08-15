@@ -52,6 +52,12 @@ PERF_INDEXES = [
     # get_stock_report, get_sku_history, export — e o prefixo seller_id sozinho
     ("ix_stock_movements_seller_sku",
      "CREATE INDEX IF NOT EXISTS ix_stock_movements_seller_sku ON stock_movements (seller_id, sku)"),
+    # get_movements / export CSV (inventory.py) — filtro por seller_id + intervalo
+    # de movement_date; sem isso, telas de estoque com período largo (ex: 1 ano)
+    # varrem a tabela toda e ordenam em memória (14/08/2026, pego via log de
+    # SLOW REQUEST — GET /inventory/movements/{seller_id} levando 5-6s)
+    ("ix_stock_movements_seller_date",
+     "CREATE INDEX IF NOT EXISTS ix_stock_movements_seller_date ON stock_movements (seller_id, movement_date)"),
     # progresso da bipagem — 7 pontos distintos consultam por pedido
     ("ix_scanning_logs_order_id",
      "CREATE INDEX IF NOT EXISTS ix_scanning_logs_order_id ON scanning_logs (order_id)"),

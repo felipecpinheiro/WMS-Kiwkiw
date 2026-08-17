@@ -32,8 +32,8 @@ connect_args = {"check_same_thread": False} if is_sqlite else {}
 # FastAPI, e requisições esperavam conexão livre por até pool_timeout (30 s).
 # Não se aplica ao SQLite, que usa um pool sem esses parâmetros.
 pool_kwargs = {} if is_sqlite else {
-    "pool_size": 10,
-    "max_overflow": 20,
+    "pool_size": 20,
+    "max_overflow": 40,
     "pool_recycle": 1800,   # recicla conexão antes de o servidor derrubá-la
 }
 

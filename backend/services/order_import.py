@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from .kit_handler import process_order_items
 from .stock_manager import apply_stock_for_orders
+from .excel_utils import ensure_xlsx_path
 from ..timezone_utils import now_brasilia, today_brasilia
 
 
@@ -534,7 +535,9 @@ def import_excel_orders(
     kits_expanded = 0
 
     try:
-        # Lê o arquivo Excel
+        # Lê o arquivo Excel — .xls (formato antigo) é convertido pra .xlsx antes,
+        # porque openpyxl não sabe ler .xls
+        file_path = ensure_xlsx_path(file_path)
         wb = openpyxl.load_workbook(file_path, data_only=True)
 
         # Tenta encontrar a aba correta

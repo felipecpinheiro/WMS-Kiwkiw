@@ -20,6 +20,7 @@ from ..timezone_utils import end_of_day
 from ..services.kit_import import parse_kit_workbook, match_sellers, _norm as _norm_seller
 from ..services.order_import import _build_seller_alias_map
 from ..services.stock_manager import release_pending_orders_for_sku
+from ..services.excel_utils import ensure_xlsx_bytes
 from .. import models, schemas
 
 router = APIRouter(prefix="/cadastros", tags=["Cadastros"])
@@ -1241,6 +1242,8 @@ def bulk_upload_products(
     content = file.file.read()
 
     try:
+        # .xls (formato antigo) é convertido pra .xlsx antes, porque openpyxl não sabe ler .xls
+        content = ensure_xlsx_bytes(content, file.filename)
         # read_only=True: streaming — 3-5× mais rápido para arquivos grandes
         wb = openpyxl.load_workbook(_io.BytesIO(content), data_only=True, read_only=True)
     except Exception as e:

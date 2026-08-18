@@ -24,6 +24,8 @@ from ..services.stock_manager import (
     reverse_stock_for_order,
     order_has_stock_applied,
     orders_missing_product_skus,
+    apply_scan_overage,
+    orders_with_scan_overage,
 )
 from .. import models, schemas
 
@@ -31,6 +33,25 @@ router = APIRouter(prefix="/scanning", tags=["Bipagem"])
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AUDIT_DIR = os.path.join(BASE_DIR, "data", "audit")
+
+# Teto de unidades por bipe. Existe para pegar erro de digitação — sem ele, o
+# operador que digita o código de barras dentro do campo de quantidade lança
+# alguns milhões de peças no estoque. Nenhuma caixa real chega perto disso.
+MAX_SCAN_QUANTITY = 9999
+
+
+def _is_entrada(order) -> bool:
+    """
+    Esta NF é de ENTRADA? Decide pelo file_type do PEDIDO (não o da sessão):
+    os dois normalmente andam juntos, mas divergem na NF órfã que o
+    PATCH /sessions/{id}/config deixa de fora da troca de tipo.
+
+    Só a Entrada aceita bipagem por quantidade e admite receber mais do que a NF
+    previa. Ver o cabeçalho de services/stock_manager.py.
+    """
+    raw = getattr(order, "file_type", None)
+    raw = raw.value if hasattr(raw, "value") else raw
+    return str(raw or "").strip().lower() in ("entrada", "import", "in")
 
 
 @router.get("/sessions", response_model=List[schemas.PickingSessionResponse])
@@ -225,6 +246,11 @@ def get_session_orders(
             "carrier": order.carrier,
             "status": order_status,
             "is_inactive": order_status == "inactive",
+            # Entrada/Saída da NF — o Scanner precisa disto para decidir se
+            # mostra o campo de quantidade (só entrada). Vem do PEDIDO, não da
+            # sessão: divergem na NF órfã deixada de fora pelo config de sessão.
+            # Formato igual ao de /session-cards ("entrada"/"saida").
+            "file_type": "entrada" if _is_entrada(order) else "saida",
             "total_items": total_items,
             "scanned_items": scanned,
             "remaining": max(0, total_items - scanned),
@@ -519,6 +545,37 @@ def update_session_config(
         skipped_order_ids = []  # NFs órfãs — ficam de fora da troca de tipo
         skipped_nf_numbers = []
         if new_file_type != session.file_type:
+            # ⚠️ Excedente de conferência bloqueia a troca (17/08/2026). O
+            # estorno abaixo leva o excedente junto (saldo líquido do order_id),
+            # mas o re-lançamento repõe só a quantidade da NF — o excedente
+            # sumiria do estoque em silêncio.
+            #
+            # Bloqueia a SESSÃO INTEIRA, não só as NFs afetadas: troca parcial de
+            # tipo deixaria a sessão com pedidos de tipos diferentes sem ninguém
+            # perceber. Diferente das NFs órfãs logo abaixo, que são anomalia de
+            # dados — aqui é dado legítimo que precisa de decisão humana.
+            session_order_ids = [
+                r[0] for r in db.query(models.Order.id).filter(
+                    models.Order.session_id == session_id
+                ).all()
+            ]
+            with_overage = orders_with_scan_overage(db, session_order_ids)
+            if with_overage:
+                nfs = [
+                    r[0] for r in db.query(models.Order.nf_number).filter(
+                        models.Order.id.in_(with_overage)
+                    ).order_by(models.Order.nf_number).all()
+                ]
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{len(nfs)} NF(s) desta sessão têm excedente de conferência "
+                        f"lançado no estoque (foi recebido mais do que a NF previa): "
+                        f"{', '.join(nfs[:10])}{'...' if len(nfs) > 10 else ''}. "
+                        f"Trocar o tipo apagaria esse excedente. Ajuste o estoque "
+                        f"manualmente antes, pela tela de Estoque."
+                    ),
+                )
             applied_orders = db.query(models.Order).options(
                 joinedload(models.Order.items),
                 joinedload(models.Order.seller),
@@ -649,6 +706,26 @@ def process_scan(
             items_remaining=0,
         )
 
+    # ── Bipagem por quantidade — SÓ NA ENTRADA (17/08/2026) ─────────────────
+    # Numa entrada, uma caixa pode ter 1.000 peças iguais e bipar unidade a
+    # unidade é inviável. Na saída cada peça bipada é uma conferência real de
+    # separação, então lá continua 1 por bipe.
+    is_entrada = _is_entrada(order)
+    qty = request.quantity
+
+    if qty < 1 or qty > MAX_SCAN_QUANTITY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Quantidade inválida: use um número de 1 a {MAX_SCAN_QUANTITY}.",
+        )
+    # Trava de servidor: o campo só aparece na Entrada, mas a tela não pode ser
+    # a única guarda — uma chamada forjada lançaria estoque errado na saída.
+    if qty > 1 and not is_entrada:
+        raise HTTPException(
+            status_code=400,
+            detail="Bipagem por quantidade só é permitida em NF de entrada.",
+        )
+
     # Valida o código de barras escaneado.
     # Aceita APENAS barcode_seller (código físico na etiqueta do seller).
     # Fallback: se o OrderItem não tem product linkado (produto cadastrado após
@@ -695,16 +772,26 @@ def process_scan(
             items_remaining=_count_remaining(order, db),
         )
 
-    # Conta quantas vezes esse SKU já foi bipado neste pedido
+    # Conta quantas unidades desse SKU já foram bipadas neste pedido
     already_scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
         *_active_scan_filters(order),
         models.ScanningLog.sku == matched_item.sku,
     ).scalar() or 0
 
     expected_qty = matched_item.quantity
+    # Esperado REAL do SKU no pedido — consolida o caso de o mesmo SKU aparecer
+    # em dois itens (componente de kit + linha avulsa, ver CLAUDE.md). Usado só
+    # para decidir o excedente: com dois itens de 4 e 5, bipar 6 não é excedente,
+    # e usar matched_item.quantity (4) lançaria 2 peças fantasma no estoque.
+    # O bloqueio e as mensagens seguem usando matched_item.quantity, para a
+    # saída continuar se comportando exatamente como antes.
+    expected_sku_total = sum(it.quantity for it in order.items if it.sku == matched_item.sku)
 
-    if already_scanned >= expected_qty:
-        # Item já foi completamente bipado
+    # Na SAÍDA, item já completo continua barrando exatamente como sempre.
+    # Na ENTRADA não barra: o que vale para o estoque é o que chegou
+    # fisicamente. Se o seller mandou mais do que a NF diz, o operador registra
+    # o que contou e o sistema avisa para a empresa ser comunicada.
+    if already_scanned >= expected_qty and not is_entrada:
         return schemas.ScanResponse(
             success=False,
             message=f"⚠️ SKU '{matched_item.sku}' já foi bipado {already_scanned}x (esperado: {expected_qty}x). Item completo!",
@@ -715,16 +802,61 @@ def process_scan(
             items_remaining=_count_remaining(order, db),
         )
 
+    # Excedente DESTE bipe — só a parte que passa do que a NF previa.
+    # A conta é incremental de propósito: o operador pode chegar ao excedente em
+    # etapas (bipa 1000, depois mais 200), e usar o total a cada bipe lançaria o
+    # mesmo excedente várias vezes no estoque.
+    over_qty = (
+        max(0, already_scanned + qty - expected_sku_total)
+        - max(0, already_scanned - expected_sku_total)
+    )
+
     # Registra o scan com sucesso
     log = models.ScanningLog(
         session_id=request.session_id,
         order_id=request.order_id,
         sku=matched_item.sku,
         barcode_scanned=request.barcode,
-        quantity=1,
+        quantity=qty,
         operator_id=request.operator_id,
         is_error=False,
     )
+
+    if over_qty > 0:
+        # Excedente vai para o estoque como movimento próprio — única exceção à
+        # regra de que a bipagem não sensibiliza estoque (ver o cabeçalho de
+        # services/stock_manager.py antes de mexer).
+        #
+        # Guarda: se a NF ainda não baixou, não existe base para complementar e
+        # o movimento ficaria solto. Na prática não ocorre (sem transportadora o
+        # scan já parou lá em cima, e NF com SKU sem produto não entra no
+        # manuseio), mas custa uma consulta indexada e evita estoque fantasma.
+        if order_has_stock_applied(order, db):
+            apply_scan_overage(
+                order=order,
+                sku=matched_item.sku,
+                product_name=matched_item.product_name,
+                quantity=over_qty,
+                db=db,
+                operator_id=request.operator_id,
+                expected_qty=expected_sku_total,
+                operator_name=current_user.name if current_user else None,
+            )
+            over_note = (
+                f"EXCEDENTE — bipado {over_qty} além do previsto na NF "
+                f"({expected_sku_total}). Lançado no estoque."
+            )
+        else:
+            over_note = (
+                f"EXCEDENTE — bipado {over_qty} além do previsto na NF "
+                f"({expected_sku_total}). NF ainda sem baixa de estoque: NÃO lançado, "
+                f"exige conferência manual."
+            )
+        # is_error continua False: não é erro do operador, é uma ocorrência.
+        # O GET /scanning/audit-log devolve error_message sem filtrar is_error,
+        # então isto aparece na Trilha de Auditoria e no CSV de bipagem.
+        log.error_message = over_note
+
     db.add(log)
 
     # Atualiza status do pedido para "scanning" se ainda estava pending
@@ -732,9 +864,15 @@ def process_scan(
         order.status = models.OrderStatus.SCANNING
 
     # Verifica se o pedido está completo
-    remaining = _count_remaining_after_scan(order, matched_item.sku, db)
+    remaining = _count_remaining_after_scan(order, matched_item.sku, db, qty)
 
     scan_response = None
+    # Sufixo do aviso de excedente — vai junto da mensagem de sucesso para o
+    # operador ver na hora que precisa comunicar a empresa.
+    over_suffix = (
+        f" ⚠️ {over_qty} A MAIS do que a NF previa ({expected_sku_total}) — comunique a empresa."
+        if over_qty > 0 else ""
+    )
 
     if remaining == 0:
         # Pedido completo!
@@ -765,26 +903,28 @@ def process_scan(
 
         scan_response = schemas.ScanResponse(
             success=True,
-            message=f"✅ PEDIDO {order.nf_number} COMPLETO! Todos os {expected_qty} itens bipados.",
+            message=f"✅ PEDIDO {order.nf_number} COMPLETO! Todos os {expected_qty} itens bipados.{over_suffix}",
             status="order_complete",
             sku=matched_item.sku,
             product_name=matched_item.product_name,
             photo_url=matched_item.product.photo_url if matched_item.product else None,
             items_remaining=0,
             order_progress=_build_progress(order, db),
+            over_quantity=over_qty,
         )
     else:
         db.commit()
-        new_scanned = already_scanned + 1
+        new_scanned = already_scanned + qty
         scan_response = schemas.ScanResponse(
             success=True,
-            message=f"✔ {matched_item.product_name} [{matched_item.sku}] — {new_scanned}/{expected_qty} bipado(s)",
+            message=f"✔ {matched_item.product_name} [{matched_item.sku}] — {new_scanned}/{expected_qty} bipado(s){over_suffix}",
             status="ok",
             sku=matched_item.sku,
             product_name=matched_item.product_name,
             photo_url=matched_item.product.photo_url if matched_item.product else None,
             items_remaining=remaining,
             order_progress=_build_progress(order, db),
+            over_quantity=over_qty,
         )
 
     # Grava trilha de auditoria em CSV
@@ -2057,27 +2197,68 @@ def _get_deactivation_admin_name(order_id: int, db: Session) -> str:
     return "um administrador"
 
 
+def _expected_by_sku(order: models.Order) -> dict:
+    """
+    Quanto o pedido espera de CADA SKU. Consolida itens repetidos: o mesmo SKU
+    pode aparecer em dois OrderItem (componente de kit + linha avulsa — ver
+    CLAUDE.md), e nesse caso o esperado do SKU é a soma dos dois.
+    """
+    expected = {}
+    for item in order.items:
+        expected[item.sku] = expected.get(item.sku, 0) + item.quantity
+    return expected
+
+
+def _scanned_by_sku(order: models.Order, db: Session) -> dict:
+    """Quanto já foi bipado de cada SKU — 1 consulta agrupada, nunca 1 por item."""
+    return {
+        sku: int(total or 0)
+        for sku, total in db.query(
+            models.ScanningLog.sku,
+            func.sum(models.ScanningLog.quantity),
+        ).filter(
+            *_active_scan_filters(order)
+        ).group_by(models.ScanningLog.sku).all()
+    }
+
+
+def _remaining_from(expected: dict, scanned: dict) -> int:
+    """
+    Soma o que falta, SKU a SKU.
+
+    ⚠️ Contar pelo total do pedido (soma de tudo esperado menos soma de tudo
+    bipado) dá resultado errado desde que a entrada passou a aceitar excedente
+    (17/08/2026): 200 peças a mais de um SKU compensavam 200 que faltavam de
+    outro, e o pedido fechava com item nunca conferido. Só o excedente é
+    descartado aqui — o resto continua exigindo bipagem.
+    """
+    return sum(
+        max(0, qty - scanned.get(sku, 0))
+        for sku, qty in expected.items()
+    )
+
+
 def _count_remaining(order: models.Order, db: Session) -> int:
     """Conta itens restantes para bipar no pedido."""
-    total = sum(item.quantity for item in order.items)
-    scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-        *_active_scan_filters(order)
-    ).scalar() or 0
-    return max(0, total - scanned)
+    return _remaining_from(_expected_by_sku(order), _scanned_by_sku(order, db))
 
 
 def _count_remaining_after_scan(
     order: models.Order,
     just_scanned_sku: str,
     db: Session,
+    just_scanned_qty: int = 1,
 ) -> int:
-    """Conta itens restantes considerando que acabou de bipar 1 item do SKU."""
-    total = sum(item.quantity for item in order.items)
-    scanned = db.query(func.sum(models.ScanningLog.quantity)).filter(
-        *_active_scan_filters(order)
-    ).scalar() or 0
-    # +1 pois o log atual ainda não foi commitado
-    return max(0, total - scanned - 1)
+    """
+    Conta itens restantes considerando o bipe que acabou de acontecer.
+
+    `just_scanned_qty` é a quantidade deste bipe (1 na saída; pode ser N na
+    entrada, onde o operador digita a quantidade da caixa). O log ainda não foi
+    commitado, por isso ele entra na conta à mão.
+    """
+    scanned = _scanned_by_sku(order, db)
+    scanned[just_scanned_sku] = scanned.get(just_scanned_sku, 0) + just_scanned_qty
+    return _remaining_from(_expected_by_sku(order), scanned)
 
 
 def _build_progress(order: models.Order, db: Session) -> dict:

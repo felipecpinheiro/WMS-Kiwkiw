@@ -343,8 +343,11 @@ client (0) < operator (1) < manager (2) < admin (3)
 vendia segunda 20h, a Kiwkiw manuseava terça 17h, e o estoque dele ficava ~24h defasado — inviável de
 acompanhar em escala. **Agora a baixa acontece no fim da IMPORTAÇÃO, NF a NF.**
 
-**A bipagem não mexe mais em estoque.** Virou conferência e auditoria. Removidas as chamadas em
-`process_scan`, `interrupt_order` e `force_complete_session` — **não reintroduzir**.
+**A bipagem não mexe mais em estoque** — com **uma exceção, criada em 17/08/2026**: o *excedente* de
+conferência na ENTRADA (ver a seção própria abaixo). Fora disso continua valendo: as chamadas em
+`process_scan`, `interrupt_order` e `force_complete_session` foram removidas e **não devem ser
+reintroduzidas**. A quantidade da NF baixa exclusivamente no import; a bipagem só lança o que veio
+**além** dela, e só na entrada.
 
 **Uma NF só baixa se estiver liberada.** Dois bloqueios, ambos por NF (não pela sessão):
 1. **transportadora preenchida**
@@ -450,6 +453,68 @@ cadastro destrava a baixa de estoque). Três pontos aplicam o filtro:
   feature trata. Usar o FK reporta como "faltando" um SKU que já tem produto (bug pego em teste
   durante a implementação). Usar sempre `orders_missing_product_skus()` de `stock_manager.py`, que
   resolve tudo numa consulta agrupada.
+
+### Bipagem por QUANTIDADE na entrada + excedente (17/08/2026)
+
+Uma caixa de entrada pode ter 1.000 peças iguais e bipar uma a uma é inviável. O Scanner ganhou um
+campo **QTD** ao lado do código de barras: o operador digita a quantidade e bipa uma vez.
+
+**Só na ENTRADA.** Na saída cada bipe é uma conferência real de separação e continua 1 por vez —
+lá nada mudou, nem o campo aparece.
+
+| Camada | O quê |
+|---|---|
+| `ScanRequest.quantity` (default 1) | o default mantém qualquer chamada antiga funcionando |
+| `process_scan` | valida 1..`MAX_SCAN_QUANTITY` (9.999) e **recusa com 400 se `quantity > 1` fora da entrada** |
+| `GET /sessions/{id}/orders` | devolve `file_type` por NF ("entrada"/"saida") — sem isso a tela não sabe se mostra o campo |
+| `Scanner.tsx` | campo só na entrada e só na fase produto; Enter devolve o foco ao leitor; volta para 1 a cada bipe; confirma acima de 100 |
+
+⚠️ **A trava do lado do servidor não é decorativa.** O campo só aparece na entrada, mas uma chamada
+forjada lançaria estoque errado na saída — por isso `process_scan` recusa, independente da tela.
+
+**A entrada aceita receber MAIS do que a NF diz.** Acontece de o seller mandar a mais, e o que vale
+para o estoque é o que chegou fisicamente. Então, **só na entrada**, o bloqueio de "item já completo"
+não se aplica (na saída ele continua exatamente como sempre foi) e:
+
+- o excedente vira um **movimento de estoque próprio**, via `apply_scan_overage()` — **só a diferença**,
+  nunca o total bipado;
+- o operador recebe aviso na hora (toast + painel + badge `+N` no card) para comunicar a empresa;
+- fica registrado na **Trilha de Auditoria**: `ScanningLog.error_message` recebe a nota com
+  `is_error=False` (não é erro, é ocorrência) e o `GET /scanning/audit-log` já devolve esse campo sem
+  filtrar `is_error`.
+
+**O excedente é incremental:** `max(0, já+qtd−esperado) − max(0, já−esperado)`. O operador pode chegar
+ao excedente em etapas (bipa 1000, depois mais 200) e usar o total a cada bipe lançaria estoque
+repetido.
+
+**O movimento nasce com o `order_id` da NF de propósito** — é isso que faz `reverse_stock_for_order()`
+(que trabalha por **saldo líquido por SKU** do `order_id`) recolher o excedente junto, sem código
+novo. Cancelar duplicata, `cancel-handling` e inativar NF já estornam tudo. **Não escrever tratamento
+especial nesses fluxos.**
+
+⚠️ **Trocar o `file_type` de NF com excedente é BLOQUEADO (409)** em `PATCH /orders/{id}/config` e
+`PATCH /scanning/sessions/{id}/config`. Motivo: eles estornam tudo e re-lançam **só a quantidade da
+NF** — o excedente sumiria do estoque em silêncio. No endpoint de sessão o bloqueio é da **sessão
+inteira** (troca parcial deixaria pedidos com tipos diferentes sem ninguém perceber), diferente das
+NFs órfãs, que são puladas. Detecção por `order_has_scan_overage()` / `orders_with_scan_overage()`,
+que reconhecem o movimento pelo prefixo `OVERAGE_TAG` na `observation` — **não mudar esse prefixo**
+sem migrar os registros existentes.
+
+⚠️ **Progresso do pedido é contado SKU A SKU, nunca pelo total.** `_count_remaining` e
+`_count_remaining_after_scan` somam `max(0, esperado − bipado)` por SKU. Contar pelo total (soma de
+tudo esperado menos soma de tudo bipado, como era até 17/08/2026) **fecha o pedido cedo demais**
+desde que a entrada aceita excedente: 200 peças a mais de um SKU compensavam 200 que faltavam de
+outro e a NF era concluída com item nunca conferido. Bug pego pela bateria de testes durante a
+implementação. As funções também **consolidam SKU repetido em dois `OrderItem`** (kit + linha
+avulsa) — pelo mesmo motivo o excedente sai de `expected_sku_total`, não de `matched_item.quantity`,
+que nesse caso lançaria estoque fantasma.
+
+**Limite conhecido, aceito:** com o pedido já **concluído**, bipar excedente é recusado pela trava
+pré-existente de "pedido completed". Peça encontrada depois de fechar a NF se resolve pelo ajuste
+manual na tela de Estoque.
+
+**Testes:** 57 verificações em 16 cenários, 100% verde em SQLite **e** PostgreSQL, mais conferência
+visual da tela contra banco descartável.
 
 ### Bipagem
 - **Só `barcode_seller` é aceito** — o `barcode_kiwkiw` existe no modelo mas não é usado na bipagem
@@ -637,7 +702,7 @@ Endpoints: `POST /inventory/import-history/{seller_id}/analyze` e `/execute`.
 |---------|---------|-----------------|
 | `/auth` | `routers/auth.py` | Login (`POST /auth/login`), perfil (`GET /auth/me`) |
 | `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs que não baixaram) |
-| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt, force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **Nenhum endpoint daqui baixa estoque — só estorna/re-lança** |
+| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt, force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **A única baixa de estoque daqui é o EXCEDENTE de conferência na entrada (17/08/2026); o resto só estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | Config de cobrança, relatório, export Excel |
@@ -1245,7 +1310,11 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Endpoint pesado declarado `async def` | O FastAPI roda `async def` **no event loop**, não em threadpool. Com 1 worker Uvicorn, qualquer trabalho síncrono longo (Excel, laço de queries) **trava o sistema inteiro** — bipagem, dashboard e login param | Endpoint que faz I/O de banco/arquivo de forma síncrona deve ser `def` (sem `async`). Só use `async def` se realmente houver `await` de I/O assíncrono |
 | Query nova em `stock_movements` ou `scanning_logs` | `stock_movements` tem 630k+ linhas. Desde 30/07/2026 existem índices para `order_id` e `(seller_id, sku)` — **qualquer filtro fora desses volta a ser Seq Scan da tabela toda** | Conferir com `EXPLAIN ANALYZE` antes de subir; se faltar índice, acrescentar em `PERF_INDEXES` (`main.py`), que já é idempotente nos dois bancos |
 | Deduzir "esta NF baixou estoque?" pelo status | Desde 06/08/2026 a baixa é na importação: NF `PENDING` já pode estar baixada, e NF `COMPLETED` pode nunca ter baixado | Usar `order_has_stock_applied(order, db)` / `Order.stock_applied_at` — **nunca** `status in (COMPLETED, INTERRUPTED)` |
-| Reintroduzir baixa de estoque na bipagem | `process_scan`/`interrupt`/`force-complete` já baixaram até 06/08/2026; recolocar a chamada dobra a baixa | A bipagem é só conferência agora. A baixa é no import, ver `services/stock_manager.py` |
+| Reintroduzir baixa de estoque na bipagem | `process_scan`/`interrupt`/`force-complete` já baixaram até 06/08/2026; recolocar a chamada dobra a baixa | A baixa da quantidade da NF é no import. A **única** exceção é o excedente da entrada (`apply_scan_overage`, 17/08/2026), que lança **só a diferença** — ver `services/stock_manager.py` |
+| Contar progresso do pedido pelo total (soma esperada − soma bipada) | Desde que a entrada aceita excedente, sobra de um SKU compensa falta de outro e a NF fecha com item nunca conferido | Contar **SKU a SKU** (`_count_remaining`/`_count_remaining_after_scan`), consolidando SKU repetido em dois `OrderItem` |
+| Calcular excedente com `matched_item.quantity` | Em NF com o mesmo SKU em dois itens (kit + linha avulsa), o esperado real é a soma — usar o item casado lança estoque fantasma | Usar `expected_sku_total` (soma dos itens daquele SKU) |
+| Tratar excedente nos fluxos de estorno | `reverse_stock_for_order()` trabalha por saldo líquido do `order_id` e o movimento de excedente nasce com esse mesmo `order_id` — já é recolhido | Não escrever tratamento especial em cancel-duplicate/cancel-handling/deactivate |
+| Mudar o texto de `OVERAGE_TAG` | É por esse prefixo em `observation` que `order_has_scan_overage()` reconhece o excedente e bloqueia a troca de `file_type` | Não alterar sem migrar os registros existentes |
 | Decidir sinal do movimento pela natureza da NF | O `NATURE_TYPE_MAP` **não** decide mais sinal — quem decide é o `file_type` do arquivo | `order_stock_sign(order)`. Trocar `file_type` de NF já baixada exige estornar e re-lançar |
 | `SELECT` em `stock_movements` comparando `movement_type` com string | Em produção é enum nativo: `movement_type IN ('Entrada')` estoura `InvalidTextRepresentation` e **aborta a transação**. SQLite aceita | `CAST(movement_type AS TEXT) IN ('IN','Entrada')` — funciona nos dois bancos |
 | Ler `order.items` logo após criar os itens no import | Itens são criados com `order_id` (não pela relationship) e a sessão é `autoflush=False` → a lista vem **vazia** e nada baixa, em silêncio | `db.flush()` e recarregar com `joinedload(Order.items)` antes de usar |

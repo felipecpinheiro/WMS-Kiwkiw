@@ -512,6 +512,10 @@ class ScanRequest(BaseModel):
     order_id: int
     barcode: str
     operator_id: int
+    # Quantidade bipada de uma vez. Só é aceita > 1 em NF de ENTRADA — numa caixa
+    # com 1.000 itens iguais, bipar unidade a unidade é inviável. O default 1
+    # mantém qualquer chamada anterior funcionando sem alteração.
+    quantity: int = 1
 
 class ScanResponse(BaseModel):
     """Resposta ao scan: OK, ERRO, COMPLETO, etc."""
@@ -523,6 +527,10 @@ class ScanResponse(BaseModel):
     photo_url: Optional[str] = None
     items_remaining: int = 0
     order_progress: Optional[dict] = None
+    # Quanto ESTE bipe passou do que a NF previa (só ocorre em Entrada).
+    # 0 = bipe normal. > 0 = chegou mais do que a NF dizia: a tela avisa o
+    # operador para comunicar a empresa. Ver process_scan em routers/scanning.py.
+    over_quantity: int = 0
 
 class InterruptRequest(BaseModel):
     session_id: int

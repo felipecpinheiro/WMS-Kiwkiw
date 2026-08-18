@@ -345,6 +345,8 @@ export interface ScanRequest {
   order_id: number;
   barcode: string;
   operator_id: number;
+  /** Unidades bipadas de uma vez. O backend só aceita > 1 em NF de entrada. */
+  quantity?: number;
 }
 
 export interface ScanResponse {
@@ -356,6 +358,8 @@ export interface ScanResponse {
   photo_url: string | null;
   items_remaining: number;
   order_progress: any | null;
+  /** Quanto ESTE bipe passou do previsto na NF (só ocorre em entrada). 0 = normal. */
+  over_quantity?: number;
 }
 
 export interface Product {

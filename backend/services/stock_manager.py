@@ -69,6 +69,21 @@ def calculate_stock_level(current_stock: int) -> str:
 # ⚠️ O SINAL vem do file_type do pedido (configuração de NÍVEL DE ARQUIVO), e
 # NÃO da natureza da NF: arquivo "Entrada" soma tudo, qualquer outro subtrai
 # tudo. O NATURE_TYPE_MAP deixou de decidir sinal de movimento.
+#
+# ── ÚNICA EXCEÇÃO: EXCEDENTE DE CONFERÊNCIA NA ENTRADA (17/08/2026) ─────────
+# A frase "a bipagem NÃO mexe mais em estoque" tem exatamente uma exceção, e ela
+# é estreita de propósito:
+#
+#   - só em NF de ENTRADA;
+#   - só o EXCEDENTE, isto é, o que foi bipado ALÉM do que a NF previa;
+#   - NUNCA a quantidade da NF, que continua baixando exclusivamente no import.
+#
+# Motivo: na entrada acontece de o seller mandar mais do que a NF diz, e o que
+# vale para o estoque é o que chegou fisicamente. O operador registra o que
+# contou; a diferença vira um movimento próprio via apply_scan_overage().
+#
+# ⚠️ NÃO reintroduzir baixa de estoque em process_scan além disso — nem para a
+# quantidade da NF, nem em interrupt/force-complete. Ver routers/scanning.py.
 
 # Status em que a NF não deve baixar estoque de jeito nenhum.
 STOCK_BLOCKED_STATUSES = (
@@ -367,6 +382,112 @@ def apply_stock_for_order(order, db: Session, operator_id: Optional[int] = None)
     preenchida, produto cadastrado). Mesmo relatório do lote.
     """
     return apply_stock_for_orders([order], db, operator_id=operator_id)
+
+
+# Marca gravada em StockMovement.observation para todo excedente de conferência.
+# É por ela que order_has_scan_overage() reconhece o movimento depois — então o
+# prefixo NÃO pode mudar sem migrar os registros existentes.
+OVERAGE_TAG = "EXCEDENTE DE CONFERENCIA"
+
+
+def apply_scan_overage(
+    order,
+    sku: str,
+    product_name: Optional[str],
+    quantity: int,
+    db: Session,
+    operator_id: Optional[int] = None,
+    expected_qty: Optional[int] = None,
+    operator_name: Optional[str] = None,
+) -> models.StockPosition:
+    """
+    Lança no estoque o que foi bipado ALÉM do que a NF previa (só ENTRADA).
+
+    É a única exceção à regra de que a bipagem não mexe em estoque — ver o
+    cabeçalho deste arquivo antes de mexer aqui.
+
+    `quantity` é só a DIFERENÇA deste bipe, já calculada por quem chama
+    (process_scan), nunca o total bipado: chamar duas vezes com o total dobraria
+    o estoque.
+
+    O movimento nasce com o `order_id` da NF de propósito — é isso que faz o
+    estorno existente recolher o excedente junto, sem código novo, já que
+    reverse_stock_for_order() trabalha por SALDO LÍQUIDO por SKU do order_id.
+    """
+    if quantity <= 0:
+        raise ValueError("apply_scan_overage exige quantidade positiva")
+
+    movement_type = order_stock_sign(order)
+    detalhe = f", NF previa {expected_qty}" if expected_qty is not None else ""
+    quem = f" por {operator_name}" if operator_name else ""
+    observation = (
+        f"{OVERAGE_TAG} — recebido {quantity} a mais do que a NF {order.nf_number}"
+        f"{detalhe}. Registrado na bipagem{quem} (contagem física)."
+    )
+
+    # ORM e não SQL puro: o SQLAlchemy grava o NOME do enum ('IN'), que é o
+    # rótulo válido em produção. Gravar o .value ('Entrada') estoura
+    # InvalidTextRepresentation no Postgres e aborta a transação. Ver CLAUDE.md.
+    db.add(models.StockMovement(
+        seller_id=order.seller_id,
+        sku=sku,
+        product_name=product_name or sku,
+        movement_date=today_brasilia(),
+        movement_type=movement_type,
+        quantity=quantity,
+        adjusted_quantity=quantity,
+        nf_number=order.nf_number,
+        nature=order.nature,
+        order_id=order.id,
+        session_id=order.session_id,
+        operator_id=operator_id,
+        observation=observation,
+    ))
+
+    # NÃO tocar em order.stock_applied_at: a NF continua baixada pelo import.
+    # Isto aqui é um movimento ADICIONAL, não uma nova baixa.
+    return update_stock_position(
+        seller_id=order.seller_id,
+        sku=sku,
+        product_name=product_name or sku,
+        movement_type=movement_type,
+        quantity=quantity,
+        db=db,
+    )
+
+
+def order_has_scan_overage(order_id: int, db: Session) -> bool:
+    """
+    Esta NF tem excedente de conferência lançado no estoque?
+
+    Usada para BLOQUEAR a troca de file_type da NF: os endpoints de config
+    estornam tudo e re-lançam apenas a quantidade da NF, o que apagaria o
+    excedente do estoque em silêncio. Consulta indexada por order_id
+    (ix_stock_movements_order_id, criado em 30/07/2026).
+    """
+    return db.execute(
+        text(
+            "SELECT 1 FROM stock_movements "
+            "WHERE order_id = :oid AND observation LIKE :tag LIMIT 1"
+        ),
+        {"oid": order_id, "tag": f"{OVERAGE_TAG}%"},
+    ).first() is not None
+
+
+def orders_with_scan_overage(db: Session, order_ids: List[int]) -> List[int]:
+    """
+    Versão em lote de order_has_scan_overage — devolve os order_ids que têm
+    excedente. Uma consulta só (o config de SESSÃO precisa checar a sessão
+    inteira; item a item seria o N+1 que já derrubou esta base 3 vezes).
+    """
+    if not order_ids:
+        return []
+    stmt = text(
+        "SELECT DISTINCT order_id FROM stock_movements "
+        "WHERE order_id IN :oids AND observation LIKE :tag"
+    ).bindparams(bindparam("oids", expanding=True))
+    rows = db.execute(stmt, {"oids": list(order_ids), "tag": f"{OVERAGE_TAG}%"}).fetchall()
+    return [r[0] for r in rows]
 
 
 def orders_missing_product_skus(db: Session, order_ids: List[int]) -> Dict[int, List[str]]:

@@ -43,6 +43,8 @@ interface SessionOrder {
   items_total: number;
   items_scanned: number;
   items: SessionOrderItem[];
+  /** 'entrada' | 'saida' — só a entrada aceita bipagem por quantidade */
+  file_type: string;
 }
 
 interface ScanLog {
@@ -55,6 +57,11 @@ interface ScanLog {
   order_nf: string;
   quantity: number;
 }
+
+/** Teto por bipe — espelha MAX_SCAN_QUANTITY do backend (routers/scanning.py). */
+const MAX_SCAN_QTY = 9999;
+/** Acima disso a tela pede confirmação antes de enviar. */
+const QTY_CONFIRM_THRESHOLD = 100;
 
 type FeedbackState = 'idle' | 'success' | 'error' | 'warning';
 interface Feedback { state: FeedbackState; title: string; message: string; photoUrl?: string; }
@@ -83,6 +90,9 @@ function ItemCard({
 }) {
   const done = item.scanned >= item.quantity;
   const inProgress = item.scanned > 0 && !done;
+  // Só na entrada: chegou mais do que a NF previa. Fica visível no card para o
+  // operador não descobrir a diferença só no fim.
+  const over = item.scanned > item.quantity;
 
   // Altura da imagem: compacta para concluídos, normal para demais
   const imgH = isSmall ? 'h-16' : 'h-36';
@@ -159,11 +169,15 @@ function ItemCard({
       </p>
 
       <div className="flex items-center justify-between">
-        <span className={`${isSmall ? 'text-lg' : 'text-2xl'} font-black ${done ? 'text-green-400' : inProgress ? 'text-blue-300' : 'text-white/40'}`}>
+        <span className={`${isSmall ? 'text-lg' : 'text-2xl'} font-black ${over ? 'text-amber-300' : done ? 'text-green-400' : inProgress ? 'text-blue-300' : 'text-white/40'}`}>
           {item.scanned}
           <span className={`${isSmall ? 'text-sm' : 'text-base'} text-white/30`}>/{item.quantity}</span>
         </span>
-        {done && <CheckCircle size={isSmall ? 14 : 18} className="text-green-400" />}
+        {over
+          ? <span className="text-[9px] font-bold text-amber-300 bg-amber-500/15 border border-amber-400/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+              +{item.scanned - item.quantity}
+            </span>
+          : done && <CheckCircle size={isSmall ? 14 : 18} className="text-green-400" />}
       </div>
     </div>
   );
@@ -194,6 +208,10 @@ export default function ScannerPage() {
   const [lastScannedSku, setLastScannedSku] = useState<string | undefined>();
   const [flashedSku, setFlashedSku] = useState<string | undefined>(); // 1a: flash visual
   const [barcodeInput, setBarcodeInput] = useState('');
+  // Quantidade do próximo bipe (só entrada). String para o campo aceitar ficar
+  // vazio enquanto o operador digita; convertida na hora de enviar.
+  const [qtyInput, setQtyInput] = useState('1');
+  const qtyRef = useRef<HTMLInputElement>(null);
   const [scanning, setScanning] = useState(false);
   const [showInterruptDialog, setShowInterruptDialog] = useState(false);
   const [interruptReason, setInterruptReason] = useState('');
@@ -237,6 +255,7 @@ export default function ScannerPage() {
         carrier: o.carrier ?? '',
         status: o.status,
         is_inactive: o.is_inactive ?? (o.status === 'inactive'),
+        file_type: o.file_type ?? 'saida',
         items_total: o.total_items ?? o.items_total ?? 0,
         items_scanned: o.scanned_items ?? o.items_scanned ?? 0,
         items: (o.items ?? []).map((it: any) => ({
@@ -290,8 +309,12 @@ export default function ScannerPage() {
     }
   }, [scanning]);
 
-  // Auto-focus input
-  useEffect(() => { inputRef.current?.focus(); }, [activeOrderId]);
+  // Auto-focus input. Troca de NF também zera a quantidade — ela é sempre
+  // relativa à caixa que está na bancada agora.
+  useEffect(() => {
+    inputRef.current?.focus();
+    setQtyInput('1');
+  }, [activeOrderId]);
 
   // Re-foca o input quando perde foco (exceto se outro input/button ganhou foco)
   const handleScanInputBlur = () => {
@@ -368,6 +391,13 @@ export default function ScannerPage() {
   // (activeOrder null → stale ID, trata como 'nfe' para não travar a tela)
   const scanPhase: 'nfe' | 'product' =
     (activeOrderId === null || !activeOrder || activeOrder.status === 'completed') ? 'nfe' : 'product';
+
+  // Campo de quantidade só existe na ENTRADA (17/08/2026): uma caixa de entrada
+  // pode ter 1.000 peças iguais. Na saída cada bipe é uma conferência de
+  // separação e continua sendo 1 por vez. O backend também recusa quantidade > 1
+  // fora da entrada — esta checagem aqui é só de interface.
+  const isEntradaOrder = activeOrder?.file_type === 'entrada';
+  const showQtyField = isEntradaOrder && scanPhase === 'product';
 
   // Gatilho real de atualização: assim que o pedido é concluído (sai de 'product'
   // pra 'nfe'), busca a lista da sessão uma vez — mostra o progresso de outros
@@ -487,6 +517,32 @@ export default function ScannerPage() {
       return;
     }
 
+    // Quantidade só sai daqui na entrada — na saída vai sempre 1, mesmo que o
+    // campo tenha sobrado com outro valor de uma NF anterior.
+    const qty = isEntradaOrder ? Math.trunc(Number(qtyInput) || 1) : 1;
+    if (isEntradaOrder && (qty < 1 || qty > MAX_SCAN_QTY)) {
+      setFeedback({
+        state: 'error',
+        title: 'Quantidade inválida',
+        message: `Digite um número de 1 a ${MAX_SCAN_QTY}.`,
+      });
+      qtyRef.current?.select();
+      return;
+    }
+    // Confirmação acima de 100: pega o caso do operador bipar o código de barras
+    // dentro do campo de quantidade sem perceber.
+    if (qty > QTY_CONFIRM_THRESHOLD) {
+      const ok = window.confirm(
+        `Confirmar a entrada de ${qty} unidades de uma vez?\n\n` +
+        `Se você digitou isso sem querer, cancele agora.`
+      );
+      if (!ok) {
+        setBarcodeInput('');
+        qtyRef.current?.select();
+        return;
+      }
+    }
+
     setScanning(true);
     try {
       const res = await scanningApi.scan({
@@ -494,6 +550,7 @@ export default function ScannerPage() {
         order_id: activeOrder.id,
         barcode,
         operator_id: user.id,
+        quantity: qty,
       });
       const data = res.data;
 
@@ -521,13 +578,18 @@ export default function ScannerPage() {
                 return p ? { ...it, scanned: p.scanned } : it;
               })
             : o.items.map(it => (
-                it.sku === data.sku && it.scanned < it.quantity
-                  ? { ...it, scanned: it.scanned + 1 }
+                // Na entrada o bipado pode passar do previsto (excedente), então
+                // o fallback não trava no limite do item como fazia antes.
+                it.sku === data.sku && (isEntradaOrder || it.scanned < it.quantity)
+                  ? { ...it, scanned: it.scanned + qty }
                   : it
               ));
           const newScanned = progress
             ? progress.scanned
-            : newItems.reduce((acc, it) => acc + Math.min(it.scanned, it.quantity), 0);
+            : newItems.reduce(
+                (acc, it) => acc + (isEntradaOrder ? it.scanned : Math.min(it.scanned, it.quantity)),
+                0,
+              );
           return {
             ...o,
             items: newItems,
@@ -536,13 +598,25 @@ export default function ScannerPage() {
           };
         }));
 
+        // Chegou mais do que a NF previa: registra o que foi contado, mas o
+        // operador precisa avisar a empresa. Toast longo, fora do painel de
+        // feedback, para não sumir com a próxima bipada.
+        const over = data.over_quantity ?? 0;
+        if (over > 0) {
+          toast(
+            `⚠️ Recebido ${over} a mais do que a NF ${activeOrder.nf_number} previa ` +
+            `(${data.product_name ?? data.sku}). Comunique a empresa.`,
+            { duration: 10000, icon: '📦' },
+          );
+        }
+
         if (data.status === 'order_complete' || data.status === 'completed') {
           setFeedback({ state: 'success', title: '🎉 Pedido concluído!', message: `NF ${activeOrder.nf_number} finalizada. Escaneie a próxima NFe.` });
           setTimeout(() => setFeedback({ state: 'idle', title: '', message: '' }), 3000);
         } else {
           setFeedback({
-            state: 'success',
-            title: '✓ Bipagem registrada',
+            state: over > 0 ? 'warning' : 'success',
+            title: over > 0 ? '⚠️ Bipado acima da NF' : '✓ Bipagem registrada',
             message: `${data.product_name ?? data.sku} — ${data.items_remaining ?? '?'} restante(s)`,
             photoUrl: data.photo_url ?? undefined,
           });
@@ -565,9 +639,12 @@ export default function ScannerPage() {
     } finally {
       setScanning(false);
       setBarcodeInput('');
+      // Volta sempre para 1: se o valor ficasse preso, o próximo produto entraria
+      // com a quantidade da caixa anterior sem ninguém perceber.
+      setQtyInput('1');
       inputRef.current?.focus();
     }
-  }, [activeOrder, scanning, sessionId, user.id, qc]);
+  }, [activeOrder, scanning, sessionId, user.id, qc, isEntradaOrder, qtyInput]);
 
   // ── Main scan handler ───────────────────────────────────
 
@@ -585,6 +662,16 @@ export default function ScannerPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') handleScan(barcodeInput);
+  };
+
+  // Enter/Tab no campo de quantidade devolve o foco ao código de barras — é ele
+  // que precisa estar focado quando o leitor USB dispara (o leitor "digita" o
+  // código e manda um Enter).
+  const handleQtyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      inputRef.current?.focus();
+    }
   };
 
   // ── Inativar/reativar NF (admin) ────────────────────────────
@@ -867,7 +954,7 @@ export default function ScannerPage() {
                 )}
                 <div className="w-full bg-white/10 rounded-full h-0.5 mt-1.5 ml-4">
                   <div className={`h-0.5 rounded-full ${order.status === 'completed' ? 'bg-green-400' : 'bg-blue-400'}`}
-                    style={{ width: `${pct}%` }} />
+                    style={{ width: `${Math.min(100, pct)}%` }} />
                 </div>
               </div>
             );
@@ -975,8 +1062,11 @@ export default function ScannerPage() {
                 <span>{activeOrder.items_total} total</span>
               </div>
               <div className="w-full bg-white/10 rounded-full h-2">
+                {/* Clamp em 100%: na entrada o bipado pode passar do previsto
+                    (excedente) e a barra vazaria do container. Os números reais
+                    continuam visíveis acima ("1200 bipados / 1000 total"). */}
                 <div className={`h-2 rounded-full transition-all ${activeOrder.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`}
-                  style={{ width: activeOrder.items_total > 0 ? `${Math.round(activeOrder.items_scanned / activeOrder.items_total * 100)}%` : '0%' }} />
+                  style={{ width: activeOrder.items_total > 0 ? `${Math.min(100, Math.round(activeOrder.items_scanned / activeOrder.items_total * 100))}%` : '0%' }} />
               </div>
             </div>
           ) : (
@@ -1017,6 +1107,30 @@ export default function ScannerPage() {
 
           {/* Barcode input */}
           <div className="flex gap-2 mt-3">
+            {/* Quantidade — só na ENTRADA. Digita a quantidade da caixa e bipa
+                uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
+            {showQtyField && (
+              <div className="relative w-32 flex-shrink-0">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-400/70 pointer-events-none">
+                  QTD
+                </span>
+                <input
+                  ref={qtyRef}
+                  type="number"
+                  min={1}
+                  max={MAX_SCAN_QTY}
+                  step={1}
+                  value={qtyInput}
+                  onChange={e => setQtyInput(e.target.value)}
+                  onKeyDown={handleQtyKeyDown}
+                  onFocus={e => e.target.select()}
+                  disabled={scanning}
+                  title="Quantidade deste bipe. Enter volta para o código de barras."
+                  className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-white outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition disabled:opacity-40"
+                  autoComplete="off"
+                />
+              </div>
+            )}
             <div className="flex-1 relative">
               {scanPhase === 'nfe'
                 ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-400/60" />

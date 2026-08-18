@@ -27,6 +27,7 @@ from ..services.stock_manager import (
     evaluate_orders_for_stock,
     release_pending_orders_for_sku,
     relink_sku_in_pending_orders,
+    order_has_scan_overage,
     STOCK_ERA_CUTOFF,
 )
 from ..timezone_utils import today_brasilia, now_brasilia
@@ -807,6 +808,20 @@ def configure_order(
             else models.FileType.EXPORT
         )
         if new_file_type != order.file_type:
+            # ⚠️ NF com excedente de conferência bipado (17/08/2026) não troca de
+            # tipo: o estorno abaixo leva o excedente junto (trabalha por saldo
+            # líquido do order_id), mas o re-lançamento só repõe a quantidade da
+            # NF — o excedente sumiria do estoque em silêncio.
+            if order_has_scan_overage(order.id, db):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"A NF {order.nf_number} tem excedente de conferência lançado no "
+                        f"estoque (foi recebido mais do que a NF previa). Trocar o tipo "
+                        f"apagaria esse excedente. Ajuste o estoque manualmente antes, "
+                        f"pela tela de Estoque."
+                    ),
+                )
             if order.stock_applied_at:
                 result = reverse_stock_for_order(
                     order, db,

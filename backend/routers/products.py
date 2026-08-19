@@ -19,7 +19,7 @@ from ..auth import (
 from ..timezone_utils import end_of_day
 from ..services.kit_import import parse_kit_workbook, match_sellers, _norm as _norm_seller
 from ..services.order_import import _build_seller_alias_map
-from ..services.stock_manager import release_pending_orders_for_sku
+from ..services.stock_manager import release_pending_orders_for_sku, release_pending_orders_for_skus
 from ..services.excel_utils import ensure_xlsx_bytes
 from .. import models, schemas
 
@@ -1122,7 +1122,7 @@ def bulk_paste_products(
     db: Session = Depends(get_db),
 ):
     """Upsert em massa de produtos via colagem de tabela."""
-    results = {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "stock_applied": 0}
 
     # Cache sellers
     sellers_cache = {}
@@ -1130,6 +1130,10 @@ def bulk_paste_products(
     for s in all_sellers:
         sellers_cache[s.trade_name.lower()] = s
         sellers_cache[s.name.lower()] = s
+
+    # (seller_id, sku) dos produtos CRIADOS agora — usado para destravar NFs
+    # que estavam pendentes só por falta deste SKU (ver release abaixo).
+    created_pairs: set = set()
 
     for item in items:
         if not item.sku or not item.name or not item.seller_name:
@@ -1170,6 +1174,7 @@ def bulk_paste_products(
                 unit_value=item.unit_value or 0.0,
             )
             db.add(p)
+            created_pairs.add((seller.id, item.sku))
             results["created"] += 1
 
     try:
@@ -1180,6 +1185,18 @@ def bulk_paste_products(
             status_code=400,
             detail="Há SKUs repetidos dentro do próprio lote colado (mesmo seller + SKU em mais de uma linha). Corrija as linhas duplicadas e cole novamente.",
         )
+
+    # Destrava, em lote, qualquer NF que só estava pendente por falta de um
+    # destes SKUs (06/08/2026 + 19/08/2026 — ver CLAUDE.md "bulk_paste/
+    # bulk_upload não chamavam release"). Depois do commit acima: os produtos
+    # já estão gravados e visíveis para a consulta que o release faz.
+    if created_pairs:
+        release_report = release_pending_orders_for_skus(
+            created_pairs, db, operator_id=current_user.id,
+        )
+        db.commit()
+        results["stock_applied"] = len(release_report["applied"])
+
     return results
 
 
@@ -1311,9 +1328,12 @@ def bulk_upload_products(
     for p in db.query(models.Product).all():
         existing_products[(p.seller_id, p.sku)] = p
 
-    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "sellers_not_found": set(), "inactive_sellers": set()}
+    results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "sellers_not_found": set(), "inactive_sellers": set(), "stock_applied": 0}
     BATCH = 500
     pending = 0
+    # (seller_id, sku) dos produtos CRIADOS agora — mesmo propósito do
+    # bulk_paste_products: destravar NF pendente por falta deste SKU.
+    created_pairs: set = set()
 
     # Re-abre em read_only para iterar as linhas de dados
     wb2 = openpyxl.load_workbook(_io.BytesIO(content), data_only=True, read_only=True)
@@ -1388,6 +1408,7 @@ def bulk_upload_products(
             )
             db.add(prod)
             existing_products[key] = prod   # evita duplicata na mesma planilha
+            created_pairs.add(key)
             results["created"] += 1
 
         pending += 1
@@ -1417,6 +1438,15 @@ def bulk_upload_products(
         user_id=current_user.id,
     ))
     db.commit()
+
+    # Destrava, em lote, qualquer NF que só estava pendente por falta de um
+    # destes SKUs — mesmo motivo do bulk_paste_products acima.
+    if created_pairs:
+        release_report = release_pending_orders_for_skus(
+            created_pairs, db, operator_id=current_user.id,
+        )
+        db.commit()
+        results["stock_applied"] = len(release_report["applied"])
 
     return results
 

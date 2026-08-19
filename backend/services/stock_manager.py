@@ -7,7 +7,7 @@ Reproduz a lógica da macro 'atualizar_estoque()'.
 import csv
 import os
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set, Tuple
 from collections import defaultdict
 
 from sqlalchemy.orm import Session, joinedload
@@ -650,6 +650,56 @@ def release_pending_orders_for_sku(
     orders = pending_orders_with_sku(db, seller_id, sku)
     if not orders:
         return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
+    return apply_stock_for_orders(orders, db, operator_id=operator_id)
+
+
+def release_pending_orders_for_skus(
+    pairs: Set[Tuple[int, str]],
+    db: Session,
+    operator_id: Optional[int] = None,
+) -> Dict:
+    """
+    Versão em LOTE de release_pending_orders_for_sku — para cadastro em massa
+    de produto (colar tabela / upload de Excel), que pode criar de dezenas a
+    milhares de SKUs numa chamada só.
+
+    Uma única consulta agrupada para achar as NFs pendentes que citam
+    qualquer um dos pares (seller_id, sku), em vez de 1 consulta por SKU
+    criado — o mesmo N+1 já corrigido em outros pontos desta base (ver
+    CLAUDE.md, seção Performance).
+    """
+    if not pairs:
+        return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
+
+    seller_ids = {p[0] for p in pairs}
+    skus = {p[1] for p in pairs}
+
+    order_ids = [
+        row[0] for row in db.query(models.Order.id).join(
+            models.OrderItem, models.OrderItem.order_id == models.Order.id
+        ).filter(
+            models.Order.stock_applied_at.is_(None),
+            models.Order.imported_at >= STOCK_ERA_CUTOFF,
+            models.Order.status.notin_(STOCK_BLOCKED_STATUSES),
+            models.Order.seller_id.in_(seller_ids),
+            models.OrderItem.sku.in_(skus),
+        ).distinct().all()
+    ]
+    if not order_ids:
+        return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
+
+    orders = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id.in_(order_ids)).all()
+
+    # O IN acima casa por seller_id OU sku separadamente — pode pegar um
+    # pedido de outro seller do lote cujo SKU coincide por acaso. Confere o
+    # PAR exato antes de reavaliar.
+    orders = [o for o in orders if any((o.seller_id, it.sku) in pairs for it in o.items)]
+    if not orders:
+        return {"applied": [], "pending": [], "negatives": [], "missing_skus": {}}
+
     return apply_stock_for_orders(orders, db, operator_id=operator_id)
 
 

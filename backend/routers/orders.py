@@ -18,6 +18,7 @@ from ..database import get_db
 from ..auth import get_current_user, require_admin, require_manager_or_above
 from .. import models, schemas
 from ..services.order_import import import_excel_orders
+from ..services.import_progress import get_progress
 from ..services.pdf_generator import generate_separation_bytes, generate_expedition_bytes, generate_pdfs_for_session
 from ..services.audit_export import export_session_to_csv
 from ..services.stock_manager import (
@@ -74,6 +75,9 @@ def import_orders(
     ),
     seller_link_decisions: Optional[str] = Form(
         None, description='JSON {"<seller_name>": {"action": "create", "unit_id": int} | {"action": "link", "seller_id": int}} — decisões para nomes de seller não reconhecidos no arquivo'
+    ),
+    upload_id: Optional[str] = Form(
+        None, description="Id gerado pelo frontend para acompanhar o progresso via GET /orders/import/progress"
     ),
     current_user: models.User = Depends(require_admin),  # SOMENTE ADMIN importa pedidos
     db: Session = Depends(get_db),
@@ -144,6 +148,7 @@ def import_orders(
         force_duplicates=force_duplicates,
         inactive_seller_decisions=decisions_dict,
         seller_link_decisions=seller_link_decisions_dict,
+        upload_id=upload_id,
     )
 
     if getattr(result, "requires_confirmation", False):
@@ -207,6 +212,33 @@ def import_orders(
                         result.warnings.append(f"Aviso: PDF local não gerado: {str(e)}")
 
     return result
+
+
+@router.get("/import/progress", response_model=schemas.ImportProgressInfo)
+def get_import_progress(
+    upload_id: str = Query(..., description="Id gerado pelo frontend na hora do upload"),
+    current_user: models.User = Depends(require_admin),
+):
+    """
+    Progresso de um import em andamento. Lê só o contador em memória do
+    processo (services/import_progress.py) — nunca consulta o banco, pra não
+    competir com bipagem/dashboard durante o polling do frontend.
+
+    Se o upload_id não for encontrado (import ainda não chegou nessa fase,
+    já expirou, ou o processo reiniciou no meio do import), devolve
+    `found=False` — o frontend trata isso como "sem informação ainda", não
+    como erro.
+    """
+    entry = get_progress(upload_id)
+    if entry is None:
+        return schemas.ImportProgressInfo(found=False)
+    return schemas.ImportProgressInfo(
+        found=True,
+        processed=entry["processed"],
+        total=entry["total"],
+        done=entry["done"],
+        success=entry["success"],
+    )
 
 
 @router.get("/sessions/{session_id}/pdf/separation")

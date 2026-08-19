@@ -859,3 +859,13 @@ class ImportResult(BaseModel):
     missing_carrier_orders: List[MissingCarrierOrderInfo] = []
     missing_sku_lines: List[MissingSkuLineInfo] = []
     stock: Optional[StockApplyReport] = None
+
+
+class ImportProgressInfo(BaseModel):
+    """Progresso de um import em andamento — lido do contador em memória
+    (services/import_progress.py), nunca do banco."""
+    found: bool = False
+    processed: int = 0
+    total: int = 0
+    done: bool = False
+    success: Optional[bool] = None

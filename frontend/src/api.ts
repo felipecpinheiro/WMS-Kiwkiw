@@ -351,6 +351,14 @@ export interface ImportResult {
   stock: StockApplyReport | null;
 }
 
+export interface ImportProgressInfo {
+  found: boolean;
+  processed: number;
+  total: number;
+  done: boolean;
+  success: boolean | null;
+}
+
 export interface ScanRequest {
   session_id: number;
   order_id: number;
@@ -448,6 +456,7 @@ export const ordersApi = {
       generate_exp_pdf?: boolean;
       inactive_seller_decisions?: Record<number, 'reactivate' | 'ignore'>;
       seller_link_decisions?: Record<string, SellerLinkDecision>;
+      upload_id?: string;
     } = {},
   ) => {
     const form = new FormData();
@@ -462,10 +471,26 @@ export const ordersApi = {
     if (opts.seller_link_decisions && Object.keys(opts.seller_link_decisions).length > 0) {
       form.append('seller_link_decisions', JSON.stringify(opts.seller_link_decisions));
     }
+    if (opts.upload_id) {
+      form.append('upload_id', opts.upload_id);
+    }
+    // Timeout maior que o default (30s): arquivo grande pode levar minutos.
+    // Sem isso o navegador desiste antes do backend terminar de processar
+    // (que continua rodando e comita normalmente, só a tela mostra erro à toa).
     return api.post<ImportResult>('/orders/import', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000,
     });
   },
+  // Progresso do import em andamento — polling leve, sem tocar no banco
+  // (ver backend/services/import_progress.py). Timeout curto de propósito:
+  // se essa chamada falhar/atrasar, o frontend ignora e tenta de novo no
+  // próximo tick, nunca deixa isso virar um erro pro usuário.
+  importProgress: (uploadId: string) =>
+    api.get<ImportProgressInfo>('/orders/import/progress', {
+      params: { upload_id: uploadId },
+      timeout: 8000,
+    }),
   configure: (id: number, data: { file_type?: string; for_billing?: boolean }) =>
     api.patch(`/orders/${id}/config`, null, { params: data }),
   // Preencher a transportadora destrava a baixa de estoque da NF (06/08/2026)

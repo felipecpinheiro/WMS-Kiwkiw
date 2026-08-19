@@ -16,6 +16,7 @@ from .. import models, schemas
 from .kit_handler import process_order_items
 from .stock_manager import apply_stock_for_orders
 from .excel_utils import ensure_xlsx_path
+from . import import_progress
 from ..timezone_utils import now_brasilia, today_brasilia
 
 
@@ -514,6 +515,7 @@ def import_excel_orders(
     force_duplicates: bool = False,
     inactive_seller_decisions: Optional[dict] = None,
     seller_link_decisions: Optional[dict] = None,
+    upload_id: Optional[str] = None,
 ) -> schemas.ImportResult:
     """
     Importa arquivo Excel de pedidos (gerado pelo robô de captura dos ERPs).
@@ -540,6 +542,10 @@ def import_excel_orders(
         com a lista em `unmatched_sellers` para o usuário decidir. Nunca cria um
         seller novo silenciosamente — "create" exige unit_id explícito; "link"
         associa os pedidos a um seller já cadastrado.
+      - upload_id: id gerado pelo frontend (opcional) para acompanhar o
+        progresso via GET /orders/import/progress — ver import_progress.py.
+        Sem ele (chamadas do watcher, testes, etc.) o import funciona igual,
+        só não expõe progresso.
     """
     errors = []
     warnings = []
@@ -990,6 +996,12 @@ def import_excel_orders(
                 products_cache[sid] = cached
             return cached
 
+        # ── Progresso de import (19/08/2026) ────────────────────────────────
+        # Contador em memória (nunca no banco) pra o frontend acompanhar em
+        # tempo real quantas NFs já foram persistidas — ver import_progress.py.
+        import_progress.start_import(upload_id, total=len(orders_dict) - len(ignored_order_keys))
+        processed_count = 0
+
         # Persiste os pedidos
         for order_key, order_data in orders_dict.items():
             if order_key in ignored_order_keys:
@@ -1082,6 +1094,9 @@ def import_excel_orders(
             except Exception as e:
                 errors.append(f"Erro ao importar pedido {order_key}: {str(e)}")
                 continue
+            finally:
+                processed_count += 1
+                import_progress.update_import(upload_id, processed_count)
 
         # Atualiza totais da sessão
         session.total_orders = orders_imported
@@ -1133,6 +1148,7 @@ def import_excel_orders(
         )
         db.add(audit)
         db.commit()
+        import_progress.finish_import(upload_id, success=True)
 
         return schemas.ImportResult(
             success=True,
@@ -1148,6 +1164,7 @@ def import_excel_orders(
 
     except Exception as e:
         db.rollback()
+        import_progress.finish_import(upload_id, success=False)
         return schemas.ImportResult(
             success=False,
             message=f"Erro na importação: {str(e)}",

@@ -634,6 +634,11 @@ export default function DashboardPage() {
   // Data alvo do cockpit — default hoje (Brasília), mas usuário pode escolher dias anteriores
   const [targetDate, setTargetDate] = useState(todayBrasiliaStr);
   const [uploading, setUploading] = useState(false);
+  // Progresso do import em andamento (polling leve — ver runImport). null = sem dado ainda.
+  const [importProgress, setImportProgress] = useState<{ processed: number; total: number } | null>(null);
+  const importingLabel = importProgress && importProgress.total > 0
+    ? `Processando NF ${importProgress.processed} de ${importProgress.total}...`
+    : 'Importando...';
   const isMobile = useIsMobile();
   const [checksExpanded, setChecksExpanded] = useState(false);
   const todayStr = todayBrasiliaStr();
@@ -717,7 +722,10 @@ export default function DashboardPage() {
       target_date: targetDate,
       unit_id: activeUnitId,
     }).then(r => r.data),
-    { refetchInterval: 60000 }, // atualiza a cada 1 minuto
+    // Atualiza a cada 1 minuto normalmente; enquanto há import em andamento,
+    // acelera pra 3s pra "Uploads do Dia" refletir a sessão assim que ela
+    // comitar, sem a operadora precisar navegar entre telas pra conferir.
+    { refetchInterval: uploading ? 3000 : 60000 },
   );
 
   // Warning: sellers ativos sem unidade associada — PDFs caem em SEM_UNIDADE
@@ -773,6 +781,23 @@ export default function DashboardPage() {
     const decisions = decisionsOverride ?? inactiveDecisions;
     const sellerLinkDecisions = sellerLinkOverride ?? unmatchedDecisions;
     setUploading(true);
+    setImportProgress(null);
+
+    // Polling leve de progresso — id gerado aqui no navegador porque a
+    // resposta de POST /orders/import só chega quando o import inteiro
+    // termina; sem um id combinado antes, não teria como acompanhar.
+    const uploadId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const progressTimer = window.setInterval(async () => {
+      try {
+        const { data: p } = await ordersApi.importProgress(uploadId);
+        if (p.found) setImportProgress({ processed: p.processed, total: p.total });
+      } catch {
+        // Silencioso — é só polling, o próximo tick tenta de novo
+      }
+    }, 2000);
+
     try {
       const res = await ordersApi.import(pendingFile, user.unit_id, {
         file_type: fileType,
@@ -782,6 +807,7 @@ export default function DashboardPage() {
         generate_exp_pdf: generateExpPdf,
         inactive_seller_decisions: decisions,
         seller_link_decisions: sellerLinkDecisions,
+        upload_id: uploadId,
       });
       const data = res.data || ({} as any);
       const {
@@ -898,7 +924,15 @@ export default function DashboardPage() {
       setPendingFile(null);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || err.message || 'Erro ao importar arquivo');
+      // O backend roda a importação inteira numa transação só e continua
+      // mesmo que o navegador desista (timeout, conexão caiu etc.) — atualiza
+      // a tela pra refletir o que realmente aconteceu, em vez de deixar a
+      // operadora com um erro na tela e a sessão já criada em outro lugar.
+      refetch();
+      window.setTimeout(refetch, 5000);
     } finally {
+      window.clearInterval(progressTimer);
+      setImportProgress(null);
       setUploading(false);
     }
   };
@@ -1393,7 +1427,7 @@ export default function DashboardPage() {
           {/* Upload de Excel — só permitido no dia de hoje */}
           <label className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 rounded-lg cursor-pointer transition ${uploading || !isToday ? 'opacity-60 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
-            {uploading ? 'Importando...' : 'Importar Excel'}
+            {uploading ? importingLabel : 'Importar Excel'}
             <input
               type="file"
               accept=".xlsx,.xlsm,.xls"
@@ -1915,6 +1949,28 @@ export default function DashboardPage() {
               </label>
             </div>
 
+            {/* Progresso — só aparece durante o import, sem layout shift no resto do modal */}
+            {uploading && (
+              <div className="pt-1">
+                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: importProgress && importProgress.total > 0
+                        ? `${Math.min(100, Math.round((importProgress.processed / importProgress.total) * 100))}%`
+                        : '8%',
+                      background: 'linear-gradient(90deg, #7B63E8, #3DD9A4)',
+                    }}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-white/50">
+                  {importProgress && importProgress.total > 0
+                    ? `NF ${importProgress.processed} de ${importProgress.total} — pode levar alguns minutos, não feche esta aba`
+                    : 'Enviando arquivo... não feche esta aba'}
+                </p>
+              </div>
+            )}
+
             {/* Botões */}
             <div className="flex gap-2 pt-2">
               <button
@@ -1929,7 +1985,7 @@ export default function DashboardPage() {
                 className="flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
-                {uploading ? 'Importando...' : 'Importar agora'}
+                {uploading ? importingLabel : 'Importar agora'}
               </button>
             </div>
           </div>

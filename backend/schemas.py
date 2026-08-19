@@ -521,7 +521,9 @@ class ScanResponse(BaseModel):
     """Resposta ao scan: OK, ERRO, COMPLETO, etc."""
     success: bool
     message: str
-    status: str                          # "ok", "error", "order_complete", "session_complete"
+    status: str                          # "ok", "error", "order_complete", "session_complete",
+                                          # "awaiting_box" (saída 100% bipada, falta caixa — ver
+                                          # process_scan em routers/scanning.py)
     sku: Optional[str] = None
     product_name: Optional[str] = None
     photo_url: Optional[str] = None

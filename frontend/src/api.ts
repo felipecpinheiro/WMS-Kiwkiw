@@ -352,6 +352,7 @@ export interface ScanRequest {
 export interface ScanResponse {
   success: boolean;
   message: string;
+  /** "ok" | "error" | "order_complete" | "session_complete" | "awaiting_box" (saída 100% bipada, falta caixa) | ... */
   status: string;
   sku: string | null;
   product_name: string | null;
@@ -603,7 +604,7 @@ export const scanningApi = {
       `/scanning/orders/${orderId}/suggested-box`
     ),
   saveOrderBox: (orderId: number, boxUsed: string | null) =>
-    api.patch<{ order_id: number; box_used: string | null }>(
+    api.patch<{ order_id: number; box_used: string | null; order_completed: boolean }>(
       `/scanning/orders/${orderId}/box`,
       { box_used: boxUsed }
     ),

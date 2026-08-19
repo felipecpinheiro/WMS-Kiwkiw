@@ -651,6 +651,38 @@ def update_session_config(
     }
 
 
+def _finalize_order(order: models.Order, session_id: int | None, db: Session) -> None:
+    """
+    Marca o pedido como COMPLETED e atualiza a contagem/fechamento da sessão.
+
+    Compartilhada entre process_scan (conclusão pelo último bipe) e
+    save_order_box (conclusão pelo cadastro da caixa, quando ela era a última
+    pendência de uma NF de saída — ver CLAUDE.md, "Caixa obrigatória na
+    SAÍDA"). Não faz commit: quem chama decide quando commitar.
+    """
+    order.status = models.OrderStatus.COMPLETED
+
+    if session_id is None:
+        return
+
+    session = db.query(models.PickingSession).filter(
+        models.PickingSession.id == session_id
+    ).first()
+    if not session:
+        return
+
+    # +1: a sessão do banco usa autoflush=False (database.py), então a query
+    # abaixo ainda não enxerga o order.status = COMPLETED setado acima.
+    session.completed_orders = db.query(models.Order).filter(
+        models.Order.session_id == session_id,
+        models.Order.status == models.OrderStatus.COMPLETED,
+    ).count() + 1
+
+    if session.completed_orders >= session.total_orders:
+        session.status = models.OrderStatus.COMPLETED
+        session.completed_at = now_brasilia()
+
+
 @router.post("/scan", response_model=schemas.ScanResponse)
 def process_scan(
     request: schemas.ScanRequest,
@@ -875,43 +907,42 @@ def process_scan(
     )
 
     if remaining == 0:
-        # Pedido completo!
-        order.status = models.OrderStatus.COMPLETED
+        # Caixa obrigatória na SAÍDA (17/08/2026): sem ela, o pedido fica
+        # "aguardando caixa" — todos os itens batem 100%, mas o status não vira
+        # COMPLETED. Isso automaticamente também segura a próxima NF, já que o
+        # Scanner só libera scanPhase='nfe' quando o pedido ativo está completed.
+        # Na ENTRADA não se aplica — nunca exigiu caixa.
+        if not is_entrada and not order.box_used:
+            db.commit()
+            scan_response = schemas.ScanResponse(
+                success=True,
+                message=(
+                    f"Bipagem registrada — falta cadastrar a caixa pra concluir "
+                    f"a NF {order.nf_number}.{over_suffix}"
+                ),
+                status="awaiting_box",
+                sku=matched_item.sku,
+                product_name=matched_item.product_name,
+                photo_url=matched_item.product.photo_url if matched_item.product else None,
+                items_remaining=0,
+                order_progress=_build_progress(order, db),
+                over_quantity=over_qty,
+            )
+        else:
+            _finalize_order(order, request.session_id, db)
+            db.commit()
 
-        # Atualiza contagem da sessão
-        session = db.query(models.PickingSession).filter(
-            models.PickingSession.id == request.session_id
-        ).first()
-        if session:
-            session.completed_orders = db.query(models.Order).filter(
-                models.Order.session_id == request.session_id,
-                models.Order.status == models.OrderStatus.COMPLETED,
-            ).count() + 1  # +1 pois ainda não commitou
-
-            # Verifica se toda a sessão está completa
-            if session.completed_orders >= session.total_orders:
-                session.status = models.OrderStatus.COMPLETED
-                session.completed_at = now_brasilia()
-
-        # ── Estoque NÃO é tocado aqui (06/08/2026) ──────────────────
-        # A baixa passou a acontecer na IMPORTAÇÃO do arquivo, NF a NF.
-        # A bipagem virou conferência/auditoria. Ver o cabeçalho de
-        # services/stock_manager.py. Não reintroduzir chamada de estoque
-        # neste ponto: a NF já baixou antes de chegar na bancada.
-
-        db.commit()
-
-        scan_response = schemas.ScanResponse(
-            success=True,
-            message=f"✅ PEDIDO {order.nf_number} COMPLETO! Todos os {expected_qty} itens bipados.{over_suffix}",
-            status="order_complete",
-            sku=matched_item.sku,
-            product_name=matched_item.product_name,
-            photo_url=matched_item.product.photo_url if matched_item.product else None,
-            items_remaining=0,
-            order_progress=_build_progress(order, db),
-            over_quantity=over_qty,
-        )
+            scan_response = schemas.ScanResponse(
+                success=True,
+                message=f"✅ PEDIDO {order.nf_number} COMPLETO! Todos os {expected_qty} itens bipados.{over_suffix}",
+                status="order_complete",
+                sku=matched_item.sku,
+                product_name=matched_item.product_name,
+                photo_url=matched_item.product.photo_url if matched_item.product else None,
+                items_remaining=0,
+                order_progress=_build_progress(order, db),
+                over_quantity=over_qty,
+            )
     else:
         db.commit()
         new_scanned = already_scanned + qty
@@ -2600,5 +2631,17 @@ def save_order_box(
         user_id=current_user.id,
         detail=f"Caixa definida: {box or 'removida'}",
     ))
+
+    # Caixa obrigatória na SAÍDA (17/08/2026): se o pedido já estava com todos
+    # os itens bipados e só esperava a caixa para concluir, cadastrá-la agora
+    # conclui o pedido na hora — mesma lógica de process_scan, via
+    # _finalize_order. Não se aplica a pedido já concluído/cancelado nem
+    # quando a caixa está sendo apagada (box=None).
+    order_status = order.status.value if hasattr(order.status, 'value') else order.status
+    order_completed = False
+    if box and order_status not in ("completed", "cancelled") and _count_remaining(order, db) == 0:
+        _finalize_order(order, order.session_id, db)
+        order_completed = True
+
     db.commit()
-    return {"order_id": order_id, "box_used": order.box_used}
+    return {"order_id": order_id, "box_used": order.box_used, "order_completed": order_completed}

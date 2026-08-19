@@ -347,12 +347,25 @@ export default function ScannerPage() {
 
   const handleBoxSave = async (val: string) => {
     if (!activeOrderId) return;
+    const orderId = activeOrderId;
     setBoxSaving(true);
     try {
       const v = val.trim() || null;
-      await scanningApi.saveOrderBox(activeOrderId, v);
+      const res = await scanningApi.saveOrderBox(orderId, v);
       setBoxUsed(v);
       setBoxEditing(false);
+      if (res.data.order_completed) {
+        // Caixa era a última pendência (todos os itens já bipados) — conclui
+        // igual ao fim de bipagem normal. Mudar o status aqui já recalcula
+        // scanPhase para 'nfe' sozinho, liberando a próxima NF.
+        setLocalOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: 'completed' } : o)));
+        setFeedback({ state: 'success', title: '🎉 Pedido concluído!', message: 'NF finalizada. Escaneie a próxima NFe.' });
+        setTimeout(() => setFeedback({ state: 'idle', title: '', message: '' }), 3000);
+      } else {
+        // Ainda falta bipar item — devolve o foco pro código de barras, mesmo
+        // padrão já usado no campo de quantidade (handleQtyKeyDown).
+        inputRef.current?.focus();
+      }
     } catch { /* silent */ }
     finally { setBoxSaving(false); }
   };
@@ -398,6 +411,15 @@ export default function ScannerPage() {
   // fora da entrada — esta checagem aqui é só de interface.
   const isEntradaOrder = activeOrder?.file_type === 'entrada';
   const showQtyField = isEntradaOrder && scanPhase === 'product';
+
+  // Caixa obrigatória só na SAÍDA (17/08/2026) — na entrada o badge nem
+  // aparece, pra não sugerir uma exigência que não existe ali.
+  const showBoxBadge = !isEntradaOrder && scanPhase === 'product';
+  // Todos os itens já bipados (100%) mas ainda sem caixa salva: é o estado
+  // que trava a conclusão do pedido. Calculado dos itens locais (não de um
+  // estado à parte) pra sobreviver a F5/reload igual ao resto da tela.
+  const awaitingBox =
+    showBoxBadge && !boxUsed && !!activeOrder && activeOrder.items.every(it => it.scanned >= it.quantity);
 
   // Gatilho real de atualização: assim que o pedido é concluído (sai de 'product'
   // pra 'nfe'), busca a lista da sessão uma vez — mostra o progresso de outros
@@ -613,6 +635,19 @@ export default function ScannerPage() {
         if (data.status === 'order_complete' || data.status === 'completed') {
           setFeedback({ state: 'success', title: '🎉 Pedido concluído!', message: `NF ${activeOrder.nf_number} finalizada. Escaneie a próxima NFe.` });
           setTimeout(() => setFeedback({ state: 'idle', title: '', message: '' }), 3000);
+        } else if (data.status === 'awaiting_box') {
+          // Todos os itens bipados, mas caixa obrigatória (saída) ainda vazia —
+          // o pedido não conclui e a próxima NF continua bloqueada até o
+          // operador cadastrar a caixa (ver o badge 📦 vermelho pulsando).
+          toast(
+            `📦 Bipagem registrada — falta cadastrar a caixa pra concluir a NF ${activeOrder.nf_number}.`,
+            { duration: 8000, icon: '📦' },
+          );
+          setFeedback({
+            state: 'warning',
+            title: '📦 Falta a caixa',
+            message: `Todos os itens bipados — cadastre a caixa pra concluir a NF ${activeOrder.nf_number}.`,
+          });
         } else {
           setFeedback({
             state: over > 0 ? 'warning' : 'success',
@@ -996,8 +1031,8 @@ export default function ScannerPage() {
                         🚚 {activeOrder.carrier}
                       </span>
                     )}
-                    {/* Caixa sugerida */}
-                    {boxEditing ? (
+                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge) */}
+                    {showBoxBadge && (boxEditing ? (
                       <span className="inline-flex items-center gap-1">
                         <input
                           autoFocus
@@ -1019,17 +1054,24 @@ export default function ScannerPage() {
                     ) : (
                       <button
                         onClick={() => { setBoxEditVal(boxUsed || boxSuggested || ''); setBoxEditing(true); }}
-                        title="Caixa sugerida pelo algoritmo — clique para ajustar"
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold transition hover:opacity-80"
+                        title={awaitingBox
+                          ? 'Caixa obrigatória — todos os itens já foram bipados, falta cadastrar a caixa para concluir a NF'
+                          : 'Caixa sugerida pelo algoritmo — clique para ajustar'}
+                        className={
+                          'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold transition hover:opacity-80'
+                          + (awaitingBox ? ' animate-pulse' : '')
+                        }
                         style={
-                          (boxUsed || boxSuggested)
-                            ? { background: 'rgba(123,99,232,0.18)', color: '#9B87F0', border: '1px solid rgba(123,99,232,0.35)' }
-                            : { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)' }
+                          awaitingBox
+                            ? { background: 'rgba(239,68,68,0.22)', color: '#f87171', border: '1px solid rgba(239,68,68,0.55)' }
+                            : (boxUsed || boxSuggested)
+                              ? { background: 'rgba(123,99,232,0.18)', color: '#9B87F0', border: '1px solid rgba(123,99,232,0.35)' }
+                              : { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)' }
                         }
                       >
                         📦 {boxUsed ? `${boxUsed} ✏` : boxSuggested ? boxSuggested : 'N.A'}
                       </button>
-                    )}
+                    ))}
                   </div>
                   {activeOrder.seller && (
                     <p className="text-sm font-semibold mb-0.5" style={{ color: '#9B87F0' }}>{activeOrder.seller}</p>

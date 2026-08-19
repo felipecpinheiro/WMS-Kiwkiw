@@ -675,6 +675,9 @@ export default function DashboardPage() {
   // disponíveis ao mesmo tempo; cada botão some quando aquela pendência acaba.
   const [pendingCarrierOpen, setPendingCarrierOpen] = useState(false);
   const [pendingSkuOpen, setPendingSkuOpen] = useState(false);
+  // "Tentar novamente" (19/08/2026): NFs sem motivo aparente (can_apply=true)
+  // — nada bloqueia, só nunca foram reaplicadas.
+  const [retryingPendingStock, setRetryingPendingStock] = useState(false);
 
   // Modal de cancelamento de pedidos duplicados (por sessão + sellers selecionados)
   const [cancelDupSession, setCancelDupSession] = useState<{ session_id: number; sellers: { seller_id: number; seller_name: string }[] } | null>(null);
@@ -1078,6 +1081,28 @@ export default function DashboardPage() {
     }
   };
 
+  // "Tentar novamente" (19/08/2026): NFs que já não têm nenhum motivo
+  // bloqueando (transportadora ok, SKUs cadastrados) mas nunca baixaram —
+  // acontece quando o cadastro em massa de produto destrava sem reaplicar.
+  // Só reusa apply_stock_for_orders via o endpoint — nada de lógica nova aqui.
+  const handleRetryPendingStock = async (orderIds: number[]) => {
+    setRetryingPendingStock(true);
+    try {
+      const { data } = await ordersApi.retryPendingStock(orderIds);
+      const stillStuck = data.pending_orders.filter(p => p.can_apply).length;
+      toast.success(
+        `${data.applied_orders} NF(s) baixaram estoque agora`
+        + (stillStuck ? ` · ${stillStuck} continuam presas — verifique manualmente` : ''),
+        { duration: 6000 },
+      );
+      await afterPendingResolved(data.negatives ?? [], data.applied_orders);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao tentar novamente');
+    } finally {
+      setRetryingPendingStock(false);
+    }
+  };
+
   const handleBatchSkuSave = async (resolutions: SkuResolutionItem[]) => {
     try {
       const { data } = await ordersApi.batchResolveSku(resolutions);
@@ -1194,51 +1219,79 @@ export default function DashboardPage() {
       {/* ⚠️ Aviso fixo: NFs que não subiram ao estoque (06/08/2026).
           O estoque do seller não reflete essas notas até a pendência ser
           resolvida — e aí ele baixa sozinho. */}
-      {(pendingStock?.pending_orders?.length ?? 0) > 0 && (
-        <div className="flex items-start gap-3 bg-red-900/25 border border-red-500/30 rounded-xl px-4 py-3">
-          <span className="text-red-400 mt-0.5 flex-shrink-0">📦</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-red-300">
-              {pendingStock!.pending_orders.length} NF(s) não subiram ao estoque
-            </p>
-            <p className="text-xs text-red-400/80 mt-0.5">
-              O estoque desses sellers está desatualizado enquanto isso. Resolva a pendência e a
-              baixa acontece sozinha — não precisa reimportar nada.
-            </p>
-            <p className="text-xs text-red-400/60 mt-1">
-              {(() => {
-                const semTransp = pendingStock!.pending_orders.filter(p => p.missing_carrier).length;
-                const semProduto = pendingStock!.pending_orders.filter(p => p.missing_skus.length > 0).length;
-                const partes = [];
-                if (semTransp) partes.push(`${semTransp} sem transportadora`);
-                if (semProduto) partes.push(`${semProduto} com SKU sem produto cadastrado`);
-                return partes.join(' · ');
-              })()}
-            </p>
+      {(pendingStock?.pending_orders?.length ?? 0) > 0 && (() => {
+        // can_apply=true (19/08/2026) = nada bloqueia mais essa NF, mas ela
+        // nunca foi reaplicada (ex: o SKU que faltava foi cadastrado em massa,
+        // caminho que não destrava sozinho). Sem essa separação, essas NFs
+        // ficavam contadas no aviso sem motivo visível e sem botão nenhum.
+        const stuck = pendingStock!.pending_orders.filter(p => p.can_apply);
+        const blocked = pendingStock!.pending_orders.filter(p => !p.can_apply);
+        const semTransp = blocked.filter(p => p.missing_carrier).length;
+        const semProduto = blocked.filter(p => p.missing_skus.length > 0).length;
+        return (
+          <div className="flex items-start gap-3 bg-red-900/25 border border-red-500/30 rounded-xl px-4 py-3">
+            <span className="text-red-400 mt-0.5 flex-shrink-0">📦</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-300">
+                {pendingStock!.pending_orders.length} NF(s) não subiram ao estoque
+              </p>
+              <p className="text-xs text-red-400/80 mt-0.5">
+                O estoque desses sellers está desatualizado enquanto isso. Resolva a pendência e a
+                baixa acontece sozinha — não precisa reimportar nada.
+              </p>
+              {(semTransp > 0 || semProduto > 0) && (
+                <p className="text-xs text-red-400/60 mt-1">
+                  {[
+                    semTransp ? `${semTransp} sem transportadora` : null,
+                    semProduto ? `${semProduto} com SKU sem produto cadastrado` : null,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              )}
+              {stuck.length > 0 && (
+                <div className="mt-1.5">
+                  <p className="text-xs text-amber-300/90">
+                    {stuck.length} sem motivo aparente — já estão liberadas, só falta tentar de novo:
+                  </p>
+                  <p className="text-xs text-red-400/60 mt-0.5">
+                    {stuck.slice(0, 10).map(p => `${p.nf_number} (${p.seller_name ?? 'sem seller'})`).join(', ')}
+                    {stuck.length > 10 && ` … e mais ${stuck.length - 10}`}
+                  </p>
+                </div>
+              )}
+            </div>
+            {/* Um botão por tipo de pendência — só aparece o que existe de fato,
+                e some sozinho quando aquele tipo acaba. Resolver aqui evita
+                trocar de tela no meio do fluxo de importação. */}
+            <div className="flex flex-col gap-1.5 flex-shrink-0">
+              {semTransp > 0 && (
+                <button
+                  onClick={() => setPendingCarrierOpen(true)}
+                  className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                >
+                  🚚 Resolver transportadoras
+                </button>
+              )}
+              {pendingStock!.missing_products.length > 0 && (
+                <button
+                  onClick={() => setPendingSkuOpen(true)}
+                  className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                >
+                  📦 Resolver SKUs sem produto
+                </button>
+              )}
+              {stuck.length > 0 && (
+                <button
+                  onClick={() => handleRetryPendingStock(stuck.map(p => p.order_id))}
+                  disabled={retryingPendingStock}
+                  className="text-xs font-medium text-white bg-amber-600/80 hover:bg-amber-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap disabled:opacity-50"
+                >
+                  {retryingPendingStock ? 'Tentando…' : `🔁 Tentar novamente (${stuck.length})`}
+                </button>
+              )}
+            </div>
           </div>
-          {/* Um botão por tipo de pendência — só aparece o que existe de fato,
-              e some sozinho quando aquele tipo acaba. Resolver aqui evita
-              trocar de tela no meio do fluxo de importação. */}
-          <div className="flex flex-col gap-1.5 flex-shrink-0">
-            {pendingStock!.pending_orders.some(p => p.missing_carrier) && (
-              <button
-                onClick={() => setPendingCarrierOpen(true)}
-                className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
-              >
-                🚚 Resolver transportadoras
-              </button>
-            )}
-            {pendingStock!.missing_products.length > 0 && (
-              <button
-                onClick={() => setPendingSkuOpen(true)}
-                className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
-              >
-                📦 Resolver SKUs sem produto
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ⚠️ Aviso fixo: sessão(ões) com pedido sem transportadora — bipagem e PDFs
           ficam bloqueados até preencher. Não some sozinho ao fechar o modal sem

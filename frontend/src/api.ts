@@ -278,6 +278,9 @@ export interface PendingStockOrderInfo {
   customer_name: string | null;
   missing_carrier: boolean;
   missing_skus: string[];
+  // true = nada bloqueia mais essa NF, mas ela nunca foi reaplicada — ver
+  // POST /orders/pending-stock/retry (19/08/2026).
+  can_apply: boolean;
 }
 
 export interface MissingProductInfo {
@@ -480,6 +483,13 @@ export const ordersApi = {
     api.get<StockApplyReport>('/orders/pending-stock', {
       params: sessionId ? { session_id: sessionId } : undefined,
     }),
+  // Reaplica NFs que já não têm mais nenhum motivo bloqueando (can_apply=true)
+  // mas nunca foram reaplicadas — botão "Tentar novamente" do Dashboard
+  // (19/08/2026). orderIds omitido reavalia todo o recorte pendente atual.
+  retryPendingStock: (orderIds?: number[]) =>
+    api.post<StockApplyReport>('/orders/pending-stock/retry', {
+      order_ids: orderIds && orderIds.length ? orderIds : undefined,
+    }, { timeout: 120000 }),
   downloadSessionPdf: async (sessionId: number, type: 'separation' | 'expedition'): Promise<void> => {
     const response = await api.get(`/orders/sessions/${sessionId}/pdf/${type}`, {
       responseType: 'blob',

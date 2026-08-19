@@ -391,20 +391,14 @@ def list_orders(
 # ⚠️ Rota estática ANTES da parametrizada `/{order_id}` — senão o FastAPI
 # tenta casar "pending-stock" com order_id:int e devolve 422. Mesma armadilha
 # já documentada em /kits/expansion-log.
-@router.get("/pending-stock", response_model=schemas.StockApplyReport)
-def list_pending_stock_orders(
-    session_id: Optional[int] = None,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def _pending_stock_base_query(db: Session):
     """
-    NFs que ainda NÃO baixaram estoque e o motivo (06/08/2026).
-
-    Alimenta o aviso fixo do Dashboard e o modal de cadastro de produto.
-    Segue o mesmo recorte do resto da operação: seller ativo e sem pedido
-    cancelado/inativo.
+    Recorte único de "NF ainda não baixou estoque, dentro da era atual, sem
+    estar cancelada/inativa, de seller ativo". Compartilhado por
+    GET /pending-stock e POST /pending-stock/retry — não duplicar o filtro,
+    senão os dois endpoints divergem em silêncio (ver CLAUDE.md).
     """
-    q = db.query(models.Order).options(
+    return db.query(models.Order).options(
         joinedload(models.Order.items),
         joinedload(models.Order.seller),
     ).join(models.Seller, models.Order.seller_id == models.Seller.id).filter(
@@ -421,6 +415,22 @@ def list_pending_stock_orders(
         ]),
         models.Seller.active == True,  # noqa: E712
     )
+
+
+@router.get("/pending-stock", response_model=schemas.StockApplyReport)
+def list_pending_stock_orders(
+    session_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    NFs que ainda NÃO baixaram estoque e o motivo (06/08/2026).
+
+    Alimenta o aviso fixo do Dashboard e o modal de cadastro de produto.
+    Segue o mesmo recorte do resto da operação: seller ativo e sem pedido
+    cancelado/inativo.
+    """
+    q = _pending_stock_base_query(db)
     if session_id:
         q = q.filter(models.Order.session_id == session_id)
 
@@ -440,6 +450,7 @@ def list_pending_stock_orders(
             customer_name=o.customer_name,
             missing_carrier=ev["missing_carrier"],
             missing_skus=ev["missing_skus"],
+            can_apply=ev["can_apply"],
         ))
         for sku in ev["missing_skus"]:
             key = (o.seller_id, sku)
@@ -459,6 +470,66 @@ def list_pending_stock_orders(
         pending_orders=pending,
         missing_products=list(missing.values()),
         negatives=[],
+    )
+
+
+@router.post("/pending-stock/retry", response_model=schemas.StockApplyReport)
+def retry_pending_stock_orders(
+    payload: schemas.PendingStockRetryRequest,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Reavalia e reaplica NFs pendentes (19/08/2026).
+
+    Existe para o caso em que a NF já não tem mais motivo nenhum bloqueando
+    (transportadora ok, todos os SKUs cadastrados — `can_apply=true` no
+    GET /pending-stock) mas nunca foi reaplicada, porque o que a destravou
+    veio de um caminho que não chama release_pending_orders_for_sku (ex:
+    cadastro de produto em massa — ver stock_manager.py). Não é mágica: só
+    roda a MESMA `apply_stock_for_orders` que o import e os outros dois
+    endpoints de resolução já usam.
+
+    order_ids=None pega todo o recorte pendente atual; uma NF fora dele (já
+    baixada, cancelada, de seller inativo) é simplesmente ignorada.
+    """
+    q = _pending_stock_base_query(db)
+    if payload.order_ids:
+        q = q.filter(models.Order.id.in_(payload.order_ids))
+
+    orders = q.all()
+    if not orders:
+        return schemas.StockApplyReport()
+
+    report = apply_stock_for_orders(orders, db, operator_id=current_user.id)
+    db.add(models.AuditLog(
+        entity_type="Order", entity_id=0, action="RETRY_PENDING_STOCK",
+        user_id=current_user.id,
+        detail=(
+            f"Nova tentativa de baixa em lote: {len(report['applied'])} NF(s) "
+            f"baixaram estoque; {len(report['pending'])} continuam pendentes."
+        ),
+    ))
+    db.commit()
+
+    pending = [schemas.PendingStockOrderInfo(**p, can_apply=False) for p in report["pending"]]
+    missing: dict = {}
+    for p in report["pending"]:
+        for sku in p["missing_skus"]:
+            key = (p["seller_id"], sku)
+            if key not in missing:
+                missing[key] = schemas.MissingProductInfo(
+                    seller_id=p["seller_id"], seller_name=p["seller_name"],
+                    sku=sku, product_name=sku, nf_numbers=[],
+                )
+            if p["nf_number"] not in missing[key].nf_numbers:
+                missing[key].nf_numbers.append(p["nf_number"])
+
+    return schemas.StockApplyReport(
+        applied_orders=len(report["applied"]),
+        pending_orders=pending,
+        missing_products=list(missing.values()),
+        negatives=[schemas.NegativeStockInfo(**n) for n in report["negatives"]],
     )
 
 

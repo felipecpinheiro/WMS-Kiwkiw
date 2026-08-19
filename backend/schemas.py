@@ -742,6 +742,11 @@ class PendingStockOrderInfo(BaseModel):
     customer_name: Optional[str] = None
     missing_carrier: bool = False
     missing_skus: List[str] = []
+    # True = nada bloqueia mais esta NF (transportadora ok, SKUs cadastrados),
+    # mas ela nunca foi reaplicada — fica "presa" sem motivo visível (19/08/2026).
+    # Acontece quando o SKU que faltava foi cadastrado por um caminho em lote
+    # que não chama release_pending_orders_for_sku. Ver POST /pending-stock/retry.
+    can_apply: bool = False
 
 
 class MissingProductInfo(BaseModel):
@@ -759,6 +764,19 @@ class StockApplyReport(BaseModel):
     pending_orders: List[PendingStockOrderInfo] = []
     missing_products: List[MissingProductInfo] = []
     negatives: List[NegativeStockInfo] = []
+
+
+class PendingStockRetryRequest(BaseModel):
+    """
+    POST /orders/pending-stock/retry (19/08/2026).
+
+    order_ids=None reavalia TODAS as NFs pendentes no recorte atual — pensado
+    para o botão "Tentar novamente" do aviso do Dashboard, sobre a lista com
+    can_apply=true (nada bloqueia, só nunca foi reaplicada). Passar uma lista
+    explícita restringe a essas NFs; qualquer id fora do recorte pendente
+    atual é simplesmente ignorado — nunca reaplica a mesma NF duas vezes.
+    """
+    order_ids: Optional[List[int]] = None
 
 
 # ============================================================

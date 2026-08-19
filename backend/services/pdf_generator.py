@@ -407,7 +407,6 @@ def generate_expedition_report(
             story.append(PageBreak())
 
         rows  = []
-        spans = []
         row_idx = 0
         qty_hi_rows = []
 
@@ -418,7 +417,6 @@ def generate_expedition_report(
             items_list = order.items
             if not items_list:
                 continue
-            n_items = len(items_list)
 
             for i, item in enumerate(items_list):
                 qty   = item.quantity
@@ -437,29 +435,12 @@ def generate_expedition_report(
                 if is_hi:
                     qty_hi_rows.append(tr)
 
-                if i == 0:
-                    rows.append([
-                        Paragraph(sname, s_sell),
-                        Paragraph(nf,    s_bold),
-                        Paragraph(cust,  s_cell),
-                        sku_p, prod_p, carr_p, qty_p,
-                    ])
-                    if n_items > 1:
-                        spans.append(("SPAN",   (0, tr), (0, tr + n_items - 1)))
-                        spans.append(("SPAN",   (1, tr), (1, tr + n_items - 1)))
-                        spans.append(("SPAN",   (2, tr), (2, tr + n_items - 1)))
-                        spans.append(("SPAN",   (5, tr), (5, tr + n_items - 1)))
-                        spans.append(("VALIGN", (0, tr), (2, tr + n_items - 1), "MIDDLE"))
-                        spans.append(("VALIGN", (5, tr), (5, tr + n_items - 1), "MIDDLE"))
-                else:
-                    rows.append([
-                        Paragraph("", s_cell),
-                        Paragraph("", s_cell),
-                        Paragraph("", s_cell),
-                        sku_p, prod_p,
-                        Paragraph("", s_cell),
-                        qty_p,
-                    ])
+                rows.append([
+                    Paragraph(sname, s_sell if i == 0 else s_cell),
+                    Paragraph(nf,    s_bold if i == 0 else s_cell),
+                    Paragraph(cust,  s_cell),
+                    sku_p, prod_p, carr_p, qty_p,
+                ])
                 row_idx += 1
 
         total_row_idx = row_idx + 1
@@ -493,8 +474,6 @@ def generate_expedition_report(
         ])
         for hi in qty_hi_rows:
             ts.add("BACKGROUND", (6, hi), (6, hi), QTY_HI)
-        for sp in spans:
-            ts.add(*sp)
 
         t = Table(tdata, colWidths=C7, repeatRows=1)
         t.setStyle(ts)

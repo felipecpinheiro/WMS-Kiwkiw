@@ -749,6 +749,14 @@ class PendingStockOrderInfo(BaseModel):
     can_apply: bool = False
 
 
+class MissingSkuLineInfo(BaseModel):
+    """Linha do arquivo com NF/seller identificados mas SKU vazio — bloqueia o import inteiro."""
+    nf_number: str
+    seller_name: str
+    customer_name: Optional[str] = None
+    product_name: Optional[str] = None
+
+
 class MissingProductInfo(BaseModel):
     """SKU sem produto cadastrado que está segurando a baixa de estoque."""
     seller_id: int
@@ -849,4 +857,5 @@ class ImportResult(BaseModel):
     inactive_sellers: List[InactiveSellerInfo] = []
     unmatched_sellers: List[UnmatchedSellerInfo] = []
     missing_carrier_orders: List[MissingCarrierOrderInfo] = []
+    missing_sku_lines: List[MissingSkuLineInfo] = []
     stock: Optional[StockApplyReport] = None

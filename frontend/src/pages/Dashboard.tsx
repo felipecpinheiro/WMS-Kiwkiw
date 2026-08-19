@@ -13,7 +13,7 @@ import {
   Package, CheckCircle, Clock, ScanLine, AlertTriangle,
   ChevronRight, ChevronDown, RefreshCw, Upload, CheckSquare, XSquare, FileText, X, ClipboardPaste, Trash2,
 } from 'lucide-react';
-import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport, PendingStockOrderInfo, MissingProductInfo, SkuResolutionItem } from '../api';
+import { dashboardApi, ordersApi, scanningApi, cadastrosApi, DuplicateOrderInfo, InactiveSellerInfo, UnmatchedSellerInfo, SellerLinkDecision, StockApplyReport, PendingStockOrderInfo, MissingProductInfo, SkuResolutionItem, MissingSkuLineInfo } from '../api';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 import { format } from 'date-fns';
@@ -663,6 +663,12 @@ export default function DashboardPage() {
   const [unmatchedModalOpen, setUnmatchedModalOpen] = useState(false);
   const [unmatchedDecisions, setUnmatchedDecisions] = useState<Record<string, SellerLinkDecision>>({});
 
+  // Alerta quando o arquivo tem linha(s) com SKU vazio (19/08/2026): a
+  // importação inteira é bloqueada, sem SKU não há barcode pra bipar. Fica
+  // na tela até fechar manualmente — não é toast.
+  const [missingSkuLines, setMissingSkuLines] = useState<MissingSkuLineInfo[]>([]);
+  const [missingSkuModalOpen, setMissingSkuModalOpen] = useState(false);
+
   // Modal do resultado de estoque da importação (06/08/2026): SKUs que ficaram
   // negativos, NFs que não baixaram e os produtos que precisam ser cadastrados
   // para destravar. Avisa, nunca trava — decisão do dono do sistema.
@@ -791,8 +797,18 @@ export default function DashboardPage() {
         inactive_sellers: inactives = [],
         unmatched_sellers: unmatched = [],
         missing_carrier_orders: missingCarrierOrders = [],
+        missing_sku_lines: missingSkuLinesRes = [],
         stock = null,
       } = data;
+
+      // Backend achou linha(s) com SKU vazio → bloqueia o arquivo inteiro,
+      // sem opção de "continuar mesmo assim" (não há decisão possível aqui).
+      if (!success && missingSkuLinesRes.length > 0) {
+        setMissingSkuLines(missingSkuLinesRes);
+        setUploadModalOpen(false);
+        setMissingSkuModalOpen(true);
+        return;
+      }
 
       // Backend achou sellers inativos referenciados no arquivo → exibe modal de decisão.
       if (requires_confirmation && inactives.length > 0) {
@@ -2184,6 +2200,56 @@ export default function DashboardPage() {
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Linha(s) com SKU vazio (19/08/2026): bloqueia o arquivo inteiro.
+          Não é toast — fica na tela até fechar manualmente, e não há
+          decisão possível aqui (a planilha de origem precisa ser corrigida
+          e reenviada), só o botão de fechar. */}
+      {missingSkuModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setMissingSkuModalOpen(false)}>
+          <div
+            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-red-900/30">
+                <AlertTriangle size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">
+                  Não subimos o arquivo porque tem {missingSkuLines.length} linha(s) com SKU vazio
+                </h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Nada deste arquivo foi importado. Corrija o SKU dessas linhas na planilha de origem e envie o arquivo novamente.
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+              {missingSkuLines.map((l, idx) => (
+                <div key={idx} className="px-3 py-2.5">
+                  <p className="text-sm text-white/90">
+                    NF {l.nf_number} · {l.seller_name}
+                  </p>
+                  <p className="text-xs text-white/40">
+                    {l.customer_name || 'Cliente não informado'} — {l.product_name || 'produto sem nome'}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setMissingSkuModalOpen(false)}
+                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all"
+                style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
+              >
+                Fechar
               </button>
             </div>
           </div>

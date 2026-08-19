@@ -243,6 +243,13 @@ export interface UnmatchedSellerInfo {
   nf_numbers: string[];
 }
 
+export interface MissingSkuLineInfo {
+  nf_number: string;
+  seller_name: string;
+  customer_name: string | null;
+  product_name: string | null;
+}
+
 export interface MissingCarrierOrderInfo {
   order_id: number;
   session_id: number;
@@ -340,6 +347,7 @@ export interface ImportResult {
   inactive_sellers: InactiveSellerInfo[];
   unmatched_sellers: UnmatchedSellerInfo[];
   missing_carrier_orders: MissingCarrierOrderInfo[];
+  missing_sku_lines: MissingSkuLineInfo[];
   stock: StockApplyReport | null;
 }
 

@@ -415,6 +415,21 @@ def import_orders_from_excel_sync(
                 details=details,
             )
 
+        # Linha(s) com SKU vazio — checar antes do "vazio" genérico abaixo,
+        # senão cai no ramo errado ("Arquivo vazio ou sem dados").
+        if result.missing_sku_lines:
+            lines = result.missing_sku_lines
+            detail_lines = [
+                f"NF {l.nf_number} ({l.seller_name}): {l.product_name or 'produto sem nome'}"
+                for l in lines[:8]
+            ]
+            if len(lines) > 8:
+                detail_lines.append(f"...e mais {len(lines) - 8} linha(s)")
+            raise WatcherImportError(
+                reason=f"{len(lines)} linha(s) com SKU vazio — arquivo não importado",
+                details="\n".join(detail_lines),
+            )
+
         if "vazio" in msg_l or "sem cabeçalho" in msg_l:
             raise WatcherImportError(
                 reason="Arquivo vazio ou sem dados",
@@ -587,6 +602,7 @@ def import_excel_orders(
         # Lê os dados em um dict por NF
         orders_dict = {}  # nf_key → {order_data, items: []}
         total_rows = 0
+        missing_sku_rows = []  # linhas com NF/seller identificados mas sem SKU
 
         for row in sheet.iter_rows(min_row=2, values_only=True):
             # Pula linhas vazias
@@ -630,8 +646,22 @@ def import_excel_orders(
             )
 
             # Validações básicas
-            if not nf_number or not sku or not seller_name:
+            if not nf_number or not seller_name:
                 warnings.append(f"Linha ignorada: dados incompletos (NF={nf_number})")
+                continue
+
+            # SKU vazio: diferente do caso acima, aqui a NF e o seller são
+            # conhecidos — só falta o código do produto. Sem SKU não existe
+            # código de barras pra bipar, então a linha nunca pode virar item
+            # de pedido. Não é só um warning: registra pra bloquear o arquivo
+            # inteiro logo abaixo (decisão do dono do sistema, 19/08/2026).
+            if not sku:
+                missing_sku_rows.append({
+                    "nf_number": nf_number,
+                    "seller_name": seller_name,
+                    "customer_name": customer,
+                    "product_name": product_name,
+                })
                 continue
 
             total_rows += 1
@@ -671,6 +701,33 @@ def import_excel_orders(
                     "product_name": product_name or sku,
                     "quantity": quantity,
                 })
+
+        # ── Linha com SKU vazio: bloqueia o arquivo inteiro ──────────────
+        # Sem SKU não há como casar barcode nenhum na bipagem, então a linha
+        # não pode simplesmente ser descartada em silêncio (era o que
+        # acontecia antes: a NF entrava faltando esse item e ninguém
+        # percebia). Aborta antes de qualquer resolução de seller ou
+        # gravação — nada deste arquivo é importado até a planilha de
+        # origem ser corrigida e reenviada.
+        if missing_sku_rows:
+            return schemas.ImportResult(
+                success=False,
+                message=f"Não subimos o arquivo porque tem {len(missing_sku_rows)} linha(s) com SKU vazio",
+                total_rows=total_rows,
+                orders_imported=0,
+                orders_with_kits=0,
+                errors=[],
+                warnings=warnings,
+                missing_sku_lines=[
+                    schemas.MissingSkuLineInfo(
+                        nf_number=r["nf_number"],
+                        seller_name=r["seller_name"],
+                        customer_name=r["customer_name"],
+                        product_name=r["product_name"],
+                    )
+                    for r in missing_sku_rows
+                ],
+            )
 
         # ── RESOLUÇÃO ÚNICA DE SELLER POR PEDIDO ────────────────────
         # Resolve o seller de cada order_key uma única vez (reaproveitado nas

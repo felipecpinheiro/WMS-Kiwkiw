@@ -236,6 +236,7 @@ export default function ScannerPage() {
   // ── Inativar/reativar NF (admin) ────────────────────────────
   const [showInactive, setShowInactive] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<SessionOrder | null>(null);
+  const [auditOrder, setAuditOrder] = useState<SessionOrder | null>(null);
   const [deactivateReason, setDeactivateReason] = useState('');
   const [deactivating, setDeactivating] = useState(false);
   const [reactivatingId, setReactivatingId] = useState<number | null>(null);
@@ -404,6 +405,13 @@ export default function ScannerPage() {
   // (activeOrder null → stale ID, trata como 'nfe' para não travar a tela)
   const scanPhase: 'nfe' | 'product' =
     (activeOrderId === null || !activeOrder || activeOrder.status === 'completed') ? 'nfe' : 'product';
+
+  // Consulta somente leitura (admin) de NF interrompida/concluída — reaproveita
+  // a mesma tela central de bipagem, só sem os controles editáveis. Independente
+  // do fluxo real de bipagem (activeOrderId/scanPhase).
+  const isBipandoView = !!activeOrder && scanPhase === 'product';
+  const isAuditView = !isBipandoView && !!auditOrder;
+  const displayOrder: SessionOrder | null = isBipandoView ? activeOrder : (isAuditView ? auditOrder : null);
 
   // Campo de quantidade só existe na ENTRADA (17/08/2026): uma caixa de entrada
   // pode ter 1.000 peças iguais. Na saída cada bipe é uma conferência de
@@ -964,9 +972,15 @@ export default function ScannerPage() {
               );
             }
 
+            const isAuditable = order.status === 'completed' || order.status === 'interrupted';
+            const adminClick = !isAdmin ? undefined : isAuditable
+              ? () => setAuditOrder(order)
+              : () => handleNfeScan(order.nf_number);
+
             return (
               <div key={order.id}
-                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'}`}>
+                onClick={adminClick}
+                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'} ${isAdmin ? 'cursor-pointer hover:border-violet-500/30' : ''}`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
                   <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>
@@ -1001,14 +1015,16 @@ export default function ScannerPage() {
         <div className="p-3 border-t border-line-soft">
           <button
             onClick={() => {
-              if (activeOrder && scanPhase === 'product') {
+              if (isBipandoView) {
                 setShowExitDialog(true);
+              } else if (isAuditView) {
+                setAuditOrder(null);
               } else {
                 navigate('/manuseios');
               }
             }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-t1 bg-red-600/20 hover:bg-red-600/40 border border-bad/30 hover:border-bad/60 rounded-lg transition">
-            <LogOut size={15} /> Sair da Bipagem
+            <LogOut size={15} /> {isAuditView ? 'Fechar consulta' : 'Sair da Bipagem'}
           </button>
         </div>
       </aside>
@@ -1018,22 +1034,27 @@ export default function ScannerPage() {
 
         {/* Fixed header */}
         <div className="flex-shrink-0 p-5 border-b border-line-soft bg-surface/60 backdrop-blur">
-          {activeOrder && scanPhase === 'product' ? (
+          {displayOrder ? (
             <div>
+              {isAuditView && (
+                <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-warn">
+                  🔒 Consulta somente leitura — {displayOrder.status === 'interrupted' ? 'NF interrompida' : 'NF concluída'}, nada aqui altera o pedido ou o estoque
+                </div>
+              )}
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className="text-[10px] font-mono text-t4">NF {activeOrder.nf_number}</span>
-                    {activeOrder.carrier && (
+                    <span className="text-[10px] font-mono text-t4">NF {displayOrder.nf_number}</span>
+                    {displayOrder.carrier && (
                       <span
                         className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold"
                         style={{ background: 'rgba(61,217,164,0.15)', color: 'rgb(var(--ok))', border: '1px solid rgba(61,217,164,0.30)' }}
                       >
-                        🚚 {activeOrder.carrier}
+                        🚚 {displayOrder.carrier}
                       </span>
                     )}
-                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge) */}
-                    {showBoxBadge && (boxEditing ? (
+                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge). Não existe em modo consulta. */}
+                    {!isAuditView && showBoxBadge && (boxEditing ? (
                       <span className="inline-flex items-center gap-1">
                         <input
                           autoFocus
@@ -1074,16 +1095,16 @@ export default function ScannerPage() {
                       </button>
                     ))}
                   </div>
-                  {activeOrder.seller && (
-                    <p className="text-sm font-semibold mb-0.5" style={{ color: 'rgb(var(--brand))' }}>{activeOrder.seller}</p>
+                  {displayOrder.seller && (
+                    <p className="text-sm font-semibold mb-0.5" style={{ color: 'rgb(var(--brand))' }}>{displayOrder.seller}</p>
                   )}
-                  <h2 className="text-2xl font-black text-t1">{activeOrder.customer_name}</h2>
+                  <h2 className="text-2xl font-black text-t1">{displayOrder.customer_name}</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                  {activeOrder.seller_id && (
+                  {displayOrder.seller_id && (
                     <button
                       onClick={() => window.open(
-                        `${(import.meta as any).env?.VITE_API_URL || 'http://localhost:8000'}/cadastros/sellers/${activeOrder.seller_id}/experience-file`,
+                        `${(import.meta as any).env?.VITE_API_URL || 'http://localhost:8000'}/cadastros/sellers/${displayOrder.seller_id}/experience-file`,
                         '_blank'
                       )}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition"
@@ -1093,23 +1114,30 @@ export default function ScannerPage() {
                       ✨ Experiência
                     </button>
                   )}
-                  <button onClick={() => setShowInterruptDialog(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
-                    <Pause size={12} /> Interromper
-                  </button>
+                  {isAuditView ? (
+                    <button onClick={() => setAuditOrder(null)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-t3 border border-line hover:border-line-soft rounded-lg transition">
+                      <X size={12} /> Fechar consulta
+                    </button>
+                  ) : (
+                    <button onClick={() => setShowInterruptDialog(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
+                      <Pause size={12} /> Interromper
+                    </button>
+                  )}
                 </div>
               </div>
               {/* Progress */}
               <div className="flex justify-between text-xs text-t4 mb-1">
-                <span>{activeOrder.items_scanned} bipados</span>
-                <span>{activeOrder.items_total} total</span>
+                <span>{displayOrder.items_scanned} bipados</span>
+                <span>{displayOrder.items_total} total</span>
               </div>
               <div className="w-full bg-surface-2 rounded-full h-2">
                 {/* Clamp em 100%: na entrada o bipado pode passar do previsto
                     (excedente) e a barra vazaria do container. Os números reais
                     continuam visíveis acima ("1200 bipados / 1000 total"). */}
-                <div className={`h-2 rounded-full transition-all ${activeOrder.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`}
-                  style={{ width: activeOrder.items_total > 0 ? `${Math.min(100, Math.round(activeOrder.items_scanned / activeOrder.items_total * 100))}%` : '0%' }} />
+                <div className={`h-2 rounded-full transition-all ${displayOrder.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`}
+                  style={{ width: displayOrder.items_total > 0 ? `${Math.min(100, Math.round(displayOrder.items_scanned / displayOrder.items_total * 100))}%` : '0%' }} />
               </div>
             </div>
           ) : (
@@ -1127,98 +1155,102 @@ export default function ScannerPage() {
             </div>
           )}
 
-          {/* Feedback panel */}
-          <div className={`flex items-center gap-3 p-3 rounded-xl border mt-3 transition-all min-h-[56px] ${feedbackBg[feedback.state]}`}>
-            {feedbackIcon[feedback.state]}
-            <div className="flex-1 min-w-0">
-              {feedback.state !== 'idle' ? (
-                <>
-                  <p className={`font-bold text-sm ${feedbackTextColor[feedback.state]}`}>{feedback.title}</p>
-                  <p className="text-xs text-t3 mt-0.5">{feedback.message}</p>
-                </>
-              ) : (
-                <p className="text-sm text-t5">
-                  {scanPhase === 'nfe' ? 'Aguardando scan da NFe...' : 'Aguardando scan do produto...'}
-                </p>
-              )}
-            </div>
-            {feedback.photoUrl && (
-              <img src={photoSrc(feedback.photoUrl)!} alt="Produto"
-                className="w-14 h-14 object-cover rounded-lg border border-line flex-shrink-0" />
-            )}
-          </div>
-
-          {/* Barcode input */}
-          <div className="flex gap-2 mt-3">
-            {/* Quantidade — só na ENTRADA. Digita a quantidade da caixa e bipa
-                uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
-            {showQtyField && (
-              <div className="relative w-32 flex-shrink-0">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ok/70 pointer-events-none">
-                  QTD
-                </span>
-                <input
-                  ref={qtyRef}
-                  type="number"
-                  min={1}
-                  max={MAX_SCAN_QTY}
-                  step={1}
-                  value={qtyInput}
-                  onChange={e => setQtyInput(e.target.value)}
-                  onKeyDown={handleQtyKeyDown}
-                  onFocus={e => e.target.select()}
-                  disabled={scanning}
-                  title="Quantidade deste bipe. Enter volta para o código de barras."
-                  className="w-full bg-emerald-500/10 border border-ok/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-t1 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-ok transition disabled:opacity-40"
-                  autoComplete="off"
-                />
+          {/* Feedback panel + input de bipagem — não fazem sentido em modo consulta */}
+          {!isAuditView && (
+            <>
+              <div className={`flex items-center gap-3 p-3 rounded-xl border mt-3 transition-all min-h-[56px] ${feedbackBg[feedback.state]}`}>
+                {feedbackIcon[feedback.state]}
+                <div className="flex-1 min-w-0">
+                  {feedback.state !== 'idle' ? (
+                    <>
+                      <p className={`font-bold text-sm ${feedbackTextColor[feedback.state]}`}>{feedback.title}</p>
+                      <p className="text-xs text-t3 mt-0.5">{feedback.message}</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-t5">
+                      {scanPhase === 'nfe' ? 'Aguardando scan da NFe...' : 'Aguardando scan do produto...'}
+                    </p>
+                  )}
+                </div>
+                {feedback.photoUrl && (
+                  <img src={photoSrc(feedback.photoUrl)!} alt="Produto"
+                    className="w-14 h-14 object-cover rounded-lg border border-line flex-shrink-0" />
+                )}
               </div>
-            )}
-            <div className="flex-1 relative">
-              {scanPhase === 'nfe'
-                ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-warn/60" />
-                : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-ok animate-pulse' : 'text-t4'}`} />
-              }
-              <input
-                ref={inputRef}
-                type="text"
-                value={barcodeInput}
-                onChange={e => setBarcodeInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onBlur={handleScanInputBlur}
-                disabled={scanning}
-                placeholder={
-                  scanPhase === 'nfe'
-                    ? 'Escaneie a chave da NFe (etiqueta física)...'
-                    : activeOrder?.status === 'completed'
-                    ? 'Pedido concluído — escaneie a próxima NFe'
-                    : 'Escaneie o código de barras do produto...'
-                }
-                className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-3 text-base text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
-                autoComplete="off"
-                autoFocus
-              />
-            </div>
-            <button
-              onClick={() => handleScan(barcodeInput)}
-              disabled={scanning || !barcodeInput.trim()}
-              className="px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold rounded-xl transition flex items-center gap-2"
-            >
-              {scanning
-                ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <ScanLine size={16} />}
-              {scanPhase === 'nfe' ? 'Abrir' : 'Bipar'}
-            </button>
-          </div>
+
+              {/* Barcode input */}
+              <div className="flex gap-2 mt-3">
+                {/* Quantidade — só na ENTRADA. Digita a quantidade da caixa e bipa
+                    uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
+                {showQtyField && (
+                  <div className="relative w-32 flex-shrink-0">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ok/70 pointer-events-none">
+                      QTD
+                    </span>
+                    <input
+                      ref={qtyRef}
+                      type="number"
+                      min={1}
+                      max={MAX_SCAN_QTY}
+                      step={1}
+                      value={qtyInput}
+                      onChange={e => setQtyInput(e.target.value)}
+                      onKeyDown={handleQtyKeyDown}
+                      onFocus={e => e.target.select()}
+                      disabled={scanning}
+                      title="Quantidade deste bipe. Enter volta para o código de barras."
+                      className="w-full bg-emerald-500/10 border border-ok/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-t1 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-ok transition disabled:opacity-40"
+                      autoComplete="off"
+                    />
+                  </div>
+                )}
+                <div className="flex-1 relative">
+                  {scanPhase === 'nfe'
+                    ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-warn/60" />
+                    : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-ok animate-pulse' : 'text-t4'}`} />
+                  }
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={barcodeInput}
+                    onChange={e => setBarcodeInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onBlur={handleScanInputBlur}
+                    disabled={scanning}
+                    placeholder={
+                      scanPhase === 'nfe'
+                        ? 'Escaneie a chave da NFe (etiqueta física)...'
+                        : activeOrder?.status === 'completed'
+                        ? 'Pedido concluído — escaneie a próxima NFe'
+                        : 'Escaneie o código de barras do produto...'
+                    }
+                    className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-3 text-base text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </div>
+                <button
+                  onClick={() => handleScan(barcodeInput)}
+                  disabled={scanning || !barcodeInput.trim()}
+                  className="px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold rounded-xl transition flex items-center gap-2"
+                >
+                  {scanning
+                    ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <ScanLine size={16} />}
+                  {scanPhase === 'nfe' ? 'Abrir' : 'Bipar'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Scrollable items area */}
         <div className="flex-1 overflow-y-auto p-5">
-          {activeOrder && scanPhase === 'product' ? (
+          {displayOrder ? (
             <>
               {/* B: ordena — pendentes primeiro (in-progress antes de untouched), concluídos no fim */}
               {(() => {
-                const sorted = [...activeOrder.items].sort((a, b) => {
+                const sorted = [...displayOrder.items].sort((a, b) => {
                   const aDone = a.scanned >= a.quantity;
                   const bDone = b.scanned >= b.quantity;
                   if (aDone !== bDone) return aDone ? 1 : -1;
@@ -1233,7 +1265,7 @@ export default function ScannerPage() {
                 return (
                   <>
                     <h3 className="text-[11px] font-semibold text-t4 uppercase tracking-widest mb-3">
-                      Itens do Pedido ({activeOrder.items.length})
+                      Itens do Pedido ({displayOrder.items.length})
                       {pendingCount > 0 && (
                         <span className="ml-2 text-violet-400">{pendingCount} restante{pendingCount > 1 ? 's' : ''}</span>
                       )}

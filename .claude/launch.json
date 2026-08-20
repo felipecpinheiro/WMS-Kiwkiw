@@ -18,6 +18,12 @@
       "runtimeExecutable": "backend/venv/Scripts/python.exe",
       "runtimeArgs": ["backend/run_local_teste_hoje.py"],
       "port": 8000
+    },
+    {
+      "name": "backend-teste-indices",
+      "runtimeExecutable": "backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["backend/run_local_teste_indices.py"],
+      "port": 8000
     }
   ]
 }

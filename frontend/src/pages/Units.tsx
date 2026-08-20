@@ -10,8 +10,8 @@ import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
 
 const inputCls =
-  'w-full px-3 py-2 border border-white/12 rounded-lg text-sm text-white/80 outline-none focus:ring-2 focus:ring-violet-500 placeholder-white/25';
-const inputStyle = { background: '#14122A', colorScheme: 'dark' as const };
+  'w-full px-3 py-2 border border-line rounded-lg text-sm text-t2 outline-none focus:ring-2 focus:ring-violet-500 placeholder-t5';
+const inputStyle = { background: 'rgb(var(--surface-2))' };
 
 interface UnitForm {
   name: string;
@@ -125,30 +125,30 @@ export default function UnitsPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">Unidades</h1>
-          <p className="text-sm text-white/50 mt-0.5">
+          <h1 className="text-xl font-bold text-t1">Unidades</h1>
+          <p className="text-sm text-t3 mt-0.5">
             Unidades físicas da Kiwkiw — associe sellers para organizar os PDFs automaticamente
           </p>
         </div>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
           <Plus size={14} /> Nova Unidade
         </button>
       </div>
 
       {/* Cards de unidades */}
       {(units as any[]).length === 0 ? (
-        <div className="bg-gray-900 border border-dashed border-white/12 rounded-xl p-12 text-center">
-          <Building2 size={36} className="text-white/20 mx-auto mb-3" />
-          <p className="text-white/40 text-sm">Nenhuma unidade cadastrada</p>
-          <p className="text-white/25 text-xs mt-1">Crie a primeira unidade para organizar os PDFs por local</p>
+        <div className="bg-surface border border-dashed border-line rounded-xl p-12 text-center">
+          <Building2 size={36} className="text-t5 mx-auto mb-3" />
+          <p className="text-t4 text-sm">Nenhuma unidade cadastrada</p>
+          <p className="text-t5 text-xs mt-1">Crie a primeira unidade para organizar os PDFs por local</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {(units as any[]).map((u: any) => {
             const unitSellers = (allSellers as any[]).filter((s: any) => s.unit_id === u.id && s.active !== false);
             return (
-              <div key={u.id} className="bg-gray-900 rounded-2xl border border-white/8 p-5 flex flex-col gap-4">
+              <div key={u.id} className="bg-surface rounded-2xl border border-line-soft p-5 flex flex-col gap-4">
                 {/* Cabeçalho do card */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3">
@@ -156,24 +156,24 @@ export default function UnitsPage() {
                       <Building2 size={18} className="text-violet-400" />
                     </div>
                     <div>
-                      <p className="font-semibold text-white/90">{u.name}</p>
-                      {u.code && <p className="text-xs text-white/40 font-mono">{u.code}</p>}
+                      <p className="font-semibold text-t1">{u.name}</p>
+                      {u.code && <p className="text-xs text-t4 font-mono">{u.code}</p>}
                     </div>
                   </div>
                   <div className="flex gap-1">
                     <button onClick={() => openEdit(u)}
-                      className="p-1.5 text-white/30 hover:text-white/70 hover:bg-white/5 rounded-lg transition">
+                      className="p-1.5 text-t4 hover:text-t2 hover:bg-surface-2 rounded-lg transition">
                       <Pencil size={14} />
                     </button>
                     <button onClick={() => handleDelete(u.id, u.name)}
-                      className="p-1.5 text-white/30 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition">
+                      className="p-1.5 text-t4 hover:text-bad hover:bg-red-500/10 rounded-lg transition">
                       <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
 
                 {/* Infos */}
-                <div className="space-y-1.5 text-xs text-white/50">
+                <div className="space-y-1.5 text-xs text-t3">
                   {(u.city || u.state) && (
                     <div className="flex items-center gap-1.5">
                       <MapPin size={11} className="text-violet-400/60 flex-shrink-0" />
@@ -195,9 +195,9 @@ export default function UnitsPage() {
                 </div>
 
                 {/* Sellers associados */}
-                <div className="border-t border-white/6 pt-3">
+                <div className="border-t border-line-soft pt-3">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest">
+                    <p className="text-[10px] font-semibold text-t4 uppercase tracking-widest">
                       Sellers ({unitSellers.length})
                     </p>
                     <button onClick={() => openSellerAssoc(u)}
@@ -206,7 +206,7 @@ export default function UnitsPage() {
                     </button>
                   </div>
                   {unitSellers.length === 0 ? (
-                    <p className="text-xs text-amber-400/60 italic">Nenhum seller associado — PDFs salvos em SEM_UNIDADE</p>
+                    <p className="text-xs text-warn/60 italic">Nenhum seller associado — PDFs salvos em SEM_UNIDADE</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {unitSellers.map((s: any) => (
@@ -227,10 +227,10 @@ export default function UnitsPage() {
       {/* Modal criar/editar unidade */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-md my-8 p-6">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-md my-8 p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-white">{editId ? 'Editar Unidade' : 'Nova Unidade'}</h3>
-              <button onClick={() => setShowModal(false)} className="text-white/35 hover:text-white/60">
+              <h3 className="font-semibold text-t1">{editId ? 'Editar Unidade' : 'Nova Unidade'}</h3>
+              <button onClick={() => setShowModal(false)} className="text-t4 hover:text-t3">
                 <X size={18} />
               </button>
             </div>
@@ -238,37 +238,37 @@ export default function UnitsPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">Nome *</label>
+                  <label className="block text-xs text-t3 mb-1">Nome *</label>
                   <input value={form.name} onChange={f('name')} placeholder="Ex: Unidade 1 — São Paulo"
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Código</label>
+                  <label className="block text-xs text-t3 mb-1">Código</label>
                   <input value={form.code} onChange={f('code')} placeholder="Ex: UN1"
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">UF</label>
+                  <label className="block text-xs text-t3 mb-1">UF</label>
                   <input value={form.state} onChange={f('state')} placeholder="SP" maxLength={2}
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">Cidade</label>
+                  <label className="block text-xs text-t3 mb-1">Cidade</label>
                   <input value={form.city} onChange={f('city')} placeholder="São Paulo"
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Responsável</label>
+                  <label className="block text-xs text-t3 mb-1">Responsável</label>
                   <input value={form.responsible} onChange={f('responsible')} placeholder="Nome do responsável"
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Telefone</label>
+                  <label className="block text-xs text-t3 mb-1">Telefone</label>
                   <input value={form.phone} onChange={f('phone')} placeholder="(11) 9xxxx-xxxx"
                     className={inputCls} style={inputStyle} />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">Endereço</label>
+                  <label className="block text-xs text-t3 mb-1">Endereço</label>
                   <input value={form.location} onChange={f('location')} placeholder="Rua, número, bairro"
                     className={inputCls} style={inputStyle} />
                 </div>
@@ -276,11 +276,11 @@ export default function UnitsPage() {
             </div>
 
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-white/60 hover:text-white/90">
+              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-t3 hover:text-t1">
                 Cancelar
               </button>
               <button onClick={handleSave}
-                className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+                className="px-5 py-2 text-sm font-semibold text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
                 {editId ? 'Salvar alterações' : 'Criar unidade'}
               </button>
             </div>
@@ -291,14 +291,14 @@ export default function UnitsPage() {
       {/* Modal associação de sellers */}
       {showSellerModal && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-md my-8 p-6">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-md my-8 p-6">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="font-semibold text-white">Sellers — {sellerUnitName}</h3>
-              <button onClick={() => setShowSellerModal(false)} className="text-white/35 hover:text-white/60">
+              <h3 className="font-semibold text-t1">Sellers — {sellerUnitName}</h3>
+              <button onClick={() => setShowSellerModal(false)} className="text-t4 hover:text-t3">
                 <X size={18} />
               </button>
             </div>
-            <p className="text-xs text-white/40 mb-4">
+            <p className="text-xs text-t4 mb-4">
               Selecione os sellers desta unidade. Um seller só pode pertencer a uma unidade — selecionar aqui remove de outra unidade.
             </p>
 
@@ -309,12 +309,12 @@ export default function UnitsPage() {
                 return (
                   <label key={s.id}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition
-                      ${checked ? 'bg-violet-600/15 border border-violet-500/25' : 'hover:bg-white/4 border border-transparent'}`}>
+                      ${checked ? 'bg-violet-600/15 border border-violet-500/25' : 'hover:bg-surface-2 border border-transparent'}`}>
                     <input type="checkbox" checked={checked} onChange={() => toggleSeller(s.id)}
                       className="rounded accent-violet-500" />
-                    <span className="flex-1 text-sm text-white/80">{s.trade_name}</span>
+                    <span className="flex-1 text-sm text-t2">{s.trade_name}</span>
                     {otherUnit && (
-                      <span className="text-[10px] text-amber-400/70 italic">outra unidade</span>
+                      <span className="text-[10px] text-warn/70 italic">outra unidade</span>
                     )}
                     {checked && (
                       <span className="text-[10px] text-violet-400">✓</span>
@@ -325,13 +325,13 @@ export default function UnitsPage() {
             </div>
 
             <div className="flex justify-between items-center mt-5">
-              <span className="text-xs text-white/30">{selectedSellerIds.length} selecionados</span>
+              <span className="text-xs text-t4">{selectedSellerIds.length} selecionados</span>
               <div className="flex gap-3">
-                <button onClick={() => setShowSellerModal(false)} className="px-4 py-2 text-sm text-white/60 hover:text-white/90">
+                <button onClick={() => setShowSellerModal(false)} className="px-4 py-2 text-sm text-t3 hover:text-t1">
                   Cancelar
                 </button>
                 <button onClick={handleSaveSellers}
-                  className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+                  className="px-5 py-2 text-sm font-semibold text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
                   Salvar associação
                 </button>
               </div>

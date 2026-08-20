@@ -11,6 +11,7 @@ import {
   X, BarChart2, Calendar, ClipboardPaste, FileSpreadsheet, Pencil, SlidersHorizontal,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -23,8 +24,8 @@ import { todayBrasiliaStr } from '../timezone';
 
 const LEVEL_CONFIG: Record<string, { label: string; color: string }> = {
   ALTO:  { label: 'Alto',  color: 'bg-violet-900/40 text-violet-300' },
-  MÉDIO: { label: 'Médio', color: 'bg-amber-900/40 text-amber-300 border border-amber-500/20' },
-  BAIXO: { label: 'Baixo', color: 'bg-red-900/40 text-red-300 border border-red-500/20' },
+  MÉDIO: { label: 'Médio', color: 'bg-warn-soft text-warn border border-warn/20' },
+  BAIXO: { label: 'Baixo', color: 'bg-bad-soft text-bad border border-bad/20' },
 };
 
 // Faixa de cor lateral do cartão (mobile) — mesma semântica do pill de Nível
@@ -137,16 +138,16 @@ function ImportHistoryModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div
-        className="w-full max-w-2xl rounded-2xl border border-white/10 shadow-2xl flex flex-col"
-        style={{ background: 'linear-gradient(135deg,#1a1a2e 0%,#16213e 100%)' }}
+        className="w-full max-w-2xl rounded-2xl border border-line shadow-2xl flex flex-col"
+        style={{ background: 'linear-gradient(135deg, rgb(var(--surface)) 0%, rgb(var(--surface-2)) 100%)' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line">
           <div className="flex items-center gap-2">
-            <FileUp size={18} className="text-emerald-400" />
-            <span className="text-white font-semibold text-base">Upload Histórico de Estoque</span>
+            <FileUp size={18} className="text-ok" />
+            <span className="text-t1 font-semibold text-base">Upload Histórico de Estoque</span>
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">✕</button>
+          <button onClick={onClose} className="text-t4 hover:text-t2 transition">✕</button>
         </div>
 
         {/* Body */}
@@ -155,23 +156,23 @@ function ImportHistoryModal({
           {/* PHASE: upload */}
           {(phase === 'upload' || phase === 'analyzing') && (
             <div className="flex flex-col gap-4">
-              <p className="text-white/60 text-sm leading-relaxed">
-                Selecione um arquivo Excel no formato <span className="text-white font-medium">ESTOQUE SELLER</span>.
-                O sistema irá ler a aba <span className="text-white font-medium">DETALHADO</span> e importar todas as
+              <p className="text-t3 text-sm leading-relaxed">
+                Selecione um arquivo Excel no formato <span className="text-t1 font-medium">ESTOQUE SELLER</span>.
+                O sistema irá ler a aba <span className="text-t1 font-medium">DETALHADO</span> e importar todas as
                 movimentações (entradas e saídas) para o estoque do cliente selecionado.
               </p>
 
               <label
                 onClick={() => fileRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-white/20 rounded-xl py-8 cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/5 transition"
+                className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-line-strong rounded-xl py-8 cursor-pointer hover:border-ok/50 hover:bg-emerald-500/5 transition"
               >
-                <FileUp size={32} className="text-white/30" />
+                <FileUp size={32} className="text-t4" />
                 <div className="text-center">
-                  <p className="text-white/70 text-sm font-medium">
+                  <p className="text-t2 text-sm font-medium">
                     {file ? file.name : 'Clique para selecionar o arquivo .xlsx'}
                   </p>
                   {file && (
-                    <p className="text-white/40 text-xs mt-1">
+                    <p className="text-t4 text-xs mt-1">
                       {(file.size / 1024).toFixed(1)} KB
                     </p>
                   )}
@@ -180,8 +181,8 @@ function ImportHistoryModal({
               </label>
 
               {error && (
-                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                  <span className="text-red-400 text-xs leading-relaxed">{error}</span>
+                <div className="flex items-start gap-2 bg-red-500/10 border border-bad/30 rounded-lg p-3">
+                  <span className="text-bad text-xs leading-relaxed">{error}</span>
                 </div>
               )}
             </div>
@@ -192,48 +193,48 @@ function ImportHistoryModal({
             <div className="flex flex-col gap-4">
               {/* Summary banner */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl p-3 text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-2xl font-bold text-white">{analyzeResult.total_rows.toLocaleString()}</p>
-                  <p className="text-white/50 text-xs mt-0.5">Linhas no arquivo</p>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-t1">{analyzeResult.total_rows.toLocaleString()}</p>
+                  <p className="text-t3 text-xs mt-0.5">Linhas no arquivo</p>
                 </div>
-                <div className="rounded-xl p-3 text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-2xl font-bold text-emerald-400">{analyzeResult.already_registered}</p>
-                  <p className="text-white/50 text-xs mt-0.5">SKUs já cadastrados</p>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-ok">{analyzeResult.already_registered}</p>
+                  <p className="text-t3 text-xs mt-0.5">SKUs já cadastrados</p>
                 </div>
-                <div className="rounded-xl p-3 text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-2xl font-bold text-amber-400">{analyzeResult.unknown_skus.length}</p>
-                  <p className="text-white/50 text-xs mt-0.5">SKUs novos</p>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-warn">{analyzeResult.unknown_skus.length}</p>
+                  <p className="text-t3 text-xs mt-0.5">SKUs novos</p>
                 </div>
               </div>
 
               {analyzeResult.unknown_skus.length === 0 ? (
-                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
-                  <span className="text-emerald-400 text-sm">✓ Todos os SKUs já estão cadastrados. Pode importar!</span>
+                <div className="flex items-center gap-2 bg-emerald-500/10 border border-ok/30 rounded-lg p-3">
+                  <span className="text-ok text-sm">✓ Todos os SKUs já estão cadastrados. Pode importar!</span>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
-                  <div className="bg-amber-500/10 border border-amber-500/40 rounded-lg p-3">
-                    <p className="text-amber-300 text-sm font-semibold mb-1">
+                  <div className="bg-amber-500/10 border border-warn/40 rounded-lg p-3">
+                    <p className="text-warn text-sm font-semibold mb-1">
                       ⚠️ Importação bloqueada — {analyzeResult.unknown_skus.length} SKU(s) sem cadastro
                     </p>
-                    <p className="text-white/60 text-xs leading-relaxed">
+                    <p className="text-t3 text-xs leading-relaxed">
                       Esses SKUs aparecem no arquivo mas não existem no cadastro de produtos deste seller.
                       Importar assim criaria estoque de produto que não existe na tela de Produtos.
                       Preencha o nome de cada um abaixo para cadastrá-los junto com a importação.
                     </p>
                   </div>
-                  <p className="text-white/70 text-sm font-medium">
-                    Defina o nome dos <span className="text-amber-400">{analyzeResult.unknown_skus.length} SKUs novos</span>:
+                  <p className="text-t2 text-sm font-medium">
+                    Defina o nome dos <span className="text-warn">{analyzeResult.unknown_skus.length} SKUs novos</span>:
                   </p>
                   <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
                     {analyzeResult.unknown_skus.map((u) => (
-                      <div key={u.sku} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
+                      <div key={u.sku} className="flex items-center gap-3 bg-surface-2 rounded-lg px-3 py-2">
                         <div className="flex flex-col min-w-0 w-24">
-                          <span className="text-white text-xs font-mono font-semibold truncate">{u.sku}</span>
-                          <span className="text-white/30 text-xs">{u.count} mov.</span>
+                          <span className="text-t1 text-xs font-mono font-semibold truncate">{u.sku}</span>
+                          <span className="text-t4 text-xs">{u.count} mov.</span>
                         </div>
                         <input
-                          className="flex-1 bg-white/8 border border-white/15 rounded-lg px-3 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/60"
+                          className="flex-1 bg-surface-2 border border-line-strong rounded-lg px-3 py-1.5 text-xs text-t1 placeholder-t4 focus:outline-none focus:border-ok/60"
                           placeholder={u.suggested_name || 'Nome do produto...'}
                           value={nameMap[u.sku] ?? ''}
                           onChange={(e) => setNameMap((m) => ({ ...m, [u.sku]: e.target.value }))}
@@ -246,8 +247,8 @@ function ImportHistoryModal({
               )}
 
               {error && (
-                <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-                  <span className="text-red-400 text-xs leading-relaxed whitespace-pre-wrap">{error}</span>
+                <div className="flex items-start gap-2 bg-red-500/10 border border-bad/30 rounded-lg p-3">
+                  <span className="text-bad text-xs leading-relaxed whitespace-pre-wrap">{error}</span>
                 </div>
               )}
             </div>
@@ -259,22 +260,22 @@ function ImportHistoryModal({
               <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: 'rgba(46,158,107,0.15)' }}>
                 <span className="text-4xl">✓</span>
               </div>
-              <p className="text-white font-semibold text-lg">Importação concluída!</p>
+              <p className="text-t1 font-semibold text-lg">Importação concluída!</p>
               <div className="grid grid-cols-2 gap-3 w-full">
-                <div className="rounded-xl p-4 text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-3xl font-bold text-emerald-400">{result.imported}</p>
-                  <p className="text-white/50 text-xs mt-1">Movimentações importadas</p>
+                <div className="rounded-xl p-4 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-3xl font-bold text-ok">{result.imported}</p>
+                  <p className="text-t3 text-xs mt-1">Movimentações importadas</p>
                 </div>
-                <div className="rounded-xl p-4 text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-3xl font-bold text-blue-400">{result.products_created}</p>
-                  <p className="text-white/50 text-xs mt-1">Produtos criados</p>
+                <div className="rounded-xl p-4 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-3xl font-bold text-info">{result.products_created}</p>
+                  <p className="text-t3 text-xs mt-1">Produtos criados</p>
                 </div>
               </div>
               {result.errors.length > 0 && (
-                <div className="w-full bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                  <p className="text-red-400 text-xs font-semibold mb-1">Avisos ({result.errors.length}):</p>
+                <div className="w-full bg-red-500/10 border border-bad/20 rounded-lg p-3">
+                  <p className="text-bad text-xs font-semibold mb-1">Avisos ({result.errors.length}):</p>
                   {result.errors.map((e, i) => (
-                    <p key={i} className="text-white/50 text-xs">{e}</p>
+                    <p key={i} className="text-t3 text-xs">{e}</p>
                   ))}
                 </div>
               )}
@@ -284,26 +285,26 @@ function ImportHistoryModal({
           {/* Analyzing spinner */}
           {phase === 'analyzing' && (
             <div className="flex items-center justify-center gap-3 py-4">
-              <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-              <span className="text-white/60 text-sm">Analisando arquivo...</span>
+              <div className="w-5 h-5 border-2 border-ok border-t-transparent rounded-full animate-spin" />
+              <span className="text-t3 text-sm">Analisando arquivo...</span>
             </div>
           )}
 
           {/* Importing spinner */}
           {phase === 'importing' && (
             <div className="flex items-center justify-center gap-3 py-4">
-              <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-              <span className="text-white/60 text-sm">Importando movimentações...</span>
+              <div className="w-5 h-5 border-2 border-ok border-t-transparent rounded-full animate-spin" />
+              <span className="text-t3 text-sm">Importando movimentações...</span>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-line">
           {phase === 'done' ? (
             <button
               onClick={onSuccess}
-              className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
+              className="px-5 py-2 rounded-lg text-sm font-semibold text-t1"
               style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
             >
               Concluir
@@ -313,7 +314,7 @@ function ImportHistoryModal({
               <button
                 onClick={onClose}
                 disabled={phase === 'analyzing' || phase === 'importing'}
-                className="px-4 py-2 rounded-lg text-sm text-white/60 hover:text-white/90 transition disabled:opacity-40"
+                className="px-4 py-2 rounded-lg text-sm text-t3 hover:text-t1 transition disabled:opacity-40"
               >
                 Cancelar
               </button>
@@ -322,7 +323,7 @@ function ImportHistoryModal({
                 <button
                   onClick={handleAnalyze}
                   disabled={!file}
-                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white transition disabled:opacity-40"
+                  className="px-5 py-2 rounded-lg text-sm font-semibold text-t1 transition disabled:opacity-40"
                   style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
                 >
                   Analisar Arquivo
@@ -335,14 +336,14 @@ function ImportHistoryModal({
                     <button
                       onClick={() => handleImport(true)}
                       title="Importa ignorando a trava de SKU não cadastrado"
-                      className="px-4 py-2 rounded-lg text-sm font-medium text-amber-300 border border-amber-500/40 hover:bg-amber-500/10 transition"
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-warn border border-warn/40 hover:bg-amber-500/10 transition"
                     >
                       Cadastrar mesmo assim
                     </button>
                   )}
                   <button
                     onClick={() => handleImport(false)}
-                    className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
+                    className="px-5 py-2 rounded-lg text-sm font-semibold text-t1"
                     style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
                   >
                     Importar Histórico
@@ -368,8 +369,8 @@ interface MovementForm {
 }
 
 // Estilo reutilizável para inputs do tema escuro
-const inputCls = "w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white/80 placeholder-white/25";
-const inputStyle: React.CSSProperties = { background: '#14122A', colorScheme: 'dark' };
+const inputCls = "w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t2 placeholder-t5";
+const inputStyle: React.CSSProperties = { background: 'rgb(var(--surface-2))' };
 
 function ManualMovementModal({
   sellerId,
@@ -434,20 +435,20 @@ function ManualMovementModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between p-5 border-b border-white/8">
-          <h2 className="text-base font-semibold text-white">Lançamento Manual de Estoque</h2>
-          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft">
+          <h2 className="text-base font-semibold text-t1">Lançamento Manual de Estoque</h2>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit(onSubmit)} className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-white/50 mb-1">Data *</label>
+              <label className="block text-xs text-t3 mb-1">Data *</label>
               <input type="date" {...register('movement_date', { required: true })}
                 className={inputCls} style={inputStyle} />
             </div>
             <div>
-              <label className="block text-xs text-white/50 mb-1">Tipo *</label>
+              <label className="block text-xs text-t3 mb-1">Tipo *</label>
               <select {...register('movement_type', { required: true })}
                 className={inputCls} style={inputStyle}>
                 <option value="Entrada">Entrada</option>
@@ -456,40 +457,40 @@ function ManualMovementModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">SKU *</label>
+            <label className="block text-xs text-t3 mb-1">SKU *</label>
             <div className="relative">
               <input {...register('sku', { required: true })} placeholder="Ex: SKU-001"
-                className={`${inputCls} ${skuNotFound ? 'border-red-500/60' : skuInfo?.found ? 'border-teal-500/40' : ''}`}
+                className={`${inputCls} ${skuNotFound ? 'border-bad/60' : skuInfo?.found ? 'border-ok/40' : ''}`}
                 style={inputStyle} />
-              {skuLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-white/35 animate-pulse">buscando...</span>}
+              {skuLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-t4 animate-pulse">buscando...</span>}
             </div>
-            {skuInfo?.found && <p className="text-xs mt-1 font-medium" style={{ color: '#3DD9A4' }}>✓ {skuInfo.name}</p>}
-            {skuNotFound && <p className="text-xs mt-1 text-red-400">⚠ SKU não cadastrado — cadastre em Produtos antes de lançar.</p>}
+            {skuInfo?.found && <p className="text-xs mt-1 font-medium" style={{ color: 'rgb(var(--ok))' }}>✓ {skuInfo.name}</p>}
+            {skuNotFound && <p className="text-xs mt-1 text-bad">⚠ SKU não cadastrado — cadastre em Produtos antes de lançar.</p>}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-white/50 mb-1">Quantidade *</label>
+              <label className="block text-xs text-t3 mb-1">Quantidade *</label>
               <input type="number" min="1" {...register('quantity', { required: true, min: 1 })}
                 className={inputCls} style={inputStyle} />
             </div>
             <div>
-              <label className="block text-xs text-white/50 mb-1">NF</label>
+              <label className="block text-xs text-t3 mb-1">NF</label>
               <input {...register('nf_number')} placeholder="Número da NF"
                 className={inputCls} style={inputStyle} />
             </div>
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">Observação</label>
+            <label className="block text-xs text-t3 mb-1">Observação</label>
             <input {...register('observation')} placeholder="Opcional"
               className={inputCls} style={inputStyle} />
           </div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose}
-              className="flex-1 py-2 text-sm border border-white/12 rounded-lg text-white/60 hover:bg-white/4 transition">
+              className="flex-1 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition">
               Cancelar
             </button>
             <button type="submit" disabled={isSubmitting || skuNotFound || skuLoading}
-              className="flex-1 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-500 disabled:opacity-60 transition">
+              className="flex-1 py-2 text-sm bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 disabled:opacity-60 transition">
               {isSubmitting ? 'Salvando...' : 'Confirmar'}
             </button>
           </div>
@@ -566,17 +567,17 @@ function EditMovementModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm">
-        <div className="flex items-center justify-between p-5 border-b border-white/8">
-          <h2 className="text-base font-semibold text-white">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft">
+          <h2 className="text-base font-semibold text-t1">
             {phase === 'password' ? 'Autenticação de Supervisão' : 'Editar Movimentação'}
           </h2>
-          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
         </div>
 
         {phase === 'password' ? (
           <div className="p-5 space-y-4">
-            <p className="text-xs text-white/50">
+            <p className="text-xs text-t3">
               Informe a senha de supervisão para editar esta movimentação.
               A senha é verificada imediatamente — acesso negado se incorreta.
             </p>
@@ -592,11 +593,11 @@ function EditMovementModal({
             />
             <div className="flex gap-3">
               <button onClick={onClose} disabled={verifying}
-                className="flex-1 py-2 text-sm border border-white/12 rounded-lg text-white/60 hover:bg-white/4 transition disabled:opacity-40">
+                className="flex-1 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition disabled:opacity-40">
                 Cancelar
               </button>
               <button onClick={checkPassword} disabled={verifying || !password.trim()}
-                className="flex-1 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition disabled:opacity-60 flex items-center justify-center gap-2">
+                className="flex-1 py-2 text-sm bg-amber-600 text-t1 rounded-lg hover:bg-amber-500 transition disabled:opacity-60 flex items-center justify-center gap-2">
                 {verifying
                   ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Verificando...</>
                   : 'Confirmar'}
@@ -607,13 +608,13 @@ function EditMovementModal({
           <div className="p-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-white/50 mb-1">Data</label>
+                <label className="block text-xs text-t3 mb-1">Data</label>
                 <input type="date" value={form.movement_date}
                   onChange={e => setForm(f => ({ ...f, movement_date: e.target.value }))}
                   className={inputCls} style={inputStyle} />
               </div>
               <div>
-                <label className="block text-xs text-white/50 mb-1">Tipo</label>
+                <label className="block text-xs text-t3 mb-1">Tipo</label>
                 <select value={form.movement_type}
                   onChange={e => setForm(f => ({ ...f, movement_type: e.target.value }))}
                   className={inputCls} style={inputStyle}>
@@ -623,27 +624,27 @@ function EditMovementModal({
               </div>
             </div>
             <div>
-              <label className="block text-xs text-white/50 mb-1">Quantidade</label>
+              <label className="block text-xs text-t3 mb-1">Quantidade</label>
               <input type="number" min="1" value={form.quantity}
                 onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
                 className={inputCls} style={inputStyle} />
             </div>
             <div>
-              <label className="block text-xs text-white/50 mb-1">NF</label>
+              <label className="block text-xs text-t3 mb-1">NF</label>
               <input value={form.nf_number}
                 onChange={e => setForm(f => ({ ...f, nf_number: e.target.value }))}
                 className={inputCls} style={inputStyle} />
             </div>
             <div>
-              <label className="block text-xs text-white/50 mb-1">Observação</label>
+              <label className="block text-xs text-t3 mb-1">Observação</label>
               <input value={form.observation}
                 onChange={e => setForm(f => ({ ...f, observation: e.target.value }))}
                 className={inputCls} style={inputStyle} />
             </div>
             <div className="flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2 text-sm border border-white/12 rounded-lg text-white/60 hover:bg-white/4 transition">Cancelar</button>
+              <button onClick={onClose} className="flex-1 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition">Cancelar</button>
               <button onClick={handleSave} disabled={saving}
-                className="flex-1 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-500 disabled:opacity-60 transition">
+                className="flex-1 py-2 text-sm bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 disabled:opacity-60 transition">
                 {saving ? 'Salvando...' : 'Salvar'}
               </button>
             </div>
@@ -665,6 +666,7 @@ function SkuDetailModal({
   onClose: () => void;
 }) {
   const [days, setDays] = useState(90);
+  const chartColors = useChartColors();
 
   const { data, isLoading } = useQuery(
     ['sku-history', sellerId, sku, days],
@@ -674,43 +676,43 @@ function SkuDetailModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-white/8 sticky top-0 bg-gray-900 z-10">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft sticky top-0 bg-surface z-10">
           <div>
-            <h2 className="text-base font-semibold text-white font-mono">{sku}</h2>
-            <p className="text-xs text-white/35 mt-0.5">{data?.product_name}</p>
+            <h2 className="text-base font-semibold text-t1 font-mono">{sku}</h2>
+            <p className="text-xs text-t4 mt-0.5">{data?.product_name}</p>
           </div>
           <div className="flex items-center gap-3">
             <select value={days} onChange={e => setDays(Number(e.target.value))}
-              className="border border-white/12 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500">
+              className="border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500">
               <option value={30}>30 dias</option>
               <option value={60}>60 dias</option>
               <option value={90}>90 dias</option>
               <option value={180}>180 dias</option>
             </select>
-            <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+            <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
           </div>
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center h-48 text-white/35 text-sm">Carregando...</div>
+          <div className="flex items-center justify-center h-48 text-t4 text-sm">Carregando...</div>
         ) : data ? (
           <div className="p-5 space-y-5">
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Saldo Atual', value: data.current_stock, color: 'text-white', unit: '' },
-                { label: 'Média Diária (60d)', value: data.avg_daily_sales_60d, color: 'text-blue-600', unit: '/dia' },
-                { label: 'Total Saídas Período', value: data.total_sales_period, color: 'text-red-500', unit: '' },
+                { label: 'Saldo Atual', value: data.current_stock, color: 'text-t1', unit: '' },
+                { label: 'Média Diária (60d)', value: data.avg_daily_sales_60d, color: 'text-info', unit: '/dia' },
+                { label: 'Total Saídas Período', value: data.total_sales_period, color: 'text-bad', unit: '' },
                 {
                   label: 'Projeção Duração',
                   value: data.days_remaining != null ? data.days_remaining : '∞',
-                  color: data.days_remaining != null && data.days_remaining < 30 ? 'text-red-500' : 'text-violet-400',
+                  color: data.days_remaining != null && data.days_remaining < 30 ? 'text-bad' : 'text-violet-400',
                   unit: data.days_remaining != null ? ' dias' : '',
                 },
               ].map(k => (
-                <div key={k.label} className="bg-white/4 rounded-xl p-3 text-center">
-                  <p className="text-[10px] text-white/35 uppercase tracking-wide mb-1">{k.label}</p>
+                <div key={k.label} className="bg-surface-2 rounded-xl p-3 text-center">
+                  <p className="text-[10px] text-t4 uppercase tracking-wide mb-1">{k.label}</p>
                   <p className={`text-xl font-bold ${k.color}`}>{k.value}{k.unit}</p>
                 </div>
               ))}
@@ -719,35 +721,41 @@ function SkuDetailModal({
             {/* Gráfico de barras: saídas por dia */}
             {data.chart_data && data.chart_data.length > 0 ? (
               <div>
-                <p className="text-xs text-white/50 font-medium mb-3">Saídas e Entradas por Dia</p>
+                <p className="text-xs text-t3 font-medium mb-3">Saídas e Entradas por Dia</p>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={data.chart_data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axisText }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: chartColors.axisText }} />
                     <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
+                      contentStyle={{
+                        fontSize: 12,
+                        borderRadius: 8,
+                        background: chartColors.tooltipBg,
+                        border: `1px solid ${chartColors.tooltipBorder}`,
+                        color: chartColors.tooltipText,
+                      }}
                     />
-                    <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="saidas" name="Saídas" fill="#ef4444" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="entradas" name="Entradas" fill="#7B63E8" radius={[3, 3, 0, 0]} />
+                    <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: chartColors.legendText }} />
+                    <Bar dataKey="saidas" name="Saídas" fill={chartColors.bad} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="entradas" name="Entradas" fill={chartColors.brand} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
-              <p className="text-center text-sm text-white/35 py-8">Sem movimentações no período</p>
+              <p className="text-center text-sm text-t4 py-8">Sem movimentações no período</p>
             )}
 
             {/* Alerta de ruptura */}
             {data.days_remaining != null && data.days_remaining < 15 && (
-              <div className="bg-red-900/25 border border-red-500/20 rounded-xl p-3 text-sm text-red-300">
+              <div className="bg-bad-soft border border-bad/20 rounded-xl p-3 text-sm text-bad">
                 ⚠️ Atenção: com a média atual, o estoque se esgota em <strong>{data.days_remaining} dias</strong>.
                 Considere reabastecer.
               </div>
             )}
           </div>
         ) : (
-          <p className="text-center text-sm text-white/35 py-10">Nenhum dado encontrado para este SKU.</p>
+          <p className="text-center text-sm text-t4 py-10">Nenhum dado encontrado para este SKU.</p>
         )}
       </div>
     </div>
@@ -948,26 +956,26 @@ function PasteMovementsModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-white">Colar Movimentações em Lote</h2>
-            <p className="text-xs text-white/40 mt-0.5">
+            <h2 className="text-base font-semibold text-t1">Colar Movimentações em Lote</h2>
+            <p className="text-xs text-t4 mt-0.5">
               Cole do Excel/Sheets (Ctrl+V na célula) ou importe um CSV.
               Produto é preenchido automaticamente pelo cadastro. SKUs não cadastrados bloqueiam o envio.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={downloadTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 rounded-lg text-white/60 hover:bg-white/5 transition">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 transition">
               <FileSpreadsheet size={13} /> Modelo CSV
             </button>
-            <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 rounded-lg text-white/60 hover:bg-white/5 transition cursor-pointer">
+            <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 transition cursor-pointer">
               <Upload size={13} /> Importar CSV
               <input type="file" accept=".csv" className="sr-only" onChange={handleFileUpload} />
             </label>
-            <button onClick={onClose} className="text-white/35 hover:text-white/60 ml-2"><X size={18} /></button>
+            <button onClick={onClose} className="text-t4 hover:text-t3 ml-2"><X size={18} /></button>
           </div>
         </div>
 
@@ -976,14 +984,14 @@ function PasteMovementsModal({
           <table ref={tableRef} className="w-full text-xs border-collapse">
             <thead>
               <tr>
-                <th className="w-8 px-2 py-1.5 text-white/25 text-right">#</th>
+                <th className="w-8 px-2 py-1.5 text-t5 text-right">#</th>
                 {MOV_HEADERS.map((h, c) => (
-                  <th key={c} className="px-2 py-1.5 text-left text-white/50 font-semibold border-b border-white/8 whitespace-nowrap">
+                  <th key={c} className="px-2 py-1.5 text-left text-t3 font-semibold border-b border-line-soft whitespace-nowrap">
                     {h}
                   </th>
                 ))}
                 {/* Coluna de status do SKU (quando validado) */}
-                {skuStatus && <th className="px-2 py-1.5 text-left text-white/50 font-semibold border-b border-white/8 whitespace-nowrap">SKU OK?</th>}
+                {skuStatus && <th className="px-2 py-1.5 text-left text-t3 font-semibold border-b border-line-soft whitespace-nowrap">SKU OK?</th>}
               </tr>
             </thead>
             <tbody>
@@ -992,8 +1000,8 @@ function PasteMovementsModal({
                 const skuOk = skuStatus ? skuStatus.get(sku) : undefined;
                 const hasData = sku !== '';
                 return (
-                  <tr key={r} className={`${hasData ? 'bg-white/3' : ''} ${skuStatus && sku && skuOk === false ? 'bg-red-900/20' : ''}`}>
-                    <td className="px-2 py-1 text-white/20 text-right text-[10px]">{r + 1}</td>
+                  <tr key={r} className={`${hasData ? 'bg-surface-2' : ''} ${skuStatus && sku && skuOk === false ? 'bg-bad-soft' : ''}`}>
+                    <td className="px-2 py-1 text-t5 text-right text-[10px]">{r + 1}</td>
                     {row.map((val, c) => (
                       <td key={c} className="p-0">
                         {/* Todos os campos são inputs de texto simples — sem combobox, sem calendário */}
@@ -1002,10 +1010,10 @@ function PasteMovementsModal({
                           onChange={e => setCell(r, c, e.target.value)}
                           onPaste={e => handlePaste(e, r, c)}
                           type="text"
-                          className={`w-full px-2 py-1 border-0 border-b focus:border-violet-500 outline-none text-xs text-white/80 transition
+                          className={`w-full px-2 py-1 border-0 border-b focus:border-violet-500 outline-none text-xs text-t2 transition
                             ${c === COL_SKU && skuStatus && val.trim() && skuStatus.get(val.trim()) === false
-                              ? 'border-red-500/60'
-                              : 'border-white/5'}`}
+                              ? 'border-bad/60'
+                              : 'border-line-soft'}`}
                           style={{ background: 'transparent', minWidth: c === COL_DATE ? 120 : c === COL_SKU ? 90 : c === COL_QTY ? 60 : 80 }}
                           placeholder={
                             c === COL_DATE ? today
@@ -1022,9 +1030,9 @@ function PasteMovementsModal({
                       <td className="px-2 py-1 text-center">
                         {sku ? (
                           skuOk === true
-                            ? <span className="text-emerald-400 text-[10px]">✓</span>
+                            ? <span className="text-ok text-[10px]">✓</span>
                             : skuOk === false
-                            ? <span className="text-red-400 text-[10px] font-semibold">✗ Não cadastrado</span>
+                            ? <span className="text-bad text-[10px] font-semibold">✗ Não cadastrado</span>
                             : null
                         ) : null}
                       </td>
@@ -1037,23 +1045,23 @@ function PasteMovementsModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between p-4 border-t border-white/8 flex-shrink-0">
-          <div className="text-xs text-white/35 space-y-0.5">
+        <div className="flex items-center justify-between p-4 border-t border-line-soft flex-shrink-0">
+          <div className="text-xs text-t4 space-y-0.5">
             <p>{validRows.length} linha(s) válida(s) de {MOV_ROWS}</p>
             {skuStatus && (() => {
               const notFound = [...skuStatus.entries()].filter(([,f]) => !f).length;
               return notFound > 0
-                ? <p className="text-red-400 font-semibold">⚠ {notFound} SKU(s) não cadastrado(s) — corrija antes de salvar</p>
-                : <p className="text-emerald-400">✓ Todos os SKUs válidos</p>;
+                ? <p className="text-bad font-semibold">⚠ {notFound} SKU(s) não cadastrado(s) — corrija antes de salvar</p>
+                : <p className="text-ok">✓ Todos os SKUs válidos</p>;
             })()}
           </div>
           <div className="flex gap-3">
             <button onClick={onClose} disabled={isBusy}
-              className="px-4 py-2 text-sm border border-white/12 rounded-lg text-white/60 hover:bg-white/4 transition disabled:opacity-40">
+              className="px-4 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition disabled:opacity-40">
               Cancelar
             </button>
             <button onClick={handleSave} disabled={isBusy || validRows.length === 0}
-              className="px-4 py-2 text-sm font-semibold text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-semibold text-t1 rounded-lg transition disabled:opacity-50 flex items-center gap-2"
               style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}>
               {validating
                 ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Validando SKUs...</>
@@ -1210,17 +1218,17 @@ function BulkCsvImportModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
 
         {/* ── Header ──────────────────────────────────────────── */}
-        <div className="flex items-center justify-between p-5 border-b border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-white">Importar Movimentações via CSV</h2>
-            <p className="text-xs text-white/40 mt-0.5">
+            <h2 className="text-base font-semibold text-t1">Importar Movimentações via CSV</h2>
+            <p className="text-xs text-t4 mt-0.5">
               Sem limite de linhas · Colunas: Data (DD/MM/AAAA), Tipo, SKU, Quantidade, NF, Observação
             </p>
           </div>
-          <button onClick={onClose} disabled={isBusy} className="text-white/35 hover:text-white/60 disabled:opacity-30 ml-4">
+          <button onClick={onClose} disabled={isBusy} className="text-t4 hover:text-t3 disabled:opacity-30 ml-4">
             <X size={18} />
           </button>
         </div>
@@ -1231,12 +1239,12 @@ function BulkCsvImportModal({
           {/* FASE: upload */}
           {phase === 'upload' && (
             <label
-              className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-white/15 rounded-xl py-16 cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/5 transition"
+              className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-line-strong rounded-xl py-16 cursor-pointer hover:border-ok/50 hover:bg-emerald-500/5 transition"
               onClick={() => fileRef.current?.click()}
             >
-              <Upload size={32} className="text-white/30" />
-              <p className="text-white/60 text-sm font-medium">Clique para selecionar o arquivo CSV</p>
-              <p className="text-white/30 text-xs">Mesmo formato do Modelo CSV do "Colar em Lote"</p>
+              <Upload size={32} className="text-t4" />
+              <p className="text-t3 text-sm font-medium">Clique para selecionar o arquivo CSV</p>
+              <p className="text-t4 text-xs">Mesmo formato do Modelo CSV do "Colar em Lote"</p>
               <input ref={fileRef} type="file" accept=".csv" className="sr-only" onChange={handleFile} />
             </label>
           )}
@@ -1245,29 +1253,29 @@ function BulkCsvImportModal({
           {phase === 'preview' && (
             <>
               <div className="flex items-center justify-between flex-shrink-0">
-                <p className="text-xs text-white/50">
-                  <span className="text-white font-semibold">{rows.length}</span> linhas carregadas ·{' '}
-                  <span className="text-emerald-400 font-semibold">{validRows.length}</span> válidas (SKU + Qtd)
+                <p className="text-xs text-t3">
+                  <span className="text-t1 font-semibold">{rows.length}</span> linhas carregadas ·{' '}
+                  <span className="text-ok font-semibold">{validRows.length}</span> válidas (SKU + Qtd)
                 </p>
-                <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 rounded-lg text-white/60 hover:bg-white/5 transition cursor-pointer">
+                <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 transition cursor-pointer">
                   <Upload size={12} /> Trocar arquivo
                   <input type="file" accept=".csv" className="sr-only" onChange={handleFile} />
                 </label>
               </div>
 
               {/* Tabela de preview (leitura — sem edição inline para suportar n linhas) */}
-              <div className="overflow-auto rounded-xl border border-white/8 flex-1">
+              <div className="overflow-auto rounded-xl border border-line-soft flex-1">
                 <table className="w-full text-xs border-collapse min-w-[700px]">
-                  <thead className="sticky top-0 bg-[#14122A] z-10">
+                  <thead className="sticky top-0 bg-surface z-10">
                     <tr>
-                      <th className="w-8 px-2 py-2 text-white/25 text-right border-b border-white/8">#</th>
+                      <th className="w-8 px-2 py-2 text-t5 text-right border-b border-line-soft">#</th>
                       {MOV_HEADERS.map((h, i) => (
-                        <th key={i} className="px-3 py-2 text-left text-white/50 font-semibold border-b border-white/8 whitespace-nowrap">
+                        <th key={i} className="px-3 py-2 text-left text-t3 font-semibold border-b border-line-soft whitespace-nowrap">
                           {h}
                         </th>
                       ))}
                       {skuStatus && (
-                        <th className="px-3 py-2 text-left text-white/50 font-semibold border-b border-white/8">SKU OK?</th>
+                        <th className="px-3 py-2 text-left text-t3 font-semibold border-b border-line-soft">SKU OK?</th>
                       )}
                     </tr>
                   </thead>
@@ -1279,18 +1287,18 @@ function BulkCsvImportModal({
                       return (
                         <tr
                           key={r}
-                          className={`border-b border-white/4 ${!isValid ? 'opacity-30' : ''} ${skuStatus && sku && skuOk === false ? 'bg-red-900/20' : ''}`}
+                          className={`border-b border-line-soft ${!isValid ? 'opacity-30' : ''} ${skuStatus && sku && skuOk === false ? 'bg-bad-soft' : ''}`}
                         >
-                          <td className="px-2 py-1.5 text-white/20 text-right text-[10px]">{r + 1}</td>
+                          <td className="px-2 py-1.5 text-t5 text-right text-[10px]">{r + 1}</td>
                           {row.map((val, c) => (
-                            <td key={c} className="px-3 py-1.5 text-white/75 whitespace-nowrap max-w-[180px] truncate" title={val}>
-                              {val || <span className="text-white/20">—</span>}
+                            <td key={c} className="px-3 py-1.5 text-t2 whitespace-nowrap max-w-[180px] truncate" title={val}>
+                              {val || <span className="text-t5">—</span>}
                             </td>
                           ))}
                           {skuStatus && sku && (
                             <td className="px-3 py-1.5 text-center">
-                              {skuOk === true  && <span className="text-emerald-400 text-[10px]">✓</span>}
-                              {skuOk === false && <span className="text-red-400 text-[10px] font-semibold">✗</span>}
+                              {skuOk === true  && <span className="text-ok text-[10px]">✓</span>}
+                              {skuOk === false && <span className="text-bad text-[10px] font-semibold">✗</span>}
                             </td>
                           )}
                         </tr>
@@ -1306,17 +1314,17 @@ function BulkCsvImportModal({
           {phase === 'saving' && (
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <div className="w-12 h-12 rounded-full border-4 border-violet-500/30 border-t-violet-500 animate-spin" />
-              <p className="text-white/70 text-sm font-medium">
+              <p className="text-t2 text-sm font-medium">
                 Salvando {progress.done} / {progress.total}…
               </p>
-              <div className="w-64 h-2 rounded-full bg-white/10 overflow-hidden">
+              <div className="w-64 h-2 rounded-full bg-surface-2 overflow-hidden">
                 <div
                   className="h-full bg-violet-500 transition-all duration-300 rounded-full"
                   style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
                 />
               </div>
               {progress.err > 0 && (
-                <p className="text-red-400 text-xs">{progress.err} erro(s) até agora</p>
+                <p className="text-bad text-xs">{progress.err} erro(s) até agora</p>
               )}
             </div>
           )}
@@ -1325,13 +1333,13 @@ function BulkCsvImportModal({
           {phase === 'done' && (
             <div className="flex flex-col items-center justify-center gap-3 py-16">
               <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                <span className="text-emerald-400 text-2xl">✓</span>
+                <span className="text-ok text-2xl">✓</span>
               </div>
-              <p className="text-white font-semibold">{progress.ok} movimentações importadas</p>
-              {progress.err > 0 && <p className="text-red-400 text-xs">{progress.err} linha(s) com erro</p>}
+              <p className="text-t1 font-semibold">{progress.ok} movimentações importadas</p>
+              {progress.err > 0 && <p className="text-bad text-xs">{progress.err} linha(s) com erro</p>}
               <button
                 onClick={onClose}
-                className="mt-2 px-4 py-2 text-sm rounded-lg text-white"
+                className="mt-2 px-4 py-2 text-sm rounded-lg text-t1"
                 style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
               >
                 Fechar
@@ -1341,30 +1349,30 @@ function BulkCsvImportModal({
 
           {/* Mensagem de erro */}
           {errorMsg && phase !== 'saving' && phase !== 'done' && (
-            <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-3">
-              <p className="text-red-300 text-xs leading-relaxed">{errorMsg}</p>
+            <div className="bg-bad-soft border border-bad/30 rounded-xl px-4 py-3">
+              <p className="text-bad text-xs leading-relaxed">{errorMsg}</p>
             </div>
           )}
         </div>
 
         {/* ── Footer ──────────────────────────────────────────── */}
         {(phase === 'preview' || phase === 'validating') && (
-          <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
-            <p className="text-xs text-white/35">
+          <div className="flex items-center justify-between px-5 py-4 border-t border-line-soft flex-shrink-0">
+            <p className="text-xs text-t4">
               {validRows.length} linha(s) serão importadas
             </p>
             <div className="flex gap-2">
               <button
                 onClick={onClose}
                 disabled={isBusy}
-                className="px-4 py-2 text-xs border border-white/10 rounded-lg text-white/60 hover:bg-white/5 disabled:opacity-40 transition"
+                className="px-4 py-2 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 disabled:opacity-40 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={validateSkus}
                 disabled={isBusy || validRows.length === 0}
-                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-40 transition"
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold rounded-lg text-t1 disabled:opacity-40 transition"
                 style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
               >
                 {phase === 'validating' ? (
@@ -1437,17 +1445,17 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-xl flex flex-col" style={{ maxHeight: '90vh' }}>
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-xl flex flex-col" style={{ maxHeight: '90vh' }}>
 
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-white text-sm">Upload Estoque — Multi-Seller</h3>
-            <p className="text-[11px] text-white/40 mt-0.5">
+            <h3 className="font-semibold text-t1 text-sm">Upload Estoque — Multi-Seller</h3>
+            <p className="text-[11px] text-t4 mt-0.5">
               Importação em massa via CSV · All-or-nothing: qualquer erro bloqueia o import
             </p>
           </div>
-          <button onClick={onClose} disabled={isBusy} className="text-white/35 hover:text-white/60 disabled:opacity-30">
+          <button onClick={onClose} disabled={isBusy} className="text-t4 hover:text-t3 disabled:opacity-30">
             <X size={18} />
           </button>
         </div>
@@ -1455,16 +1463,16 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
         <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
 
           {/* Formato do CSV */}
-          <div className="p-3 rounded-xl border border-white/8" style={{ background: 'rgba(255,255,255,0.03)' }}>
+          <div className="p-3 rounded-xl border border-line-soft" style={{ background: 'rgb(var(--surface-2))' }}>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-white/70">Formato do CSV</p>
-                <p className="text-[11px] text-white/35 mt-0.5 font-mono">
+                <p className="text-xs font-medium text-t2">Formato do CSV</p>
+                <p className="text-[11px] text-t4 mt-0.5 font-mono">
                   seller · data (dd/mm/aaaa) · tipo (Entrada/Saída) · sku · quantity · nf · observ
                 </p>
               </div>
               <button onClick={downloadTemplate}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-teal-300 border border-teal-500/30 hover:bg-teal-500/10 transition flex-shrink-0 ml-3">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-ok border border-ok/30 hover:bg-teal-500/10 transition flex-shrink-0 ml-3">
                 <Download size={12} /> Baixar template
               </button>
             </div>
@@ -1474,20 +1482,20 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
           {(phase === 'idle' || phase === 'errors') && (
             <div
               className="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition"
-              style={{ borderColor: file ? 'rgba(123,99,232,0.5)' : 'rgba(255,255,255,0.10)' }}
+              style={{ borderColor: file ? 'rgba(123,99,232,0.5)' : 'rgb(var(--line))' }}
               onClick={() => fileRef.current?.click()}
             >
               {file ? (
                 <div>
                   <p className="text-sm text-violet-300 font-medium">{file.name}</p>
-                  <p className="text-[11px] text-white/40 mt-1">
+                  <p className="text-[11px] text-t4 mt-1">
                     {(file.size / 1024).toFixed(1)} KB · clique para trocar
                   </p>
                 </div>
               ) : (
                 <div>
-                  <FileUp size={28} className="text-white/20 mx-auto mb-2" />
-                  <p className="text-xs text-white/40">Clique para selecionar o arquivo CSV</p>
+                  <FileUp size={28} className="text-t5 mx-auto mb-2" />
+                  <p className="text-xs text-t4">Clique para selecionar o arquivo CSV</p>
                 </div>
               )}
               <input ref={fileRef} type="file" accept=".csv" className="sr-only"
@@ -1497,14 +1505,14 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
 
           {/* Progresso de envio */}
           {(phase === 'uploading' || phase === 'processing') && (
-            <div className="rounded-xl border border-white/8 p-5" style={{ background: 'rgba(123,99,232,0.06)' }}>
+            <div className="rounded-xl border border-line-soft p-5" style={{ background: 'rgba(123,99,232,0.06)' }}>
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-white">
+                  <p className="text-sm font-semibold text-t1">
                     {phase === 'uploading' ? 'Enviando arquivo…' : 'Processando no servidor…'}
                   </p>
-                  <p className="text-[11px] text-white/40 mt-0.5">
+                  <p className="text-[11px] text-t4 mt-0.5">
                     {phase === 'uploading'
                       ? 'Aguarde o envio completo antes de fechar'
                       : 'Validando linhas e atualizando posições de estoque'}
@@ -1513,7 +1521,7 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
               </div>
 
               {/* Barra de progresso do upload */}
-              <div className="w-full bg-white/8 rounded-full h-2 overflow-hidden">
+              <div className="w-full bg-surface-2 rounded-full h-2 overflow-hidden">
                 {phase === 'uploading' ? (
                   <div
                     className="h-2 rounded-full transition-all duration-300"
@@ -1531,19 +1539,19 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
                 )}
               </div>
               {phase === 'uploading' && (
-                <p className="text-[10px] text-white/30 mt-1.5 text-right font-mono">{uploadPct}%</p>
+                <p className="text-[10px] text-t4 mt-1.5 text-right font-mono">{uploadPct}%</p>
               )}
             </div>
           )}
 
           {/* ── ERROS ── */}
           {phase === 'errors' && result && (
-            <div className="rounded-xl border border-red-500/30 overflow-hidden" style={{ background: 'rgba(239,68,68,0.06)' }}>
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-red-500/20">
-                <span className="text-red-400 font-bold text-lg">✕</span>
+            <div className="rounded-xl border border-bad/30 overflow-hidden" style={{ background: 'rgba(239,68,68,0.06)' }}>
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-bad/20">
+                <span className="text-bad font-bold text-lg">✕</span>
                 <div>
-                  <p className="text-sm font-semibold text-red-300">Importação bloqueada — nenhum dado foi salvo</p>
-                  <p className="text-[11px] text-red-400/70 mt-0.5">
+                  <p className="text-sm font-semibold text-bad">Importação bloqueada — nenhum dado foi salvo</p>
+                  <p className="text-[11px] text-bad/70 mt-0.5">
                     {result.errors?.length ?? 0} erro(s) encontrado(s) em {result.total_rows?.toLocaleString()} linhas
                     · Corrija o CSV e faça upload novamente
                   </p>
@@ -1552,7 +1560,7 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
               {/* Lista de erros — scroll */}
               <div className="overflow-y-auto p-3 space-y-0.5" style={{ maxHeight: '220px' }}>
                 {(result.errors ?? []).map((e: string, i: number) => (
-                  <p key={i} className="text-[11px] text-red-300/80 font-mono py-0.5 border-b border-red-500/10 last:border-0">
+                  <p key={i} className="text-[11px] text-bad/80 font-mono py-0.5 border-b border-bad/10 last:border-0">
                     {e}
                   </p>
                 ))}
@@ -1562,18 +1570,18 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
 
           {/* ── SUCESSO ── */}
           {phase === 'success' && result && (
-            <div className="rounded-xl border border-teal-500/30 p-4" style={{ background: 'rgba(61,217,164,0.07)' }}>
+            <div className="rounded-xl border border-ok/30 p-4" style={{ background: 'rgba(61,217,164,0.07)' }}>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-teal-400 font-bold text-xl">✓</span>
-                <p className="text-sm font-semibold text-teal-300">Importação concluída com sucesso</p>
+                <span className="text-ok font-bold text-xl">✓</span>
+                <p className="text-sm font-semibold text-ok">Importação concluída com sucesso</p>
               </div>
               <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                <span className="text-white/50">Linhas no arquivo:</span>
-                <span className="text-white/80 font-mono">{result.total_rows?.toLocaleString()}</span>
-                <span className="text-white/50">Movimentos criados:</span>
-                <span className="text-teal-300 font-mono font-bold">{result.created?.toLocaleString()}</span>
-                <span className="text-white/50">Duração:</span>
-                <span className="text-white/80 font-mono">{result.duration_sec}s</span>
+                <span className="text-t3">Linhas no arquivo:</span>
+                <span className="text-t2 font-mono">{result.total_rows?.toLocaleString()}</span>
+                <span className="text-t3">Movimentos criados:</span>
+                <span className="text-ok font-mono font-bold">{result.created?.toLocaleString()}</span>
+                <span className="text-t3">Duração:</span>
+                <span className="text-t2 font-mono">{result.duration_sec}s</span>
               </div>
             </div>
           )}
@@ -1581,18 +1589,18 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 p-4 border-t border-white/8 flex-shrink-0">
+        <div className="flex justify-end gap-2 p-4 border-t border-line-soft flex-shrink-0">
           <button
             onClick={phase === 'success' ? () => { onSuccess(); onClose(); } : onClose}
             disabled={isBusy}
-            className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition disabled:opacity-40">
+            className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition disabled:opacity-40">
             {phase === 'success' ? 'Fechar' : 'Cancelar'}
           </button>
           {phase !== 'success' && (
             <button
               onClick={handleUpload}
               disabled={!file || isBusy}
-              className="px-4 py-1.5 text-xs font-semibold text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-1.5 text-xs font-semibold text-t1 rounded-lg transition disabled:opacity-50 flex items-center gap-2"
               style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}>
               {isBusy
                 ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Aguarde...</>
@@ -1685,10 +1693,10 @@ export default function InventoryPage() {
 
   // Cor da projeção de duração
   function projectionColor(days: number | null) {
-    if (days == null) return 'text-white/35';
-    if (days < 15) return 'text-red-400 font-semibold';
-    if (days < 30) return 'text-amber-400';
-    return 'text-emerald-400';
+    if (days == null) return 'text-t4';
+    if (days < 15) return 'text-bad font-semibold';
+    if (days < 30) return 'text-warn';
+    return 'text-ok';
   }
 
   // Estima dias restantes com base na média de saídas
@@ -1755,22 +1763,22 @@ export default function InventoryPage() {
   });
 
   return (
-    <div className="min-h-full text-white">
+    <div className="min-h-full text-t1">
       {/* Cabeçalho */}
       <div
         className="flex items-center justify-between flex-wrap gap-3 px-6 pt-6 pb-4 border-b"
-        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+        style={{ borderColor: 'rgb(var(--line-soft))' }}
       >
         <div className="flex items-center gap-3">
           <div
             className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
             style={{ background: 'rgba(123,99,232,0.15)', border: '1px solid rgba(123,99,232,0.20)' }}
           >
-            <Package size={18} style={{ color: '#9B87F0' }} />
+            <Package size={18} style={{ color: 'rgb(var(--brand))' }} />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-white leading-tight">Estoque</h1>
-            <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.40)' }}>
+            <h1 className="text-lg font-bold text-t1 leading-tight">Estoque</h1>
+            <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--t4))' }}>
               Posição e movimentações por seller
             </p>
           </div>
@@ -1780,8 +1788,8 @@ export default function InventoryPage() {
           <select
             value={sellerId ?? ''}
             onChange={e => setSellerId(Number(e.target.value))}
-            className="border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500"
-            style={{ background: '#14122A' }}
+            className="border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500"
+            style={{ background: 'rgb(var(--surface-2))' }}
           >
             {(sellers as any[]).map((s: any) => (
               <option key={s.id} value={s.id}>{s.name}</option>
@@ -1793,7 +1801,7 @@ export default function InventoryPage() {
             <button
               onClick={() => sellerId && inventoryApi.exportStockCsv(sellerId)}
               disabled={!sellerId}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-white/10 text-white/70 hover:bg-white/5 transition disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
             >
               <Download size={13} />
               Exportar Estoque
@@ -1805,7 +1813,7 @@ export default function InventoryPage() {
             <button
               onClick={() => setShowManual(true)}
               disabled={!sellerId}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-t1 transition disabled:opacity-40"
               style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
             >
               <Upload size={13} />
@@ -1819,7 +1827,7 @@ export default function InventoryPage() {
               onClick={() => setShowHistory(true)}
               disabled={!sellerId}
               title="Importa a planilha ESTOQUE do seller (Excel, aba DETALHADO) com todo o histórico de entradas e saídas"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white transition disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-t1 transition disabled:opacity-40"
               style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
             >
               <FileUp size={13} />
@@ -1836,7 +1844,7 @@ export default function InventoryPage() {
             key={key}
             onClick={() => setTab(key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-              tab === key ? 'text-white' : 'text-white/40 hover:text-white/70'
+              tab === key ? 'text-t1' : 'text-t4 hover:text-t2'
             }`}
             style={tab === key ? { background: 'rgba(123,99,232,0.20)', border: '1px solid rgba(123,99,232,0.30)' } : {}}
           >
@@ -1852,19 +1860,19 @@ export default function InventoryPage() {
             {/* Barra de busca */}
             <div className={`flex items-center gap-2 mb-4 ${isMobile ? '' : 'max-w-xs'}`}>
               <div className="relative flex-1 min-w-0">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-t4" />
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Buscar SKU ou produto..."
-                  className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-white/10 text-white placeholder-white/25 outline-none focus:ring-2 focus:ring-violet-500/50"
-                  style={{ background: '#14122A' }}
+                  className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-line text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500/50"
+                  style={{ background: 'rgb(var(--surface-2))' }}
                 />
               </div>
               {isMobile && (
                 <button
                   onClick={() => setSortSheetOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-t3 bg-surface-2 border border-line rounded-lg flex-shrink-0"
                 >
                   <SlidersHorizontal size={13} />
                   Ordenar
@@ -1877,18 +1885,18 @@ export default function InventoryPage() {
               const unregistered = (stock as any[]).filter((s: any) => s.product_registered === false);
               if (unregistered.length === 0) return null;
               return (
-                <div className="mb-4 flex items-start gap-3 p-3 rounded-xl border border-red-500/30 text-xs"
+                <div className="mb-4 flex items-start gap-3 p-3 rounded-xl border border-bad/30 text-xs"
                   style={{ background: 'rgba(239,68,68,0.07)' }}>
-                  <span className="text-red-400 font-bold text-base leading-none mt-0.5">⚠</span>
+                  <span className="text-bad font-bold text-base leading-none mt-0.5">⚠</span>
                   <div>
-                    <p className="font-semibold text-red-300">
+                    <p className="font-semibold text-bad">
                       {unregistered.length} SKU{unregistered.length > 1 ? 's' : ''} sem cadastro em Produtos
                     </p>
-                    <p className="text-red-400/70 mt-0.5">
+                    <p className="text-bad/70 mt-0.5">
                       Estes SKUs têm movimentações mas não estão registrados no catálogo.
                       Cadastre-os em <strong>Produtos</strong> para exibir o nome correto e habilitar todos os recursos.
                     </p>
-                    <p className="text-red-400/50 mt-1 font-mono">
+                    <p className="text-bad/50 mt-1 font-mono">
                       {unregistered.slice(0, 10).map((s: any) => s.sku).join(', ')}
                       {unregistered.length > 10 ? ` +${unregistered.length - 10} mais` : ''}
                     </p>
@@ -1911,25 +1919,25 @@ export default function InventoryPage() {
                     <div
                       key={item.sku}
                       onClick={() => setDetailSku(item.sku)}
-                      className="flex gap-2.5 p-3 rounded-xl border border-white/8 bg-white/[0.03] active:bg-white/5 cursor-pointer"
+                      className="flex gap-2.5 p-3 rounded-xl border border-line-soft bg-white/[0.03] active:bg-surface-2 cursor-pointer"
                     >
                       <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: STRIPE_COLOR[level] || STRIPE_COLOR.ALTO }} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline justify-between gap-2">
                           {item.product_registered === false ? (
-                            <span className="text-sm font-semibold text-red-400 truncate">{item.product_name || item.sku}</span>
+                            <span className="text-sm font-semibold text-bad truncate">{item.product_name || item.sku}</span>
                           ) : (
-                            <span className="text-sm font-semibold text-white truncate">{item.product_name}</span>
+                            <span className="text-sm font-semibold text-t1 truncate">{item.product_name}</span>
                           )}
-                          <span className="text-base font-bold text-white flex-shrink-0 tabular-nums">{item.current_stock}</span>
+                          <span className="text-base font-bold text-t1 flex-shrink-0 tabular-nums">{item.current_stock}</span>
                         </div>
-                        <p className="text-[11px] font-mono text-white/30 mt-0.5">{item.sku}</p>
+                        <p className="text-[11px] font-mono text-t4 mt-0.5">{item.sku}</p>
                         <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                          <span className="text-[11px] text-white/40">entrada <b className="text-emerald-400 font-medium">+{item.total_in ?? 0}</b></span>
-                          <span className="text-[11px] text-white/40">saída <b className="text-red-400 font-medium">-{item.total_out ?? 0}</b></span>
+                          <span className="text-[11px] text-t4">entrada <b className="text-ok font-medium">+{item.total_in ?? 0}</b></span>
+                          <span className="text-[11px] text-t4">saída <b className="text-bad font-medium">-{item.total_out ?? 0}</b></span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full ${levelCfg.color}`}>{levelCfg.label}</span>
                           {item.product_registered === false && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">SEM CADASTRO</span>
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-bad border border-bad/30">SEM CADASTRO</span>
                           )}
                         </div>
                         {days != null && (
@@ -1940,22 +1948,22 @@ export default function InventoryPage() {
                   );
                 })}
                 {sortedStock.length === 0 && (
-                  <p className="text-center text-white/30 text-sm py-12">
+                  <p className="text-center text-t4 text-sm py-12">
                     {search ? 'Nenhum produto encontrado para a busca' : 'Nenhum produto no estoque'}
                   </p>
                 )}
               </div>
             ) : (
-              <div className="rounded-xl border border-white/8 overflow-hidden">
+              <div className="rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <tr style={{ background: 'rgb(var(--surface-2))' }}>
                       {['SKU', 'Produto', 'Nível', 'Atual', 'Entrada 30d', 'Saída 30d', 'Projeção'].map(h => {
                         const sortable = ['SKU', 'Produto', 'Atual', 'Projeção'].includes(h);
                         return (
                           <th
                             key={h}
-                            className={`px-4 py-3 text-left text-xs text-white/50 font-semibold select-none ${sortable ? 'cursor-pointer hover:text-white/80 transition' : ''}`}
+                            className={`px-4 py-3 text-left text-xs text-t3 font-semibold select-none ${sortable ? 'cursor-pointer hover:text-t2 transition' : ''}`}
                             onClick={() => {
                               if (!sortable) return;
                               setStockSort(prev => ({
@@ -1982,7 +1990,7 @@ export default function InventoryPage() {
                       return (
                         <tr
                           key={item.sku}
-                          className="border-t border-white/5 hover:bg-violet-900/10 cursor-pointer transition group"
+                          className="border-t border-line-soft hover:bg-violet-900/10 cursor-pointer transition group"
                           onClick={() => setDetailSku(item.sku)}
                           title="Clique para ver histórico do SKU"
                         >
@@ -1990,13 +1998,13 @@ export default function InventoryPage() {
                           <td className="px-4 py-3 text-xs max-w-[180px]">
                             {item.product_registered === false ? (
                               <span className="flex items-center gap-1.5" title="SKU não encontrado no cadastro de Produtos">
-                                <span className="text-red-400 font-semibold truncate">{item.product_name || item.sku}</span>
-                                <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 whitespace-nowrap">
+                                <span className="text-bad font-semibold truncate">{item.product_name || item.sku}</span>
+                                <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-bad border border-bad/30 whitespace-nowrap">
                                   SEM CADASTRO
                                 </span>
                               </span>
                             ) : (
-                              <span className="text-white/70 truncate block" title={item.product_name}>{item.product_name}</span>
+                              <span className="text-t2 truncate block" title={item.product_name}>{item.product_name}</span>
                             )}
                           </td>
                           <td className="px-4 py-3">
@@ -2004,21 +2012,21 @@ export default function InventoryPage() {
                               {levelCfg.label}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-xs font-semibold text-white">{item.current_stock}</td>
-                          <td className="px-4 py-3 text-xs text-emerald-400">{item.total_in ?? 0}</td>
-                          <td className="px-4 py-3 text-xs text-red-400">{item.total_out ?? 0}</td>
+                          <td className="px-4 py-3 text-xs font-semibold text-t1">{item.current_stock}</td>
+                          <td className="px-4 py-3 text-xs text-ok">{item.total_in ?? 0}</td>
+                          <td className="px-4 py-3 text-xs text-bad">{item.total_out ?? 0}</td>
                           <td className={`px-4 py-3 text-xs ${projectionColor(days)}`}>
                             {days != null ? `${days}d` : '∞'}
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <BarChart2 size={13} className="inline text-white/25 group-hover:text-violet-400 transition" />
+                            <BarChart2 size={13} className="inline text-t5 group-hover:text-violet-400 transition" />
                           </td>
                         </tr>
                       );
                     })}
                     {sortedStock.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-12 text-center text-white/30 text-sm">
+                        <td colSpan={8} className="px-4 py-12 text-center text-t4 text-sm">
                           {search ? 'Nenhum produto encontrado para a busca' : 'Nenhum produto no estoque'}
                         </td>
                       </tr>
@@ -2037,21 +2045,21 @@ export default function InventoryPage() {
             <div className="flex flex-wrap items-center gap-3 mb-4">
               {/* Date range */}
               <div className="flex items-center gap-1.5">
-                <Calendar size={13} className="text-white/40" />
+                <Calendar size={13} className="text-t4" />
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={e => setDateFrom(e.target.value)}
-                  className="border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-violet-500/40"
-                  style={{ background: '#14122A' }}
+                  className="border border-line rounded-lg px-2 py-1.5 text-xs text-t1 outline-none focus:ring-2 focus:ring-violet-500/40"
+                  style={{ background: 'rgb(var(--surface-2))' }}
                 />
-                <span className="text-white/30 text-xs">—</span>
+                <span className="text-t4 text-xs">—</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={e => setDateTo(e.target.value)}
-                  className="border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-violet-500/40"
-                  style={{ background: '#14122A' }}
+                  className="border border-line rounded-lg px-2 py-1.5 text-xs text-t1 outline-none focus:ring-2 focus:ring-violet-500/40"
+                  style={{ background: 'rgb(var(--surface-2))' }}
                 />
               </div>
 
@@ -2059,8 +2067,8 @@ export default function InventoryPage() {
               <select
                 value={movTypeFilter}
                 onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-                className="border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-violet-500/40"
-                style={{ background: '#14122A' }}
+                className="border border-line rounded-lg px-2 py-1.5 text-xs text-t1 outline-none focus:ring-2 focus:ring-violet-500/40"
+                style={{ background: 'rgb(var(--surface-2))' }}
               >
                 <option value="">Todos os tipos</option>
                 <option value="Entrada">Entrada</option>
@@ -2069,18 +2077,18 @@ export default function InventoryPage() {
 
               {/* Text search */}
               <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                 <input
                   value={movSearch}
                   onChange={e => setMovSearch(e.target.value)}
                   placeholder="Buscar SKU, produto ou NF..."
-                  className="pl-7 pr-3 py-1.5 text-xs rounded-lg border border-white/10 text-white placeholder-white/25 outline-none focus:ring-2 focus:ring-violet-500/40"
-                  style={{ background: '#14122A', minWidth: 200 }}
+                  className="pl-7 pr-3 py-1.5 text-xs rounded-lg border border-line text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500/40"
+                  style={{ background: 'rgb(var(--surface-2))', minWidth: 200 }}
                 />
               </div>
 
               {/* Contagem */}
-              <span className="text-xs text-white/30 ml-auto">
+              <span className="text-xs text-t4 ml-auto">
                 {filteredMovements.length} registros
               </span>
 
@@ -2088,7 +2096,7 @@ export default function InventoryPage() {
                 onClick={() => setShowPasteModal(true)}
                 disabled={!sellerId}
                 title="Cole linhas de movimentação copiadas de uma planilha (data, SKU, tipo, quantidade)"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 text-white/70 hover:bg-white/5 transition disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
               >
                 <ClipboardPaste size={13} />
                 Colar Movimentações
@@ -2100,10 +2108,10 @@ export default function InventoryPage() {
                 <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : (
-              <div className="rounded-xl border border-white/8 overflow-hidden">
+              <div className="rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <tr style={{ background: 'rgb(var(--surface-2))' }}>
                       {([
                         { label: 'Data',       col: 'movement_date' },
                         { label: 'Tipo',       col: 'movement_type' },
@@ -2115,7 +2123,7 @@ export default function InventoryPage() {
                       ] as { label: string; col: string | null }[]).map(({ label, col }) => (
                         <th
                           key={label}
-                          className={`px-4 py-3 text-left text-xs text-white/50 font-semibold select-none ${col ? 'cursor-pointer hover:text-white/80 transition' : ''}`}
+                          className={`px-4 py-3 text-left text-xs text-t3 font-semibold select-none ${col ? 'cursor-pointer hover:text-t2 transition' : ''}`}
                           onClick={() => {
                             if (!col) return;
                             setMovSort(s => s.col === col
@@ -2137,27 +2145,27 @@ export default function InventoryPage() {
                   </thead>
                   <tbody>
                     {filteredMovements.map((mov: any) => (
-                      <tr key={mov.id} className="border-t border-white/5 hover:bg-white/2 transition">
-                        <td className="px-4 py-3 text-xs text-white/60">{mov.movement_date}</td>
+                      <tr key={mov.id} className="border-t border-line-soft hover:bg-surface-2 transition">
+                        <td className="px-4 py-3 text-xs text-t3">{mov.movement_date}</td>
                         <td className="px-4 py-3">
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
                             mov.movement_type === 'Entrada'
-                              ? 'bg-emerald-900/40 text-emerald-300'
-                              : 'bg-red-900/40 text-red-300'
+                              ? 'bg-ok-soft text-ok'
+                              : 'bg-bad-soft text-bad'
                           }`}>
                             {mov.movement_type}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-xs font-mono text-white/80">{mov.sku}</td>
-                        <td className="px-4 py-3 text-xs text-white/70 max-w-[140px] truncate" title={mov.product_name}>{mov.product_name}</td>
-                        <td className="px-4 py-3 text-xs font-semibold text-white">{mov.quantity}</td>
-                        <td className="px-4 py-3 text-xs text-white/50">{mov.nf_number || '—'}</td>
-                        <td className="px-4 py-3 text-xs text-white/40 max-w-[160px] truncate" title={mov.observation}>{mov.observation || '—'}</td>
+                        <td className="px-4 py-3 text-xs font-mono text-t2">{mov.sku}</td>
+                        <td className="px-4 py-3 text-xs text-t2 max-w-[140px] truncate" title={mov.product_name}>{mov.product_name}</td>
+                        <td className="px-4 py-3 text-xs font-semibold text-t1">{mov.quantity}</td>
+                        <td className="px-4 py-3 text-xs text-t3">{mov.nf_number || '—'}</td>
+                        <td className="px-4 py-3 text-xs text-t4 max-w-[160px] truncate" title={mov.observation}>{mov.observation || '—'}</td>
                         <td className="px-4 py-3">
                           {user?.role === 'admin' && (
                             <button
                               onClick={() => setEditMovement(mov)}
-                              className="p-1 rounded hover:bg-white/10 text-white/40 hover:text-violet-300 transition"
+                              className="p-1 rounded hover:bg-surface-2 text-t4 hover:text-violet-300 transition"
                               title="Editar movimentação"
                             >
                               <Pencil size={13} />
@@ -2168,7 +2176,7 @@ export default function InventoryPage() {
                     ))}
                     {filteredMovements.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="px-4 py-12 text-center text-white/30 text-sm">
+                        <td colSpan={9} className="px-4 py-12 text-center text-t4 text-sm">
                           Nenhuma movimentação no período selecionado
                         </td>
                       </tr>
@@ -2243,7 +2251,7 @@ export default function InventoryPage() {
                     setSortSheetOpen(false);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition ${
-                    active ? 'text-white font-medium' : 'text-white/60'
+                    active ? 'text-t1 font-medium' : 'text-t3'
                   }`}
                   style={active ? {
                     background: 'rgba(123,99,232,0.18)',

@@ -36,19 +36,19 @@ export default function BottomSheet({ open, onClose, title, children }: BottomSh
       <div
         className="relative w-full max-h-[85vh] overflow-y-auto rounded-t-2xl border-t border-x"
         style={{
-          background: '#14122A',
-          borderColor: 'rgba(123,99,232,0.20)',
+          background: 'rgb(var(--surface))',
+          borderColor: 'rgb(var(--brand-line))',
           paddingBottom: 'max(env(safe-area-inset-bottom), 16px)',
         }}
       >
         <div className="flex justify-center pt-2.5 pb-1">
-          <div className="w-9 h-1 rounded-full bg-white/20" />
+          <div className="w-9 h-1 rounded-full bg-brand-soft" />
         </div>
 
         {title && (
-          <div className="flex items-center justify-between px-5 pt-1 pb-3 border-b border-white/8">
-            <h2 className="text-sm font-semibold text-white">{title}</h2>
-            <button onClick={onClose} className="text-white/35 hover:text-white/60">
+          <div className="flex items-center justify-between px-5 pt-1 pb-3 border-b border-line-soft">
+            <h2 className="text-sm font-semibold text-t1">{title}</h2>
+            <button onClick={onClose} className="text-t4 hover:text-t3">
               <X size={18} />
             </button>
           </div>

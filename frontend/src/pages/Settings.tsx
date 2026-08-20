@@ -8,8 +8,8 @@ import {
   ToggleLeft, ToggleRight, Save, ShieldCheck, FileText, KeyRound,
 } from 'lucide-react';
 
-const inputCls = "w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white/80 placeholder-white/25";
-const inputStyle = { background: '#14122A', colorScheme: 'dark' as const };
+const inputCls = "w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t2 placeholder-t5";
+const inputStyle = { background: 'rgb(var(--surface-2))' };
 
 function fmtTs(ts: string | null) {
   if (!ts) return '---';
@@ -18,10 +18,10 @@ function fmtTs(ts: string | null) {
 
 function SectionCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="bg-gray-900 rounded-2xl border border-white/8 p-6">
+    <div className="bg-surface rounded-2xl border border-line-soft p-6">
       <div className="flex items-center gap-2 mb-5">
         <span className="text-violet-400">{icon}</span>
-        <h2 className="font-semibold text-white/90 text-sm tracking-wide uppercase">{title}</h2>
+        <h2 className="font-semibold text-t1 text-sm tracking-wide uppercase">{title}</h2>
       </div>
       {children}
     </div>
@@ -30,10 +30,10 @@ function SectionCard({ title, icon, children }: { title: string; icon: React.Rea
 
 function FieldRow({ label, description, children }: { label: React.ReactNode; description?: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[1fr_2fr] gap-6 items-start py-3 border-b border-white/5 last:border-0">
+    <div className="grid grid-cols-[1fr_2fr] gap-6 items-start py-3 border-b border-line-soft last:border-0">
       <div>
-        <p className="text-sm font-medium text-white/80">{label}</p>
-        {description && <p className="text-xs text-white/35 mt-0.5 leading-snug">{description}</p>}
+        <p className="text-sm font-medium text-t2">{label}</p>
+        {description && <p className="text-xs text-t4 mt-0.5 leading-snug">{description}</p>}
       </div>
       <div>{children}</div>
     </div>
@@ -56,7 +56,7 @@ function WatcherPanel() {
     onSuccess: () => { toast.success('Watcher parado'); qc.invalidateQueries('watcher-status'); },
   });
 
-  if (isLoading) return <p className="text-xs text-white/35 animate-pulse">Carregando status...</p>;
+  if (isLoading) return <p className="text-xs text-t4 animate-pulse">Carregando status...</p>;
   if (!status)   return null;
 
   const running = status.running;
@@ -65,8 +65,8 @@ function WatcherPanel() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-          running ? 'bg-teal-900/40 text-teal-300 border border-teal-500/30'
-                  : 'bg-gray-800 text-white/40 border border-white/8'
+          running ? 'bg-ok-soft text-ok border border-ok/30'
+                  : 'bg-surface-2 text-t4 border border-line-soft'
         }`}>
           {running ? <CheckCircle2 size={12} /> : <Square size={12} />}
           {running ? 'Rodando' : 'Parado'}
@@ -76,20 +76,20 @@ function WatcherPanel() {
           <button
             onClick={() => startMut.mutate()}
             disabled={startMut.isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded-lg disabled:opacity-60 transition">
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-t1 rounded-lg disabled:opacity-60 transition">
             <Play size={11} /> Iniciar Watcher
           </button>
         ) : (
           <button
             onClick={() => stopMut.mutate()}
             disabled={stopMut.isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 hover:bg-red-500 text-white rounded-lg disabled:opacity-60 transition">
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 hover:bg-red-500 text-t1 rounded-lg disabled:opacity-60 transition">
             <Square size={11} /> Parar
           </button>
         )}
 
         <button onClick={() => qc.invalidateQueries('watcher-status')}
-          className="text-white/30 hover:text-white/60 transition ml-auto">
+          className="text-t4 hover:text-t3 transition ml-auto">
           <RefreshCw size={13} />
         </button>
       </div>
@@ -100,20 +100,20 @@ function WatcherPanel() {
           { label: 'Intervalo', value: `${status.interval_sec}s` },
           { label: 'Arqs processados', value: String(status.files_processed) },
         ].map(s => (
-          <div key={s.label} className="bg-gray-800/60 rounded-xl p-3 border border-white/6">
-            <p className="text-lg font-bold text-white/90">{s.value}</p>
-            <p className="text-[10px] text-white/35 mt-0.5">{s.label}</p>
+          <div key={s.label} className="bg-surface-2/60 rounded-xl p-3 border border-line-soft">
+            <p className="text-lg font-bold text-t1">{s.value}</p>
+            <p className="text-[10px] text-t4 mt-0.5">{s.label}</p>
           </div>
         ))}
       </div>
 
       {status.last_files.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-2">Ultimos arquivos</p>
-          <div className="bg-gray-950/60 rounded-xl border border-white/6 overflow-hidden">
+          <p className="text-xs font-semibold text-t4 uppercase tracking-widest mb-2">Ultimos arquivos</p>
+          <div className="bg-app/60 rounded-xl border border-line-soft overflow-hidden">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-white/8 text-white/30 uppercase tracking-wide">
+                <tr className="border-b border-line-soft text-t4 uppercase tracking-wide">
                   <th className="text-left py-2 px-3 font-semibold">Arquivo</th>
                   <th className="text-left py-2 px-3 font-semibold">Data/Hora</th>
                   <th className="text-center py-2 px-3 font-semibold">Status</th>
@@ -124,39 +124,39 @@ function WatcherPanel() {
                 {[...status.last_files].reverse().map((f: any, i: number) => (
                   <>
                     <tr key={`row-${i}`} className={`border-b transition ${
-                      f.success ? 'border-white/5 hover:bg-white/2' : 'border-red-900/30 bg-red-950/10'
+                      f.success ? 'border-line-soft hover:bg-surface-2' : 'border-bad/30 bg-bad-soft'
                     }`}>
                       <td className="py-2 px-3 font-mono truncate max-w-[200px]">
-                        <FileSpreadsheet size={11} className={`inline mr-1.5 ${f.success ? 'text-teal-400' : 'text-red-400/70'}`} />
-                        <span className={f.success ? 'text-white/60' : 'text-red-300/80'}>{f.file}</span>
+                        <FileSpreadsheet size={11} className={`inline mr-1.5 ${f.success ? 'text-ok' : 'text-bad/70'}`} />
+                        <span className={f.success ? 'text-t3' : 'text-bad/80'}>{f.file}</span>
                       </td>
-                      <td className="py-2 px-3 text-white/35">{fmtTs(f.timestamp)}</td>
+                      <td className="py-2 px-3 text-t4">{fmtTs(f.timestamp)}</td>
                       <td className="py-2 px-3 text-center">
                         {f.success
-                          ? <CheckCircle2 size={13} className="inline text-teal-400" />
-                          : <XCircle size={13} className="inline text-red-400" />
+                          ? <CheckCircle2 size={13} className="inline text-ok" />
+                          : <XCircle size={13} className="inline text-bad" />
                         }
                       </td>
-                      <td className="py-2 px-3 text-center text-white/60 font-bold" title={f.dest || ''}>
+                      <td className="py-2 px-3 text-center text-t3 font-bold" title={f.dest || ''}>
                         {f.success ? (f.orders || '0') : '---'}
                       </td>
                     </tr>
                     {/* Linha de erro expandida — visível apenas quando falhou */}
                     {!f.success && (
-                      <tr key={`err-${i}`} className="border-b border-red-900/20 bg-red-950/20">
+                      <tr key={`err-${i}`} className="border-b border-bad/20 bg-bad-soft">
                         <td colSpan={4} className="px-4 py-2.5">
                           <div className="flex items-start gap-2 text-xs">
-                            <AlertTriangle size={12} className="flex-shrink-0 mt-0.5 text-red-400" />
+                            <AlertTriangle size={12} className="flex-shrink-0 mt-0.5 text-bad" />
                             <div className="space-y-1 min-w-0">
                               {/* Motivo principal */}
-                              <p className="font-semibold text-red-300">
+                              <p className="font-semibold text-bad">
                                 {f.reason || 'Erro ao processar arquivo'}
                               </p>
                               {/* Detalhes contextuais (sellers, NFs, colunas…) */}
                               {f.details && (
-                                <div className="bg-red-900/20 rounded-lg px-3 py-2 border border-red-500/15">
+                                <div className="bg-bad-soft rounded-lg px-3 py-2 border border-bad/15">
                                   {f.details.split('\n').map((line: string, li: number) => (
-                                    <p key={li} className="text-red-300/80 leading-snug">
+                                    <p key={li} className="text-bad/80 leading-snug">
                                       {line}
                                     </p>
                                   ))}
@@ -164,7 +164,7 @@ function WatcherPanel() {
                               )}
                               {/* Destino do arquivo */}
                               {f.dest && (
-                                <p className="text-white/25 font-mono text-[10px] truncate" title={f.dest}>
+                                <p className="text-t5 font-mono text-[10px] truncate" title={f.dest}>
                                   → {f.dest}
                                 </p>
                               )}
@@ -182,7 +182,7 @@ function WatcherPanel() {
       )}
 
       {status.last_files.length === 0 && (
-        <p className="text-xs text-white/25 text-center py-4">
+        <p className="text-xs text-t5 text-center py-4">
           <Clock size={14} className="inline mr-1.5" />
           Nenhum arquivo processado ainda nesta sessao
         </p>
@@ -259,7 +259,7 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 text-center text-white/30 animate-pulse">
+      <div className="p-8 text-center text-t4 animate-pulse">
         <Settings size={32} className="mx-auto mb-3" />
         <p>Carregando configuracoes...</p>
       </div>
@@ -276,8 +276,8 @@ export default function SettingsPage() {
             <Settings size={18} className="text-violet-400" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-white/90">Configuracoes Gerais</h1>
-            <p className="text-xs text-white/35">Parametros globais do sistema WMS Kiwkiw</p>
+            <h1 className="text-lg font-semibold text-t1">Configuracoes Gerais</h1>
+            <p className="text-xs text-t4">Parametros globais do sistema WMS Kiwkiw</p>
           </div>
         </div>
 
@@ -285,7 +285,7 @@ export default function SettingsPage() {
           <button
             onClick={handleSave}
             disabled={saveMut.isLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded-xl font-medium disabled:opacity-60 transition shadow-lg shadow-violet-900/40">
+            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-t1 text-sm rounded-xl font-medium disabled:opacity-60 transition shadow-lg shadow-violet-900/40">
             <Save size={14} />
             {saveMut.isLoading ? 'Salvando...' : 'Salvar alteracoes'}
           </button>
@@ -301,7 +301,7 @@ export default function SettingsPage() {
             className={inputCls}
             style={inputStyle}
           />
-          <p className="text-[10px] text-white/25 mt-1">Caminho completo da pasta monitorada. Coloque aqui os Excel exportados do ERP.</p>
+          <p className="text-[10px] text-t5 mt-1">Caminho completo da pasta monitorada. Coloque aqui os Excel exportados do ERP.</p>
         </FieldRow>
 
         <FieldRow label="Pasta de Processados" description={desc('processed_folder')}>
@@ -312,7 +312,7 @@ export default function SettingsPage() {
             className={inputCls}
             style={inputStyle}
           />
-          <p className="text-[10px] text-white/25 mt-1">Apos a importacao, o arquivo e movido aqui com prefixo de data e status (ok/erro).</p>
+          <p className="text-[10px] text-t5 mt-1">Apos a importacao, o arquivo e movido aqui com prefixo de data e status (ok/erro).</p>
         </FieldRow>
 
         <FieldRow label="Intervalo de Varredura" description={desc('watcher_interval_sec')}>
@@ -326,7 +326,7 @@ export default function SettingsPage() {
               className={inputCls}
               style={inputStyle}
             />
-            <span className="text-xs text-white/35 whitespace-nowrap">segundos</span>
+            <span className="text-xs text-t4 whitespace-nowrap">segundos</span>
           </div>
         </FieldRow>
 
@@ -334,19 +334,19 @@ export default function SettingsPage() {
           <button
             onClick={() => toggle('watcher_enabled')}
             className={`flex items-center gap-2 text-sm transition ${
-              form['watcher_enabled'] === 'true' ? 'text-teal-300' : 'text-white/40'
+              form['watcher_enabled'] === 'true' ? 'text-ok' : 'text-t4'
             }`}>
             {form['watcher_enabled'] === 'true'
-              ? <ToggleRight size={22} className="text-teal-400" />
-              : <ToggleLeft size={22} className="text-white/25" />}
+              ? <ToggleRight size={22} className="text-ok" />
+              : <ToggleLeft size={22} className="text-t5" />}
             {form['watcher_enabled'] === 'true' ? 'Habilitado' : 'Desabilitado'}
           </button>
         </FieldRow>
 
         {dirty && (
-          <div className="flex items-center gap-2 mt-3 p-2.5 bg-amber-900/20 border border-amber-500/20 rounded-lg">
-            <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
-            <p className="text-xs text-amber-300">Salve antes de iniciar/parar o watcher para aplicar as novas configuracoes de pasta.</p>
+          <div className="flex items-center gap-2 mt-3 p-2.5 bg-warn-soft border border-warn/20 rounded-lg">
+            <AlertTriangle size={13} className="text-warn flex-shrink-0" />
+            <p className="text-xs text-warn">Salve antes de iniciar/parar o watcher para aplicar as novas configuracoes de pasta.</p>
           </div>
         )}
       </SectionCard>
@@ -360,11 +360,11 @@ export default function SettingsPage() {
           <button
             onClick={() => toggle('auto_generate_pdfs')}
             className={`flex items-center gap-2 text-sm transition ${
-              form['auto_generate_pdfs'] === 'true' ? 'text-teal-300' : 'text-white/40'
+              form['auto_generate_pdfs'] === 'true' ? 'text-ok' : 'text-t4'
             }`}>
             {form['auto_generate_pdfs'] === 'true'
-              ? <ToggleRight size={22} className="text-teal-400" />
-              : <ToggleLeft size={22} className="text-white/25" />}
+              ? <ToggleRight size={22} className="text-ok" />
+              : <ToggleLeft size={22} className="text-t5" />}
             {form['auto_generate_pdfs'] === 'true' ? 'Habilitado' : 'Desabilitado'}
           </button>
         </FieldRow>
@@ -373,11 +373,11 @@ export default function SettingsPage() {
           <button
             onClick={() => toggle('require_all_checks')}
             className={`flex items-center gap-2 text-sm transition ${
-              form['require_all_checks'] === 'true' ? 'text-teal-300' : 'text-white/40'
+              form['require_all_checks'] === 'true' ? 'text-ok' : 'text-t4'
             }`}>
             {form['require_all_checks'] === 'true'
-              ? <ToggleRight size={22} className="text-teal-400" />
-              : <ToggleLeft size={22} className="text-white/25" />}
+              ? <ToggleRight size={22} className="text-ok" />
+              : <ToggleLeft size={22} className="text-t5" />}
             {form['require_all_checks'] === 'true' ? 'Obrigatorio' : 'Opcional'}
           </button>
         </FieldRow>
@@ -396,7 +396,7 @@ export default function SettingsPage() {
 
       {/* ── Pasta Base dos PDFs ─────────────────────────────────────── */}
       <SectionCard title="Destino dos PDFs Gerados" icon={<FileText size={16} />}>
-        <p className="text-xs text-white/35 mb-4 leading-relaxed">
+        <p className="text-xs text-t4 mb-4 leading-relaxed">
           Defina a pasta raiz onde os PDFs serão salvos. A estrutura de subpastas é criada automaticamente:
           <span className="font-mono text-violet-400/70"> Pasta Base / Unidade / mês-AAAA / dia / arquivo.pdf</span>
           <br />
@@ -415,7 +415,7 @@ export default function SettingsPage() {
             className={inputCls}
             style={inputStyle}
           />
-          <p className="text-[10px] text-white/25 mt-1">
+          <p className="text-[10px] text-t5 mt-1">
             Resultado: <span className="font-mono">Pasta Base\Unidade 1\05-2026\24\SEPARACAO_20260524_YUGEN_42.pdf</span>
           </p>
         </FieldRow>
@@ -423,7 +423,7 @@ export default function SettingsPage() {
 
       {/* ── Checagens de Validação ───────────────────────────────────── */}
       <SectionCard title="Checagens de Validacao" icon={<ShieldCheck size={16} />}>
-        <p className="text-xs text-white/35 mb-4 leading-relaxed">
+        <p className="text-xs text-t4 mb-4 leading-relaxed">
           Defina quais validacoes sao executadas automaticamente ao importar um arquivo.
           Desabilitar uma checagem remove-a do calculo do semaforo e do painel do dia.
         </p>
@@ -465,11 +465,11 @@ export default function SettingsPage() {
             <button
               onClick={() => toggle(key)}
               className={`flex items-center gap-2 text-sm transition ${
-                form[key] === 'true' ? 'text-teal-300' : 'text-white/40'
+                form[key] === 'true' ? 'text-ok' : 'text-t4'
               }`}>
               {form[key] === 'true'
-                ? <ToggleRight size={22} className="text-teal-400" />
-                : <ToggleLeft size={22} className="text-white/25" />}
+                ? <ToggleRight size={22} className="text-ok" />
+                : <ToggleLeft size={22} className="text-t5" />}
               {form[key] === 'true' ? 'Habilitada' : 'Desabilitada'}
             </button>
           </FieldRow>
@@ -480,7 +480,7 @@ export default function SettingsPage() {
       <SectionCard title="Alterar Minha Senha" icon={<KeyRound size={16} />}>
         <div className="space-y-3 max-w-sm">
           <div>
-            <label className="block text-xs text-white/50 mb-1">Senha atual *</label>
+            <label className="block text-xs text-t3 mb-1">Senha atual *</label>
             <input
               type="password"
               value={pwdForm.current}
@@ -491,7 +491,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">Nova senha *</label>
+            <label className="block text-xs text-t3 mb-1">Nova senha *</label>
             <input
               type="password"
               value={pwdForm.next}
@@ -502,7 +502,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">Confirmar nova senha *</label>
+            <label className="block text-xs text-t3 mb-1">Confirmar nova senha *</label>
             <input
               type="password"
               value={pwdForm.confirm}
@@ -515,7 +515,7 @@ export default function SettingsPage() {
           <button
             onClick={handlePwdSave}
             disabled={pwdSaving || !pwdForm.current || !pwdForm.next || !pwdForm.confirm}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded-lg font-medium disabled:opacity-50 transition"
+            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-t1 text-sm rounded-lg font-medium disabled:opacity-50 transition"
           >
             {pwdSaving && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             <KeyRound size={13} />
@@ -529,7 +529,7 @@ export default function SettingsPage() {
           <button
             onClick={handleSave}
             disabled={saveMut.isLoading}
-            className="flex items-center gap-2 px-6 py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded-xl font-medium disabled:opacity-60 transition shadow-xl shadow-violet-900/50">
+            className="flex items-center gap-2 px-6 py-2.5 bg-violet-600 hover:bg-violet-500 text-t1 text-sm rounded-xl font-medium disabled:opacity-60 transition shadow-xl shadow-violet-900/50">
             <Save size={14} />
             {saveMut.isLoading ? 'Salvando...' : 'Salvar alteracoes'}
           </button>

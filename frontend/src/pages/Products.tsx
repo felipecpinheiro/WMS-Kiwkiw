@@ -389,29 +389,29 @@ export default function ProductsPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">Produtos</h1>
-          <p className="text-sm text-white/50 mt-0.5">
+          <h1 className="text-xl font-bold text-t1">Produtos</h1>
+          <p className="text-sm text-t3 mt-0.5">
             {totalProducts.toLocaleString('pt-BR')} produto(s){isFetching ? ' · carregando…' : ''}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <label className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg cursor-pointer transition ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
+          <label className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-t2 bg-surface border border-line hover:bg-surface-2 rounded-lg cursor-pointer transition ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
             {uploading ? 'Importando...' : 'Upload Excel'}
             <input ref={uploadRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden"
               onChange={handleExcelUpload} disabled={uploading} />
           </label>
           <button onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t2 bg-surface border border-line hover:bg-surface-2 rounded-lg transition">
             <Download size={14} />
             Baixar Modelo
           </button>
           <button onClick={() => { setGrid(EMPTY_GRID()); setShowPasteModal(true); }}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/80 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t2 bg-surface border border-line hover:bg-surface-2 rounded-lg transition">
             <ClipboardList size={14} /> Colar Produtos
           </button>
           <button onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
             + Novo Produto
           </button>
         </div>
@@ -420,12 +420,12 @@ export default function ProductsPage() {
       {/* Filtros */}
       <div className="flex gap-3 flex-wrap items-center">
         <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
           <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar SKU ou nome..."
-            className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+            className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500" />
         </div>
         <select value={sellerFilter} onChange={e => { setSellerFilter(e.target.value); setPage(1); }}
-          className="border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
+          className="border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
           <option value="">Todos os sellers</option>
           {(sellers as any[]).map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
         </select>
@@ -436,51 +436,51 @@ export default function ProductsPage() {
             onChange={e => { setShowInactive(e.target.checked); setPage(1); }}
             className="w-4 h-4 accent-violet-500"
           />
-          <span className="text-sm text-white/60">Mostrar inativos</span>
+          <span className="text-sm text-t3">Mostrar inativos</span>
         </label>
       </div>
 
       {/* Tabela de produtos */}
-      <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none overflow-hidden">
+      <div className="bg-surface rounded-xl border border-line-soft shadow-none overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-white/4 border-b border-white/8">
+              <tr className="bg-surface-2 border-b border-line-soft">
                 {['Foto', 'SKU', 'Nome', 'Seller', 'Cód. Barras', 'Caixa', 'Status', ''].map(h => (
-                  <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                  <th key={h} className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {products.length > 0 ? products.map((p: any) => (
-                <tr key={p.id} className={`border-b border-white/5 hover:bg-white/4 transition ${!p.active ? 'opacity-40' : ''}`}>
+                <tr key={p.id} className={`border-b border-line-soft hover:bg-surface-2 transition ${!p.active ? 'opacity-40' : ''}`}>
                   <td className="py-2 px-3">
                     {p.photo_url
                       ? <img src={photoSrc(p.photo_url)!} alt={p.name} className="w-10 h-10 object-cover rounded-lg" />
-                      : <div className="w-10 h-10 bg-white/5 rounded-lg flex items-center justify-center"><Camera size={14} className="text-white/25" /></div>
+                      : <div className="w-10 h-10 bg-surface-2 rounded-lg flex items-center justify-center"><Camera size={14} className="text-t5" /></div>
                     }
                   </td>
-                  <td className="py-2.5 px-3 text-xs font-mono text-white/60">{p.sku}</td>
-                  <td className="py-2.5 px-3 text-sm text-white/90 max-w-[200px] truncate">{p.name}</td>
-                  <td className="py-2.5 px-3 text-sm text-white/50">{p.seller_name || '—'}</td>
-                  <td className="py-2.5 px-3 text-xs font-mono text-white/50">{p.barcode_seller || '—'}</td>
-                  <td className="py-2.5 px-3 text-sm text-white/50">{p.box_type || '—'}</td>
+                  <td className="py-2.5 px-3 text-xs font-mono text-t3">{p.sku}</td>
+                  <td className="py-2.5 px-3 text-sm text-t1 max-w-[200px] truncate">{p.name}</td>
+                  <td className="py-2.5 px-3 text-sm text-t3">{p.seller_name || '—'}</td>
+                  <td className="py-2.5 px-3 text-xs font-mono text-t3">{p.barcode_seller || '—'}</td>
+                  <td className="py-2.5 px-3 text-sm text-t3">{p.box_type || '—'}</td>
                   <td className="py-2.5 px-3">
                     {p.active
-                      ? <span className="text-xs text-emerald-400/80">Ativo</span>
-                      : <span className="text-xs text-white/35">Inativo</span>
+                      ? <span className="text-xs text-ok/80">Ativo</span>
+                      : <span className="text-xs text-t4">Inativo</span>
                     }
                   </td>
                   <td className="py-2.5 px-3">
                     <div className="flex items-center gap-2">
                       {p.active ? (
                         <>
-                          <button onClick={() => openEdit(p)} title="Editar" className="text-white/35 hover:text-violet-400 transition"><Pencil size={14} /></button>
-                          <button onClick={() => handleInactivate(p.id)} title="Inativar (reversível)" className="text-white/35 hover:text-amber-400 transition"><EyeOff size={14} /></button>
-                          <button onClick={() => handleDelete(p.id)} title="Excluir da listagem" className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                          <button onClick={() => openEdit(p)} title="Editar" className="text-t4 hover:text-violet-400 transition"><Pencil size={14} /></button>
+                          <button onClick={() => handleInactivate(p.id)} title="Inativar (reversível)" className="text-t4 hover:text-warn transition"><EyeOff size={14} /></button>
+                          <button onClick={() => handleDelete(p.id)} title="Excluir da listagem" className="text-t4 hover:text-bad transition"><Trash2 size={14} /></button>
                         </>
                       ) : (
-                        <button onClick={() => handleReactivate(p.id)} title="Reativar produto" className="text-white/35 hover:text-emerald-400 transition flex items-center gap-1 text-xs">
+                        <button onClick={() => handleReactivate(p.id)} title="Reativar produto" className="text-t4 hover:text-ok transition flex items-center gap-1 text-xs">
                           <RotateCcw size={13} /> Reativar
                         </button>
                       )}
@@ -488,18 +488,18 @@ export default function ProductsPage() {
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan={8} className="text-center text-sm text-white/35 py-10">Nenhum produto encontrado</td></tr>
+                <tr><td colSpan={8} className="text-center text-sm text-t4 py-10">Nenhum produto encontrado</td></tr>
               )}
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-2.5 border-t border-white/8 flex items-center justify-between gap-4">
-          <span className="text-xs text-white/35">
+        <div className="px-4 py-2.5 border-t border-line-soft flex items-center justify-between gap-4">
+          <span className="text-xs text-t4">
             {totalProducts.toLocaleString('pt-BR')} produto(s) · página {page} de {totalPages}
           </span>
           <div className="flex items-center gap-1">
             <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || isFetching}
-              className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-30 transition">
+              className="p-1.5 rounded-lg text-t3 hover:text-t1 hover:bg-surface-2 disabled:opacity-30 transition">
               <ChevronLeft size={14} />
             </button>
             {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -507,13 +507,13 @@ export default function ProductsPage() {
               const pg = start + i;
               return (
                 <button key={pg} onClick={() => setPage(pg)} disabled={isFetching}
-                  className={`min-w-[28px] h-7 rounded-lg text-xs transition ${pg === page ? 'bg-violet-600 text-white font-semibold' : 'text-white/50 hover:text-white hover:bg-white/8'}`}>
+                  className={`min-w-[28px] h-7 rounded-lg text-xs transition ${pg === page ? 'bg-violet-600 text-t1 font-semibold' : 'text-t3 hover:text-t1 hover:bg-surface-2'}`}>
                   {pg}
                 </button>
               );
             })}
             <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages || isFetching}
-              className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-30 transition">
+              className="p-1.5 rounded-lg text-t3 hover:text-t1 hover:bg-surface-2 disabled:opacity-30 transition">
               <ChevronRight size={14} />
             </button>
           </div>
@@ -523,24 +523,24 @@ export default function ProductsPage() {
       {/* ── Modal Edição / Criação Individual ───────────────── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-lg my-8 p-6">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-lg my-8 p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-white">{editId ? 'Editar Produto' : 'Novo Produto'}</h3>
-              <button onClick={() => setShowModal(false)} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+              <h3 className="font-semibold text-t1">{editId ? 'Editar Produto' : 'Novo Produto'}</h3>
+              <button onClick={() => setShowModal(false)} className="text-t4 hover:text-t3"><X size={18} /></button>
             </div>
 
             {/* Foto */}
             <div className="flex items-center gap-4 mb-5">
               <div onClick={() => fileRef.current?.click()}
-                className="w-20 h-20 rounded-xl border-2 border-dashed border-white/12 flex items-center justify-center cursor-pointer hover:border-emerald-400 transition overflow-hidden">
+                className="w-20 h-20 rounded-xl border-2 border-dashed border-line flex items-center justify-center cursor-pointer hover:border-ok transition overflow-hidden">
                 {photoPreview
                   ? <img src={photoSrc(photoPreview)!} alt="preview" className="w-full h-full object-cover" />
-                  : <Camera size={24} className="text-white/25" />
+                  : <Camera size={24} className="text-t5" />
                 }
               </div>
               <div>
-                <p className="text-sm font-medium text-white/80">Foto do Produto</p>
-                <p className="text-xs text-white/35 mt-0.5">Clique para selecionar (exibida na bipagem)</p>
+                <p className="text-sm font-medium text-t2">Foto do Produto</p>
+                <p className="text-xs text-t4 mt-0.5">Clique para selecionar (exibida na bipagem)</p>
                 <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
               </div>
             </div>
@@ -548,22 +548,22 @@ export default function ProductsPage() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">SKU *</label>
+                  <label className="block text-xs text-t3 mb-1">SKU *</label>
                   <input type="text" value={form.sku} disabled={!!editId}
                     onChange={e => setForm(prev => ({ ...prev, sku: e.target.value }))}
-                    className={`w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${editId ? 'bg-white/5 text-white/30 cursor-not-allowed' : ''}`} />
+                    className={`w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${editId ? 'bg-surface-2 text-t4 cursor-not-allowed' : ''}`} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Seller *</label>
+                  <label className="block text-xs text-t3 mb-1">Seller *</label>
                   {editId ? (
-                    <p className="w-full border border-white/8 bg-white/4 rounded-lg px-3 py-2 text-sm text-white/35">
+                    <p className="w-full border border-line-soft bg-surface-2 rounded-lg px-3 py-2 text-sm text-t4">
                       {form.seller_name
                         || (sellers as any[]).find((s: any) => s.id === form.seller_id)?.trade_name
                         || '—'}
                     </p>
                   ) : (
                     <select value={form.seller_id} onChange={e => setForm(prev => ({ ...prev, seller_id: Number(e.target.value) }))}
-                      className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
+                      className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
                       <option value="">Selecione...</option>
                       {(sellers as any[]).map((s: any) => <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>)}
                     </select>
@@ -572,50 +572,50 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-white/50 mb-1">Nome *</label>
+                <label className="block text-xs text-t3 mb-1">Nome *</label>
                 <input type="text" value={form.name}
                   onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Cód. Barras Seller</label>
+                  <label className="block text-xs text-t3 mb-1">Cód. Barras Seller</label>
                   <input type="text" value={form.barcode_seller}
                     onChange={e => setForm(prev => ({ ...prev, barcode_seller: e.target.value }))}
                     placeholder="Código impresso na embalagem"
-                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+                    className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Caixa</label>
+                  <label className="block text-xs text-t3 mb-1">Caixa</label>
                   <input type="text" value={form.box_type}
                     onChange={e => setForm(prev => ({ ...prev, box_type: e.target.value }))}
-                    className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+                    className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs text-white/50 mb-1">Valor Unitário (R$)</label>
+                <label className="block text-xs text-t3 mb-1">Valor Unitário (R$)</label>
                 <input type="number" step="0.01" value={form.unit_value}
                   onChange={e => setForm(prev => ({ ...prev, unit_value: Number(e.target.value) }))}
-                  className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
 
               <div className="flex items-center gap-2 pt-1">
                 <input type="checkbox" id="is_input" checked={form.is_input}
                   onChange={e => setForm(prev => ({ ...prev, is_input: e.target.checked }))}
                   className="w-4 h-4 accent-green-600" />
-                <label htmlFor="is_input" className="text-sm text-white/80">É insumo (material de embalagem)</label>
+                <label htmlFor="is_input" className="text-sm text-t2">É insumo (material de embalagem)</label>
               </div>
             </div>
 
             <div className="flex gap-2 mt-6">
               <button onClick={() => setShowModal(false)}
-                className="flex-1 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition">
+                className="flex-1 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
                 Cancelar
               </button>
               <button onClick={handleSave}
-                className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5">
+                className="flex-1 py-2 text-sm text-t1 bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5">
                 <Check size={14} /> Salvar
               </button>
             </div>
@@ -653,7 +653,7 @@ export default function ProductsPage() {
                       return (
                         <th key={ci}
                           onMouseDown={(e) => { e.preventDefault(); if (e.shiftKey) { setCursor([cursor[0], ci]); } else { setAnchor([0, ci]); setCursor([grid.length - 1, ci]); } }}
-                          className={`py-2 px-2 text-left border border-gray-300 font-semibold text-xs cursor-pointer select-none transition ${colSelected ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-200'}`}>
+                          className={`py-2 px-2 text-left border border-gray-300 font-semibold text-xs cursor-pointer select-none transition ${colSelected ? 'bg-blue-100 text-info' : 'text-gray-600 hover:bg-gray-200'}`}>
                           {h}
                         </th>
                       );
@@ -670,7 +670,7 @@ export default function ProductsPage() {
                           const selected = isCellSelected(ri, ci);
                           const isAnchor = ri === anchor[0] && ci === anchor[1];
                           return (
-                            <td key={ci} className={`border p-0 ${selected ? 'border-blue-400' : 'border-gray-200'}`}
+                            <td key={ci} className={`border p-0 ${selected ? 'border-info' : 'border-gray-200'}`}
                               style={{ background: selected ? '#DBEAFE' : undefined }}
                               onMouseDown={(e) => handleCellMouseDown(e, ri, ci)}>
                               <input type="text" value={cell} onChange={e => handleCellChange(ri, ci, e.target.value)}
@@ -700,7 +700,7 @@ export default function ProductsPage() {
                 <button onClick={() => { setShowPasteModal(false); setGrid(EMPTY_GRID()); setAnchor([0, 0]); setCursor([0, 0]); }}
                   className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition">Cancelar</button>
                 <button onClick={handlePasteSave} disabled={saving || validRows === 0}
-                  className="px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition disabled:opacity-40 flex items-center gap-1.5">
+                  className="px-5 py-2 text-sm font-semibold text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition disabled:opacity-40 flex items-center gap-1.5">
                   {saving && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {saving ? 'Salvando...' : `Salvar ${validRows} produto(s)`}
                 </button>

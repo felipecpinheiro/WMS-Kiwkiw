@@ -113,24 +113,24 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
       className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 outline-none"
       style={{ pointerEvents: 'all' }}
     >
-      <div className="bg-gray-900 border border-amber-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-7">
+      <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-7">
         <div className="flex flex-col items-center mb-6">
           <div className="w-14 h-14 bg-amber-500/15 rounded-full flex items-center justify-center mb-4">
-            <KeyRound size={26} className="text-amber-400" />
+            <KeyRound size={26} className="text-warn" />
           </div>
-          <h2 className="text-lg font-bold text-white text-center">Defina sua nova senha</h2>
-          <p className="text-sm text-white/50 text-center mt-1">
+          <h2 className="text-lg font-bold text-t1 text-center">Defina sua nova senha</h2>
+          <p className="text-sm text-t3 text-center mt-1">
             Você está usando uma senha temporária.<br />
             Crie uma senha pessoal para continuar.
           </p>
-          <p className="text-xs text-amber-400/80 text-center mt-2">
+          <p className="text-xs text-warn/80 text-center mt-2">
             A senha deve ter no mínimo 6 caracteres.
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs text-white/50 mb-1">Nova senha *</label>
+            <label className="block text-xs text-t3 mb-1">Nova senha *</label>
             <div className="relative">
               <input
                 type={showNew ? 'text' : 'password'}
@@ -138,26 +138,26 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
                 onChange={e => setNewPwd(e.target.value)}
                 placeholder="Mínimo 6 caracteres"
                 autoFocus
-                className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 pr-9 text-sm text-white outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 pr-9 text-sm text-t1 outline-none focus:ring-2 focus:ring-amber-500"
               />
               <button type="button" onClick={() => setShowNew(v => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/35 hover:text-white/60">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-t4 hover:text-t3">
                 {showNew ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">Confirmar nova senha *</label>
+            <label className="block text-xs text-t3 mb-1">Confirmar nova senha *</label>
             <div className="relative">
               <input
                 type={showConfirm ? 'text' : 'password'}
                 value={confirmPwd}
                 onChange={e => setConfirmPwd(e.target.value)}
                 placeholder="Repita a senha"
-                className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 pr-9 text-sm text-white outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 pr-9 text-sm text-t1 outline-none focus:ring-2 focus:ring-amber-500"
               />
               <button type="button" onClick={() => setShowConfirm(v => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/35 hover:text-white/60">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-t4 hover:text-t3">
                 {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
@@ -165,7 +165,7 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
           <button
             type="submit"
             disabled={loading || !newPwd || !confirmPwd}
-            className="w-full py-2.5 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-400 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+            className="w-full py-2.5 text-sm font-semibold text-t1 bg-amber-500 hover:bg-amber-400 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
           >
             {loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             {loading ? 'Salvando...' : 'Salvar nova senha'}
@@ -212,7 +212,11 @@ export default function App() {
           containerStyle={{ zIndex: 10000 }}
           toastOptions={{
             duration: 4000,
-            style: { background: '#1f2937', color: '#fff' },
+            style: {
+              background: 'rgb(var(--surface))',
+              color: 'rgb(var(--t1))',
+              border: '1px solid rgb(var(--line))',
+            },
           }}
         />
         <AppWithForceChange>

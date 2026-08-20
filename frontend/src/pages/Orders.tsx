@@ -22,14 +22,14 @@ import toast from 'react-hot-toast';
 // ─── Utilitários ─────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:     { label: 'Pendente',      color: 'bg-white/8 text-white/50 border border-white/10' },
-  validated:   { label: 'Validado',      color: 'bg-blue-900/40 text-blue-300 border border-blue-500/20' },
-  separating:  { label: 'Separando',     color: 'bg-amber-900/40 text-amber-300 border border-amber-500/20' },
+  pending:     { label: 'Pendente',      color: 'bg-surface-2 text-t3 border border-line' },
+  validated:   { label: 'Validado',      color: 'bg-info-soft text-info border border-info/20' },
+  separating:  { label: 'Separando',     color: 'bg-warn-soft text-warn border border-warn/20' },
   scanning:    { label: 'Bipando',       color: 'bg-violet-900/40 text-violet-300 border border-violet-500/20' },
-  completed:   { label: 'Concluído',     color: 'bg-emerald-900/40 text-emerald-300 border border-emerald-500/20' },
-  interrupted: { label: 'Interrompido',  color: 'bg-orange-900/40 text-orange-300 border border-orange-500/20' },
-  cancelled:   { label: 'Cancelado',     color: 'bg-red-900/40 text-red-300 border border-red-500/20' },
-  inactive:    { label: 'Inativo',       color: 'bg-red-950/50 text-red-400/70 border border-red-500/10' },
+  completed:   { label: 'Concluído',     color: 'bg-ok-soft text-ok border border-ok/20' },
+  interrupted: { label: 'Interrompido',  color: 'bg-warn-soft text-warn border border-warn/20' },
+  cancelled:   { label: 'Cancelado',     color: 'bg-bad-soft text-bad border border-bad/20' },
+  inactive:    { label: 'Inativo',       color: 'bg-bad-soft text-bad/70 border border-bad/10' },
 };
 
 const normalizeFileType = (ft?: string): 'Saída' | 'Entrada' | '' => {
@@ -44,7 +44,7 @@ const excelText = (v: string | null | undefined): string => {
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? { label: status, color: 'bg-white/8 text-white/50' };
+  const cfg = STATUS_CONFIG[status] ?? { label: status, color: 'bg-surface-2 text-t3' };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>
       {cfg.label}
@@ -75,22 +75,22 @@ function SessionCard({
 
   return (
     <div
-      className="bg-gray-900/60 border border-white/8 rounded-xl p-4 hover:border-violet-500/20 transition cursor-pointer"
+      className="bg-surface/60 border border-line-soft rounded-xl p-4 hover:border-violet-500/20 transition cursor-pointer"
       onClick={() => onClick(session)}
     >
       <div className="flex items-start justify-between mb-3">
         <div>
-          <p className="text-xs text-white/35">Sessão #{session.id}</p>
-          <p className="text-sm font-semibold text-white/90">
+          <p className="text-xs text-t4">Sessão #{session.id}</p>
+          <p className="text-sm font-semibold text-t1">
             {format(new Date(session.session_date + 'T00:00:00'), 'dd/MM/yyyy')}
           </p>
           {session.source_file && (
-            <p className="text-[10px] text-white/35 mt-0.5 truncate max-w-[180px]" title={session.source_file}>
+            <p className="text-[10px] text-t4 mt-0.5 truncate max-w-[180px]" title={session.source_file}>
               {session.source_file}
             </p>
           )}
           {sellers.length > 0 && (
-            <p className="text-[10px] font-medium mt-1" style={{ color: '#9B87F0' }}>
+            <p className="text-[10px] font-medium mt-1" style={{ color: 'rgb(var(--brand))' }}>
               {sellers.join(' · ')}
             </p>
           )}
@@ -103,7 +103,7 @@ function SessionCard({
         <span
           className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${
             isEntrada
-              ? 'bg-blue-900/40 text-blue-300 border border-blue-500/20'
+              ? 'bg-info-soft text-info border border-info/20'
               : 'bg-violet-900/40 text-violet-300 border border-violet-500/20'
           }`}
           title="Tipo de movimentação (nível do arquivo)"
@@ -115,8 +115,8 @@ function SessionCard({
         <span
           className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${
             session.for_billing
-              ? 'bg-amber-900/40 text-amber-300 border border-amber-500/20'
-              : 'bg-white/8 text-white/40'
+              ? 'bg-warn-soft text-warn border border-warn/20'
+              : 'bg-surface-2 text-t4'
           }`}
           title="Entra no faturamento mensal do seller?"
         >
@@ -126,7 +126,7 @@ function SessionCard({
 
         <button
           onClick={(e) => { e.stopPropagation(); onConfig(session); }}
-          className="ml-auto text-white/35 hover:text-violet-400 transition"
+          className="ml-auto text-t4 hover:text-violet-400 transition"
           title="Configurar sessão"
         >
           <Settings size={13} />
@@ -135,17 +135,17 @@ function SessionCard({
 
       {/* Progresso */}
       <div className="mb-3">
-        <div className="flex justify-between text-xs text-white/50 mb-1">
+        <div className="flex justify-between text-xs text-t3 mb-1">
           <span>{session.completed_orders} concluídos</span>
           <span>{session.total_orders} total</span>
         </div>
-        <div className="w-full bg-white/10 rounded-full h-2">
+        <div className="w-full bg-surface-2 rounded-full h-2">
           <div
             className="bg-violet-500 h-2 rounded-full transition-all"
             style={{ width: `${pct}%` }}
           />
         </div>
-        <p className="text-xs text-white/35 mt-1">{pct}% completo</p>
+        <p className="text-xs text-t4 mt-1">{pct}% completo</p>
       </div>
 
       {/* Checagens */}
@@ -160,7 +160,7 @@ function SessionCard({
           return (
             <span
               key={key}
-              className={`text-[10px] px-2 py-0.5 rounded-full border ${ok ? 'bg-emerald-900/35 text-emerald-300 border-emerald-500/20' : 'bg-red-900/35 text-red-300 border-red-500/20'}`}
+              className={`text-[10px] px-2 py-0.5 rounded-full border ${ok ? 'bg-ok-soft text-ok border-ok/20' : 'bg-bad-soft text-bad border-bad/20'}`}
             >
               {label}
             </span>
@@ -169,7 +169,7 @@ function SessionCard({
       </div>
 
       {/* Bipagem disponível somente via Manuseios */}
-      <div className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-white/8 text-white/25 text-xs cursor-default select-none"
+      <div className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-line-soft text-t5 text-xs cursor-default select-none"
            title="Use o app Manuseios para iniciar a bipagem">
         <ScanLine size={13} />
         Bipagem via Manuseios
@@ -183,10 +183,10 @@ function SessionCard({
 function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
   return (
     <tr
-      className="border-b border-white/5 hover:bg-white/4 transition cursor-pointer"
+      className="border-b border-line-soft hover:bg-surface-2 transition cursor-pointer"
       onClick={onClick}
     >
-      <td className="py-2.5 px-3 text-sm font-mono text-white/80">
+      <td className="py-2.5 px-3 text-sm font-mono text-t2">
         <span className="inline-flex items-center gap-1.5">
           {order.nf_number}
           {/* Desde 06/08/2026 o estoque baixa na importação. NF sem a marca
@@ -194,29 +194,29 @@ function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
           {!order.stock_applied_at && order.status !== 'cancelled' && order.status !== 'inactive' && (
             <span
               title="Esta NF ainda não baixou estoque — falta transportadora ou produto cadastrado"
-              className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-500/30 font-sans"
+              className="text-[10px] px-1.5 py-0.5 rounded bg-bad-soft text-bad border border-bad/30 font-sans"
             >
               sem estoque
             </span>
           )}
         </span>
       </td>
-      <td className="py-2.5 px-3 text-sm text-white/80 max-w-[180px] truncate">{order.customer_name}</td>
-      <td className="py-2.5 px-3 text-sm text-white/50">{order.seller_name}</td>
-      <td className="py-2.5 px-3 text-sm text-white/50">{order.carrier || '—'}</td>
+      <td className="py-2.5 px-3 text-sm text-t2 max-w-[180px] truncate">{order.customer_name}</td>
+      <td className="py-2.5 px-3 text-sm text-t3">{order.seller_name}</td>
+      <td className="py-2.5 px-3 text-sm text-t3">{order.carrier || '—'}</td>
       <td className="py-2.5 px-3">
         <StatusBadge status={order.status} />
       </td>
-      <td className="py-2.5 px-3 text-sm text-white/35" title="Data de importação (upload)">
+      <td className="py-2.5 px-3 text-sm text-t4" title="Data de importação (upload)">
         {(order as any).imported_at ? format(new Date((order as any).imported_at), 'dd/MM/yy HH:mm') : '—'}
       </td>
-      <td className="py-2.5 px-3 text-xs text-white/35">
+      <td className="py-2.5 px-3 text-xs text-t4">
         {order.for_billing ? (
-          <span className="inline-flex items-center gap-1 text-amber-700" title="Entra no faturamento (herdado da sessão)">
+          <span className="inline-flex items-center gap-1 text-warn" title="Entra no faturamento (herdado da sessão)">
             <DollarSign size={11} />
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 text-white/25" title="Não faturar (herdado da sessão)">
+          <span className="inline-flex items-center gap-1 text-t5" title="Não faturar (herdado da sessão)">
             <XCircle size={11} />
           </span>
         )}
@@ -232,17 +232,17 @@ function OrderCard({ order, onClick }: { order: Order; onClick: () => void }) {
   return (
     <div
       onClick={onClick}
-      className="bg-gray-900/60 border border-white/8 rounded-xl p-3.5 active:bg-white/5 transition cursor-pointer"
+      className="bg-surface/60 border border-line-soft rounded-xl p-3.5 active:bg-surface-2 transition cursor-pointer"
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="text-sm font-mono font-semibold text-white/90">{order.nf_number}</span>
+        <span className="text-sm font-mono font-semibold text-t1">{order.nf_number}</span>
         <StatusBadge status={order.status} />
       </div>
-      <p className="text-sm text-white/80 truncate">{order.customer_name}</p>
+      <p className="text-sm text-t2 truncate">{order.customer_name}</p>
       <div className="flex items-center gap-2 mt-1 flex-wrap">
-        <span className="text-xs text-white/40">{order.seller_name}</span>
+        <span className="text-xs text-t4">{order.seller_name}</span>
         {order.carrier && (
-          <span className="text-xs text-white/30 flex items-center gap-1">
+          <span className="text-xs text-t4 flex items-center gap-1">
             <Truck size={10} /> {order.carrier}
           </span>
         )}
@@ -250,12 +250,12 @@ function OrderCard({ order, onClick }: { order: Order; onClick: () => void }) {
       {(semEstoque || order.for_billing) && (
         <div className="flex items-center gap-1.5 mt-2 flex-wrap">
           {semEstoque && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-500/30">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bad-soft text-bad border border-bad/30">
               sem estoque
             </span>
           )}
           {order.for_billing && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 border border-amber-500/20 flex items-center gap-0.5">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-warn-soft text-warn border border-warn/20 flex items-center gap-0.5">
               <DollarSign size={9} /> faturar
             </span>
           )}
@@ -275,28 +275,28 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-surface border border-line rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         {isLoading || !order ? (
-          <div className="p-8 text-center text-sm text-white/40">Carregando...</div>
+          <div className="p-8 text-center text-sm text-t4">Carregando...</div>
         ) : (
           <>
-            <div className="p-5 border-b border-white/8 flex items-start justify-between gap-4">
+            <div className="p-5 border-b border-line-soft flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[11px] text-white/35 uppercase tracking-wide">{order.seller_name}</p>
-                <h3 className="text-base font-semibold text-white mt-0.5">NF {order.nf_number}</h3>
-                <p className="text-xs text-white/50 mt-1">
+                <p className="text-[11px] text-t4 uppercase tracking-wide">{order.seller_name}</p>
+                <h3 className="text-base font-semibold text-t1 mt-0.5">NF {order.nf_number}</h3>
+                <p className="text-xs text-t3 mt-1">
                   {order.customer_name}
                   {order.carrier ? ` · ${order.carrier}` : ''}
                 </p>
                 {order.danfe_key && (
-                  <p className="text-[10px] font-mono text-white/25 mt-1 break-all select-all">{order.danfe_key}</p>
+                  <p className="text-[10px] font-mono text-t5 mt-1 break-all select-all">{order.danfe_key}</p>
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <StatusBadge status={order.status} />
-                <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+                <button onClick={onClose} className="text-t4 hover:text-t1 transition text-lg leading-none">✕</button>
               </div>
             </div>
 
@@ -304,11 +304,11 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
             <div className="overflow-y-auto flex-1">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-white/8 bg-white/4">
-                    <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">SKU</th>
-                    <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Produto</th>
-                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Qtd</th>
-                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Bipado</th>
+                  <tr className="border-b border-line-soft bg-surface-2">
+                    <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">SKU</th>
+                    <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Produto</th>
+                    <th className="text-right text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Qtd</th>
+                    <th className="text-right text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Bipado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -332,17 +332,17 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
                           </td>
                         </tr>
                       )}
-                      <tr className="border-b border-white/5">
-                        <td className={`py-2.5 px-4 text-xs font-mono text-white/60 ${doKit ? 'pl-8' : ''}`}>{item.sku}</td>
-                        <td className="py-2.5 px-4 text-xs text-white/80">
+                      <tr className="border-b border-line-soft">
+                        <td className={`py-2.5 px-4 text-xs font-mono text-t3 ${doKit ? 'pl-8' : ''}`}>{item.sku}</td>
+                        <td className="py-2.5 px-4 text-xs text-t2">
                           {item.product_name}
                           {item.is_kit_component && (
                             <span className="ml-1 text-[10px] text-violet-400">(kit)</span>
                           )}
                         </td>
-                        <td className="py-2.5 px-4 text-xs text-right text-white/50">{item.quantity}</td>
+                        <td className="py-2.5 px-4 text-xs text-right text-t3">{item.quantity}</td>
                         <td className="py-2.5 px-4 text-xs text-right font-medium">
-                          <span className={done ? 'text-emerald-400' : partial ? 'text-amber-400' : 'text-white/30'}>
+                          <span className={done ? 'text-ok' : partial ? 'text-warn' : 'text-t4'}>
                             {scanned} de {item.quantity}
                           </span>
                         </td>
@@ -352,7 +352,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
                   })}
                   {order.items.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="text-center text-sm text-white/35 py-8">Sem itens cadastrados</td>
+                      <td colSpan={4} className="text-center text-sm text-t4 py-8">Sem itens cadastrados</td>
                     </tr>
                   )}
                 </tbody>
@@ -360,11 +360,11 @@ function OrderDetailModal({ orderId, onClose }: { orderId: number; onClose: () =
             </div>
 
             {/* Footer */}
-            <div className="p-4 border-t border-white/8 flex justify-between items-center">
-              <p className="text-xs text-white/35">
+            <div className="p-4 border-t border-line-soft flex justify-between items-center">
+              <p className="text-xs text-t4">
                 {order.items.length} item(ns) · importado {order.imported_at ? format(new Date(order.imported_at), 'dd/MM/yy HH:mm') : '—'}
               </p>
-              <button onClick={onClose} className="px-4 py-1.5 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/5 transition">
+              <button onClick={onClose} className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
                 Fechar
               </button>
             </div>
@@ -430,18 +430,18 @@ function SessionOrdersModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-surface border border-line rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
 
-        <div className="p-5 border-b border-white/8 flex items-start justify-between">
+        <div className="p-5 border-b border-line-soft flex items-start justify-between">
           <div>
-            <p className="text-[11px] text-white/35 uppercase tracking-wide">
+            <p className="text-[11px] text-t4 uppercase tracking-wide">
               Sessão #{session.id} · {format(new Date(session.session_date + 'T00:00:00'), 'dd/MM/yyyy')}
             </p>
-            <h3 className="text-base font-semibold text-white mt-0.5">Pedidos da Sessão</h3>
+            <h3 className="text-base font-semibold text-t1 mt-0.5">Pedidos da Sessão</h3>
           </div>
           <div className="flex items-center gap-3">
             {isAdmin && (
-              <label className="flex items-center gap-1.5 text-xs text-white/40 cursor-pointer select-none">
+              <label className="flex items-center gap-1.5 text-xs text-t4 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={showInactive}
@@ -451,24 +451,24 @@ function SessionOrdersModal({
                 Mostrar só NFs inativas
               </label>
             )}
-            <button onClick={onClose} className="text-white/35 hover:text-white transition text-lg leading-none">✕</button>
+            <button onClick={onClose} className="text-t4 hover:text-t1 transition text-lg leading-none">✕</button>
           </div>
         </div>
 
         <div className="overflow-y-auto flex-1">
           {isLoading ? (
-            <p className="text-center text-sm text-white/35 py-8">Carregando...</p>
+            <p className="text-center text-sm text-t4 py-8">Carregando...</p>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/8 bg-white/4">
-                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">NF</th>
-                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Cliente</th>
-                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Seller</th>
-                  <th className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Status</th>
-                  <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Bipagem</th>
+                <tr className="border-b border-line-soft bg-surface-2">
+                  <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">NF</th>
+                  <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Cliente</th>
+                  <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Seller</th>
+                  <th className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Status</th>
+                  <th className="text-right text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Bipagem</th>
                   {isAdmin && (
-                    <th className="text-right text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-4">Ações</th>
+                    <th className="text-right text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-4">Ações</th>
                   )}
                 </tr>
               </thead>
@@ -481,14 +481,14 @@ function SessionOrdersModal({
                     <tr
                       key={o.id}
                       onClick={() => { if (!isInactive) { onClose(); onSelectOrder(o.id); } }}
-                      className={`border-b border-white/5 transition ${isInactive ? 'opacity-50' : 'hover:bg-white/4 cursor-pointer'}`}
+                      className={`border-b border-line-soft transition ${isInactive ? 'opacity-50' : 'hover:bg-surface-2 cursor-pointer'}`}
                     >
-                      <td className="py-2.5 px-4 text-sm font-mono text-white/80">{o.nf_number}</td>
-                      <td className="py-2.5 px-4 text-sm text-white/70 max-w-[160px] truncate">{o.customer_name}</td>
-                      <td className="py-2.5 px-4 text-sm text-white/50">{o.seller}</td>
+                      <td className="py-2.5 px-4 text-sm font-mono text-t2">{o.nf_number}</td>
+                      <td className="py-2.5 px-4 text-sm text-t2 max-w-[160px] truncate">{o.customer_name}</td>
+                      <td className="py-2.5 px-4 text-sm text-t3">{o.seller}</td>
                       <td className="py-2.5 px-4"><StatusBadge status={o.status} /></td>
                       <td className="py-2.5 px-4 text-sm text-right font-medium">
-                        <span className={done ? 'text-emerald-400' : partial ? 'text-amber-400' : 'text-white/30'}>
+                        <span className={done ? 'text-ok' : partial ? 'text-warn' : 'text-t4'}>
                           {o.scanned_items} de {o.total_items}
                         </span>
                       </td>
@@ -498,7 +498,7 @@ function SessionOrdersModal({
                             <button
                               onClick={() => handleReactivate(o.id)}
                               disabled={reactivatingId === o.id}
-                              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-ok hover:text-ok disabled:opacity-40"
                             >
                               <RotateCcw size={12} /> {reactivatingId === o.id ? 'Reativando...' : 'Reativar'}
                             </button>
@@ -506,7 +506,7 @@ function SessionOrdersModal({
                             <button
                               onClick={() => { setDeactivateTarget(o); setDeactivateReason(''); }}
                               title="Inativar NF"
-                              className="inline-flex items-center gap-1 text-xs text-white/30 hover:text-red-400 transition"
+                              className="inline-flex items-center gap-1 text-xs text-t4 hover:text-bad transition"
                             >
                               <Ban size={12} /> Inativar
                             </button>
@@ -521,9 +521,9 @@ function SessionOrdersModal({
           )}
         </div>
 
-        <div className="p-4 border-t border-white/8 flex justify-between items-center">
-          <p className="text-xs text-white/35">{(sessionOrders as any[]).length} pedido(s)</p>
-          <button onClick={onClose} className="px-4 py-1.5 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/5 transition">
+        <div className="p-4 border-t border-line-soft flex justify-between items-center">
+          <p className="text-xs text-t4">{(sessionOrders as any[]).length} pedido(s)</p>
+          <button onClick={onClose} className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
             Fechar
           </button>
         </div>
@@ -532,17 +532,17 @@ function SessionOrdersModal({
       {/* ── Inativar NF dialog ─────────────────────────────── */}
       {deactivateTarget && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={e => e.stopPropagation()}>
-          <div className="bg-gray-900 border border-red-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-bad/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <Ban size={20} className="text-red-400" />
+                <Ban size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Inativar NF</h3>
-                <p className="text-xs text-white/40">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
+                <h3 className="text-base font-bold text-t1">Inativar NF</h3>
+                <p className="text-xs text-t4">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
               </div>
             </div>
-            <p className="text-sm text-white/60 mb-3">
+            <p className="text-sm text-t3 mb-3">
               A NF some da operação (Pedidos, Manuseios, Dashboard) e só volta se você mesmo reativar. Informe o motivo:
             </p>
             <textarea
@@ -551,20 +551,20 @@ function SessionOrdersModal({
               placeholder="Ex: NF errada, duplicidade, pedido cancelado pelo cliente..."
               rows={3}
               autoFocus
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setDeactivateTarget(null); setDeactivateReason(''); }}
                 disabled={deactivating}
-                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition disabled:opacity-40"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition disabled:opacity-40"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleDeactivate}
                 disabled={deactivating || !deactivateReason.trim()}
-                className="flex-1 py-2.5 text-sm font-semibold text-red-400 border border-red-400/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
+                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
               >
                 {deactivating ? 'Inativando...' : 'Inativar'}
               </button>
@@ -608,15 +608,15 @@ function SessionConfigModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-900 rounded-xl shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-white mb-1">Configurar Sessão</h3>
-        <p className="text-xs text-white/40 mb-4">
+      <div className="bg-surface rounded-xl shadow-xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-semibold text-t1 mb-1">Configurar Sessão</h3>
+        <p className="text-xs text-t4 mb-4">
           Sessão #{session.id} · {session.total_orders} pedido(s) serão atualizados
         </p>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-white/40 mb-1.5">Tipo da movimentação</label>
+            <label className="block text-xs text-t4 mb-1.5">Tipo da movimentação</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -624,7 +624,7 @@ function SessionConfigModal({
                 className={`px-3 py-2 text-xs rounded-lg border transition ${
                   fileType === 'Saída'
                     ? 'bg-violet-900/25 border-violet-500 text-violet-300 font-medium'
-                    : 'bg-gray-900 border-white/12 text-white/60'
+                    : 'bg-surface border-line text-t3'
                 }`}
               >
                 Saída (Expedição)
@@ -634,8 +634,8 @@ function SessionConfigModal({
                 onClick={() => setFileType('Entrada')}
                 className={`px-3 py-2 text-xs rounded-lg border transition ${
                   fileType === 'Entrada'
-                    ? 'bg-blue-900/30 border-blue-500 text-blue-300 font-medium'
-                    : 'bg-gray-900 border-white/12 text-white/60'
+                    ? 'bg-info-soft border-info text-info font-medium'
+                    : 'bg-surface border-line text-t3'
                 }`}
               >
                 Entrada (Recebimento)
@@ -645,16 +645,16 @@ function SessionConfigModal({
 
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-xs text-white/70 font-medium">Considerar para faturamento</label>
-              <p className="text-[10px] text-white/35 mt-0.5">Propagado para todos os pedidos do arquivo</p>
+              <label className="text-xs text-t2 font-medium">Considerar para faturamento</label>
+              <p className="text-[10px] text-t4 mt-0.5">Propagado para todos os pedidos do arquivo</p>
             </div>
             <button
               type="button"
               onClick={() => setForBilling(!forBilling)}
-              className={`w-10 h-5 rounded-full transition ${forBilling ? 'bg-violet-500' : 'bg-white/15'}`}
+              className={`w-10 h-5 rounded-full transition ${forBilling ? 'bg-violet-500' : 'bg-brand-soft'}`}
             >
               <span
-                className={`block w-4 h-4 bg-gray-900 rounded-full shadow transition transform mx-0.5 ${forBilling ? 'translate-x-5' : ''}`}
+                className={`block w-4 h-4 bg-surface rounded-full shadow transition transform mx-0.5 ${forBilling ? 'translate-x-5' : ''}`}
               />
             </button>
           </div>
@@ -664,14 +664,14 @@ function SessionConfigModal({
           <button
             onClick={onClose}
             disabled={saving}
-            className="flex-1 py-2 text-sm text-white/50 border border-white/10 rounded-lg hover:bg-white/5 transition disabled:opacity-60"
+            className="flex-1 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2 transition disabled:opacity-60"
           >
             Cancelar
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-60 transition"
+            className="flex-1 py-2 text-sm text-t1 bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-60 transition"
           >
             {saving ? 'Salvando...' : 'Salvar'}
           </button>
@@ -692,11 +692,11 @@ function SortableHeader({ label, col, sortCol, sortDir, onSort }: {
 }) {
   const active = sortCol === col;
   return (
-    <th onClick={() => onSort(col)} className="text-left text-[11px] font-semibold text-white/40 uppercase tracking-wide py-2.5 px-3 cursor-pointer hover:text-white/70 select-none">
+    <th onClick={() => onSort(col)} className="text-left text-[11px] font-semibold text-t4 uppercase tracking-wide py-2.5 px-3 cursor-pointer hover:text-t2 select-none">
       <span className="flex items-center gap-1">
         {label}
         {active && <span className="text-violet-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
-        {!active && <span className="text-white/20">↕</span>}
+        {!active && <span className="text-t5">↕</span>}
       </span>
     </th>
   );
@@ -912,22 +912,22 @@ export default function OrdersPage() {
   });
 
   return (
-    <div className="p-6 space-y-6 min-h-full text-white">
+    <div className="p-6 space-y-6 min-h-full text-t1">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold text-white">Pedidos & Sessões</h1>
-        <p className="text-sm text-white/50 mt-0.5">Gerencie sessões de picking e visualize todos os pedidos</p>
+        <h1 className="text-xl font-bold text-t1">Pedidos & Sessões</h1>
+        <p className="text-sm text-t3 mt-0.5">Gerencie sessões de picking e visualize todos os pedidos</p>
       </div>
 
       {/* Filtros de nível de arquivo — afetam sessões + pedidos (desktop; no mobile ficam na folha "Filtros") */}
       {!isMobile && (
-      <div className="bg-gray-900 border border-white/8 rounded-xl p-3 flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-medium text-white/50">Filtros do arquivo:</span>
+      <div className="bg-surface border border-line-soft rounded-xl p-3 flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-medium text-t3">Filtros do arquivo:</span>
 
         <select
           value={fileTypeFilter}
           onChange={e => setFileTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-          className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+          className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
           title="Tipo da movimentação (nível do arquivo)"
         >
           <option value="">Todos os tipos</option>
@@ -938,7 +938,7 @@ export default function OrdersPage() {
         <select
           value={billingFilter}
           onChange={e => setBillingFilter(e.target.value as '' | 'yes' | 'no')}
-          className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+          className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
           title="Entra no faturamento?"
         >
           <option value="">Todos (faturamento)</option>
@@ -948,15 +948,15 @@ export default function OrdersPage() {
 
         <div className="flex items-center gap-1">
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+            className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
             title="Data inicial" />
-          <span className="text-white/25 text-xs">→</span>
+          <span className="text-t5 text-xs">→</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+            className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
             title="Data final" />
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-xs text-white/35 hover:text-red-500 px-1">✕</button>
+              className="text-xs text-t4 hover:text-bad px-1">✕</button>
           )}
         </div>
 
@@ -973,17 +973,17 @@ export default function OrdersPage() {
 
       {/* Sessões de picking */}
       <div>
-        <h2 className="text-sm font-semibold text-white/80 mb-3">
+        <h2 className="text-sm font-semibold text-t2 mb-3">
           Sessões de Picking Ativas
-          <span className="ml-2 text-xs font-normal text-white/35">
+          <span className="ml-2 text-xs font-normal text-t4">
             ({filteredSessions.filter(s => s.status !== 'completed').length} ativa(s))
           </span>
         </h2>
 
         {filteredSessions.length === 0 ? (
-          <div className="bg-gray-900 border border-dashed border-white/12 rounded-xl p-8 text-center">
-            <Package size={32} className="text-white/25 mx-auto mb-2" />
-            <p className="text-sm text-white/50">
+          <div className="bg-surface border border-dashed border-line rounded-xl p-8 text-center">
+            <Package size={32} className="text-t5 mx-auto mb-2" />
+            <p className="text-sm text-t3">
               {sessions.length === 0
                 ? 'Nenhuma sessão de picking. Importe um arquivo Excel no Dashboard.'
                 : 'Nenhuma sessão atende aos filtros selecionados.'}
@@ -1006,9 +1006,9 @@ export default function OrdersPage() {
       </div>
 
       {/* Lista de pedidos */}
-      <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none">
-        <div className="p-4 border-b border-white/8 flex items-center gap-3 flex-wrap">
-          <h2 className="text-sm font-semibold text-white/80 flex-1">Todos os Pedidos</h2>
+      <div className="bg-surface rounded-xl border border-line-soft shadow-none">
+        <div className="p-4 border-b border-line-soft flex items-center gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold text-t2 flex-1">Todos os Pedidos</h2>
 
           {!isMobile && (
           <>
@@ -1016,7 +1016,7 @@ export default function OrdersPage() {
           <select
             value={sellerFilter}
             onChange={e => setSellerFilter(e.target.value)}
-            className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+            className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
           >
             <option value="">Todos os sellers</option>
             {uniqueSellers.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1026,7 +1026,7 @@ export default function OrdersPage() {
           <select
             value={carrierFilter}
             onChange={e => setCarrierFilter(e.target.value)}
-            className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+            className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
           >
             <option value="">Todas as transportadoras</option>
             {uniqueCarriers.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1036,7 +1036,7 @@ export default function OrdersPage() {
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="border border-white/12 rounded-lg px-2 py-1.5 text-xs text-white/60 outline-none focus:ring-2 focus:ring-violet-500"
+            className="border border-line rounded-lg px-2 py-1.5 text-xs text-t3 outline-none focus:ring-2 focus:ring-violet-500"
           >
             <option value="">Todos os status</option>
             {Object.entries(STATUS_CONFIG)
@@ -1062,25 +1062,25 @@ export default function OrdersPage() {
 
           {/* Busca */}
           <div className={`relative ${isMobile ? 'flex-1 min-w-0' : ''}`}>
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
             <input
               type="text"
               placeholder="Buscar NF, cliente, seller..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className={`pl-7 pr-3 py-1.5 text-xs border border-white/12 rounded-lg outline-none focus:ring-2 focus:ring-violet-500 ${isMobile ? 'w-full' : 'w-56'}`}
+              className={`pl-7 pr-3 py-1.5 text-xs border border-line rounded-lg outline-none focus:ring-2 focus:ring-violet-500 ${isMobile ? 'w-full' : 'w-56'}`}
             />
           </div>
 
           {isMobile ? (
             <button
               onClick={() => setFiltersOpen(true)}
-              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
+              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-t3 bg-surface-2 border border-line rounded-lg flex-shrink-0"
             >
               <SlidersHorizontal size={13} />
               Filtros
               {activeFilterCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-violet-500 text-white text-[9px] font-bold flex items-center justify-center">
+                <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-violet-500 text-t1 text-[9px] font-bold flex items-center justify-center">
                   {activeFilterCount}
                 </span>
               )}
@@ -1105,21 +1105,21 @@ export default function OrdersPage() {
               />
             ))}
             {sorted.length === 0 && (
-              <p className="text-center text-sm text-white/35 py-10">Nenhum pedido encontrado</p>
+              <p className="text-center text-sm text-t4 py-10">Nenhum pedido encontrado</p>
             )}
           </div>
         ) : (
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/8 bg-white/4">
+              <tr className="border-b border-line-soft bg-surface-2">
                 <SortableHeader label="NF" col="nf_number" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
                 <SortableHeader label="Cliente" col="customer_name" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
                 <SortableHeader label="Seller" col="seller_name" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
                 <SortableHeader label="Transportadora" col="carrier" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
                 <SortableHeader label="Status" col="status" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
                 <SortableHeader label="Data" col="order_date" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <th className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">Faturar</th>
+                <th className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">Faturar</th>
               </tr>
             </thead>
             <tbody>
@@ -1132,7 +1132,7 @@ export default function OrdersPage() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center text-sm text-white/35 py-10">
+                  <td colSpan={7} className="text-center text-sm text-t4 py-10">
                     Nenhum pedido encontrado
                   </td>
                 </tr>
@@ -1142,31 +1142,31 @@ export default function OrdersPage() {
         </div>
         )}
 
-        <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
+        <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
           {sorted.length} pedido(s) exibido(s)
         </div>
 
         {totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-white/8 flex items-center justify-between">
-            <p className="text-xs text-white/35">{sorted.length} total · mostrando {(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE, sorted.length)}</p>
+          <div className="px-4 py-3 border-t border-line-soft flex items-center justify-between">
+            <p className="text-xs text-t4">{sorted.length} total · mostrando {(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE, sorted.length)}</p>
             <div className="flex items-center gap-1">
               <button onClick={() => setPage(1)} disabled={page === 1}
-                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-white/4">«</button>
+                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-surface-2">«</button>
               <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
-                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-white/4">‹</button>
+                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-surface-2">‹</button>
               {Array.from({length: Math.min(5, totalPages)}, (_, i) => {
                 const pg = Math.max(1, Math.min(page - 2, totalPages - 4)) + i;
                 return pg <= totalPages ? (
                   <button key={pg} onClick={() => setPage(pg)}
-                    className={`px-2.5 py-1 text-xs border rounded ${page === pg ? 'bg-violet-600 text-white border-violet-600' : 'hover:bg-white/4'}`}>
+                    className={`px-2.5 py-1 text-xs border rounded ${page === pg ? 'bg-violet-600 text-t1 border-violet-600' : 'hover:bg-surface-2'}`}>
                     {pg}
                   </button>
                 ) : null;
               })}
               <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}
-                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-white/4">›</button>
+                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-surface-2">›</button>
               <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-white/4">»</button>
+                className="px-2 py-1 text-xs border rounded disabled:opacity-30 hover:bg-surface-2">»</button>
             </div>
           </div>
         )}
@@ -1203,11 +1203,11 @@ export default function OrdersPage() {
         <BottomSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filtros">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Tipo da movimentação (arquivo)</label>
+              <label className="block text-xs text-t4 mb-1.5">Tipo da movimentação (arquivo)</label>
               <select
                 value={fileTypeFilter}
                 onChange={e => setFileTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todos os tipos</option>
                 <option value="Saída">Saída (Expedição)</option>
@@ -1216,11 +1216,11 @@ export default function OrdersPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Faturamento</label>
+              <label className="block text-xs text-t4 mb-1.5">Faturamento</label>
               <select
                 value={billingFilter}
                 onChange={e => setBillingFilter(e.target.value as '' | 'yes' | 'no')}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todos (faturamento)</option>
                 <option value="yes">Apenas faturáveis</option>
@@ -1229,22 +1229,22 @@ export default function OrdersPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Período (data de importação)</label>
+              <label className="block text-xs text-t4 mb-1.5">Período (data de importação)</label>
               <div className="flex items-center gap-2">
                 <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
-                <span className="text-white/25 text-xs">→</span>
+                  className="flex-1 border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
+                <span className="text-t5 text-xs">→</span>
                 <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="flex-1 border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Seller</label>
+              <label className="block text-xs text-t4 mb-1.5">Seller</label>
               <select
                 value={sellerFilter}
                 onChange={e => setSellerFilter(e.target.value)}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todos os sellers</option>
                 {uniqueSellers.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1252,11 +1252,11 @@ export default function OrdersPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Transportadora</label>
+              <label className="block text-xs text-t4 mb-1.5">Transportadora</label>
               <select
                 value={carrierFilter}
                 onChange={e => setCarrierFilter(e.target.value)}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todas as transportadoras</option>
                 {uniqueCarriers.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1264,11 +1264,11 @@ export default function OrdersPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Status</label>
+              <label className="block text-xs text-t4 mb-1.5">Status</label>
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todos os status</option>
                 {Object.entries(STATUS_CONFIG)
@@ -1286,14 +1286,14 @@ export default function OrdersPage() {
                     setFileTypeFilter(''); setBillingFilter(''); setDateFrom(''); setDateTo('');
                     setSellerFilter(''); setCarrierFilter(''); setStatusFilter('');
                   }}
-                  className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                  className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
                 >
                   Limpar tudo
                 </button>
               )}
               <button
                 onClick={() => setFiltersOpen(false)}
-                className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-600 rounded-xl hover:bg-violet-500 transition"
+                className="flex-1 py-2.5 text-sm font-semibold text-t1 bg-violet-600 rounded-xl hover:bg-violet-500 transition"
               >
                 Ver {sorted.length} pedido(s)
               </button>

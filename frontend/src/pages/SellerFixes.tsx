@@ -60,14 +60,14 @@ export default function SellerFixesPage() {
   return (
     <div className="p-6 space-y-5 min-h-full">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/sellers')} className="text-white/40 hover:text-white transition">
+        <button onClick={() => navigate('/sellers')} className="text-t4 hover:text-t1 transition">
           <ArrowLeft size={18} />
         </button>
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Wrench size={20} className="text-amber-400" /> Corrigir sellers sem unidade
+          <h1 className="text-xl font-bold text-t1 flex items-center gap-2">
+            <Wrench size={20} className="text-warn" /> Corrigir sellers sem unidade
           </h1>
-          <p className="text-sm text-white/40 mt-0.5">
+          <p className="text-sm text-t4 mt-0.5">
             {pending.length} pendência(s) — geralmente um seller duplicado com pedidos presos, ou um
             cadastro novo que só falta associar a uma unidade.
           </p>
@@ -75,25 +75,25 @@ export default function SellerFixesPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-white/40 text-sm">Carregando...</p>
+        <p className="text-t4 text-sm">Carregando...</p>
       ) : pending.length === 0 ? (
-        <div className="bg-emerald-900/20 border border-emerald-500/20 rounded-xl px-4 py-6 text-center text-emerald-300 text-sm">
+        <div className="bg-ok-soft border border-ok/20 rounded-xl px-4 py-6 text-center text-ok text-sm">
           Nenhuma pendência — todos os sellers ativos têm unidade associada.
         </div>
       ) : (
         <div className="space-y-3">
           {(pending as any[]).map((s: any) => (
-            <div key={s.id} className="bg-gray-900 border border-white/10 rounded-xl p-4">
+            <div key={s.id} className="bg-surface border border-line rounded-xl p-4">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-white">{s.trade_name}</p>
-                  <p className="text-xs text-white/40">{s.order_count} pedido(s) presos neste cadastro</p>
+                  <p className="text-sm font-semibold text-t1">{s.trade_name}</p>
+                  <p className="text-xs text-t4">{s.order_count} pedido(s) presos neste cadastro</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <select
                     value={choice[s.id] || ''}
                     onChange={e => setChoice(prev => ({ ...prev, [s.id]: e.target.value }))}
-                    className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white min-w-[240px]"
+                    className="bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1 min-w-[240px]"
                   >
                     <option value="" disabled>Selecione uma ação...</option>
                     <option value="unit">Não é duplicado — só associar uma unidade</option>
@@ -107,7 +107,7 @@ export default function SellerFixesPage() {
                     <select
                       value={unitChoice[s.id] || ''}
                       onChange={e => setUnitChoice(prev => ({ ...prev, [s.id]: Number(e.target.value) }))}
-                      className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                      className="bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
                     >
                       <option value="" disabled>Unidade...</option>
                       {(units as any[]).map((u: any) => (
@@ -118,7 +118,7 @@ export default function SellerFixesPage() {
                   <button
                     onClick={() => handleApply(s)}
                     disabled={busyId === s.id || !choice[s.id]}
-                    className="px-3 py-1.5 text-xs rounded-lg font-medium text-white transition disabled:opacity-40"
+                    className="px-3 py-1.5 text-xs rounded-lg font-medium text-t1 transition disabled:opacity-40"
                     style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
                   >
                     {busyId === s.id ? 'Aplicando...' : 'Aplicar'}

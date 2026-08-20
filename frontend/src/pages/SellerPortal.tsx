@@ -23,7 +23,9 @@ import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 import { todayBrasiliaStr } from '../timezone';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
+import ThemeToggle from '../components/ThemeToggle';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -35,13 +37,13 @@ interface SortState { col: string; dir: SortDir }
 // ─── Configurações ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  pending:     { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
-  validated:   { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
-  separating:  { label: 'Separação do Produto', cls: 'bg-blue-900/40 text-blue-300' },
+  pending:     { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
+  validated:   { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
+  separating:  { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
   scanning:    { label: 'Em Preparação',        cls: 'bg-violet-900/40 text-violet-300' },
-  completed:   { label: 'Concluído',            cls: 'bg-green-900/40 text-green-300' },
-  interrupted: { label: 'Interrompido',         cls: 'bg-orange-900/40 text-orange-300' },
-  cancelled:   { label: 'Cancelado',            cls: 'bg-red-900/40 text-red-400' },
+  completed:   { label: 'Concluído',            cls: 'bg-ok-soft text-ok' },
+  interrupted: { label: 'Interrompido',         cls: 'bg-warn-soft text-warn' },
+  cancelled:   { label: 'Cancelado',            cls: 'bg-bad-soft text-bad' },
 };
 
 // ─── Header de coluna com sort ────────────────────────────────────────────────
@@ -60,8 +62,8 @@ function SortTh({
   return (
     <th
       className={`text-[11px] font-semibold uppercase tracking-wide py-2.5 px-3 cursor-pointer select-none
-        hover:text-white/80 transition whitespace-nowrap ${textMap[align]}
-        ${active ? 'text-violet-300' : 'text-white/45'}`}
+        hover:text-t2 transition whitespace-nowrap ${textMap[align]}
+        ${active ? 'text-violet-300' : 'text-t3'}`}
       style={width ? { width } : undefined}
       onClick={() => onSort(col)}
     >
@@ -84,6 +86,7 @@ function SkuDetailModal({
 }) {
   const isMobile = useIsMobile();
   const [days, setDays] = useState(90);
+  const chartColors = useChartColors();
   const { data, isLoading } = useQuery(
     ['sku-history-portal', sellerId, sku, days],
     () => inventoryApi.skuHistory(sellerId, sku, days).then(r => r.data),
@@ -94,7 +97,7 @@ function SkuDetailModal({
     <select
       value={days}
       onChange={e => setDays(Number(e.target.value))}
-      className="border border-white/12 rounded-lg px-2 py-1.5 text-xs bg-gray-800 text-white outline-none focus:ring-2 focus:ring-violet-500"
+      className="border border-line rounded-lg px-2 py-1.5 text-xs bg-surface-2 text-t1 outline-none focus:ring-2 focus:ring-violet-500"
     >
       <option value={30}>30 dias</option>
       <option value={60}>60 dias</option>
@@ -104,25 +107,25 @@ function SkuDetailModal({
   );
 
   const body = isLoading ? (
-    <div className="flex items-center justify-center h-48 text-white/35 text-sm">Carregando...</div>
+    <div className="flex items-center justify-center h-48 text-t4 text-sm">Carregando...</div>
   ) : data ? (
           <div className={isMobile ? 'space-y-5' : 'p-5 space-y-5'}>
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Saldo Atual',         value: data.current_stock,       color: 'text-white',      unit: '' },
-                { label: 'Média Diária (60d)',   value: data.avg_daily_sales_60d, color: 'text-blue-400',   unit: '/dia' },
-                { label: 'Total Saídas Período', value: data.total_sales_period,  color: 'text-red-400',    unit: '' },
+                { label: 'Saldo Atual',         value: data.current_stock,       color: 'text-t1',      unit: '' },
+                { label: 'Média Diária (60d)',   value: data.avg_daily_sales_60d, color: 'text-info',   unit: '/dia' },
+                { label: 'Total Saídas Período', value: data.total_sales_period,  color: 'text-bad',    unit: '' },
                 {
                   label: 'Projeção Duração',
                   value: data.days_remaining != null ? data.days_remaining : '∞',
                   color: data.days_remaining != null && data.days_remaining < 30
-                    ? 'text-red-400' : 'text-violet-400',
+                    ? 'text-bad' : 'text-violet-400',
                   unit: data.days_remaining != null ? ' dias' : '',
                 },
               ].map(k => (
-                <div key={k.label} className="bg-white/4 rounded-xl p-3 text-center">
-                  <p className="text-[10px] text-white/35 uppercase tracking-wide mb-1">{k.label}</p>
+                <div key={k.label} className="bg-surface-2 rounded-xl p-3 text-center">
+                  <p className="text-[10px] text-t4 uppercase tracking-wide mb-1">{k.label}</p>
                   <p className={`text-xl font-bold ${k.color}`}>{k.value}{k.unit}</p>
                 </div>
               ))}
@@ -131,39 +134,39 @@ function SkuDetailModal({
             {/* Gráfico barras */}
             {data.chart_data && data.chart_data.length > 0 ? (
               <div>
-                <p className="text-xs text-white/50 font-medium mb-3">Saídas e Entradas por Dia</p>
+                <p className="text-xs text-t3 font-medium mb-3">Saídas e Entradas por Dia</p>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={data.chart_data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
-                    <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }} />
-                    <Bar dataKey="saidas"   name="Saídas"   fill="#ef4444" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="entradas" name="Entradas" fill="#7B63E8" radius={[3, 3, 0, 0]} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axisText }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: chartColors.axisText }} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, background: chartColors.tooltipBg, border: `1px solid ${chartColors.tooltipBorder}`, color: chartColors.tooltipText }} />
+                    <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: chartColors.legendText }} />
+                    <Bar dataKey="saidas"   name="Saídas"   fill={chartColors.bad} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="entradas" name="Entradas" fill={chartColors.brand} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
-              <p className="text-center text-sm text-white/35 py-8">Sem movimentações no período</p>
+              <p className="text-center text-sm text-t4 py-8">Sem movimentações no período</p>
             )}
 
             {/* Alerta ruptura */}
             {data.days_remaining != null && data.days_remaining < 15 && (
-              <div className="bg-red-900/25 border border-red-500/20 rounded-xl p-3 text-sm text-red-300">
+              <div className="bg-bad-soft border border-bad/20 rounded-xl p-3 text-sm text-bad">
                 ⚠️ Atenção: com a média atual, o estoque se esgota em <strong>{data.days_remaining} dias</strong>. Considere reabastecer.
               </div>
             )}
           </div>
   ) : (
-    <p className="text-center text-sm text-white/35 py-10">Nenhum dado encontrado para este SKU.</p>
+    <p className="text-center text-sm text-t4 py-10">Nenhum dado encontrado para este SKU.</p>
   );
 
   if (isMobile) {
     return (
       <BottomSheet open onClose={onClose} title={sku}>
         <div className="flex items-center justify-between -mt-1 mb-4">
-          <p className="text-xs text-white/35">{data?.product_name}</p>
+          <p className="text-xs text-t4">{data?.product_name}</p>
           {periodSelect}
         </div>
         {body}
@@ -173,15 +176,15 @@ function SkuDetailModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-white/8 sticky top-0 bg-gray-900 z-10">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft sticky top-0 bg-surface z-10">
           <div>
-            <h2 className="text-base font-semibold text-white font-mono">{sku}</h2>
-            <p className="text-xs text-white/35 mt-0.5">{data?.product_name}</p>
+            <h2 className="text-base font-semibold text-t1 font-mono">{sku}</h2>
+            <p className="text-xs text-t4 mt-0.5">{data?.product_name}</p>
           </div>
           <div className="flex items-center gap-3">
             {periodSelect}
-            <button onClick={onClose} className="text-white/35 hover:text-white/60">
+            <button onClick={onClose} className="text-t4 hover:text-t3">
               <X size={18} />
             </button>
           </div>
@@ -345,59 +348,58 @@ export default function SellerPortalPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#0C0B18' }}>
+    <div className="flex h-screen overflow-hidden bg-app">
 
       {/* ══ SIDEBAR (desktop) ════════════════════════════════════════════════ */}
       {!isMobile && (
       <aside
-        className="w-56 flex flex-col flex-shrink-0 border-r"
-        style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)' }}
+        className="w-56 flex flex-col flex-shrink-0 border-r bg-sidebar border-brand-line"
       >
         {/* Logo + seller */}
-        <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2.5 mb-3">
             <div className="w-8 h-8 flex-shrink-0 bg-violet-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-black text-xs">K</span>
+              <span className="text-t1 font-black text-xs">K</span>
             </div>
-            <div>
-              <div className="text-xs font-bold text-white leading-tight">Kiwkiw WMS</div>
-              <div className="text-[9px] font-medium" style={{ color: 'rgba(255,255,255,0.30)' }}>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-t1 leading-tight">Kiwkiw WMS</div>
+              <div className="text-[9px] font-medium text-t4">
                 Portal do Seller
               </div>
             </div>
+            <ThemeToggle />
           </div>
           {/* Seller em destaque */}
           <div className="rounded-xl px-3 py-2.5" style={{
             background: 'linear-gradient(135deg, rgba(123,99,232,0.25) 0%, rgba(61,217,164,0.12) 100%)',
             border: '1px solid rgba(123,99,232,0.30)',
           }}>
-            <p className="text-[9px] uppercase tracking-widest font-bold mb-0.5" style={{ color: 'rgba(255,255,255,0.40)' }}>Seller</p>
-            <p className="text-sm font-bold text-white leading-tight truncate">{sellerName}</p>
+            <p className="text-[9px] uppercase tracking-widest font-bold mb-0.5 text-t4">Seller</p>
+            <p className="text-sm font-bold text-t1 leading-tight truncate">{sellerName}</p>
           </div>
         </div>
 
         {/* KPIs compactos */}
-        <div className="px-3 py-3 border-b space-y-1.5" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-2"
-            style={{ color: 'rgba(255,255,255,0.22)' }}>Hoje</p>
+        <div className="px-3 py-3 border-b border-line-soft space-y-1.5">
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 text-t5">Hoje</p>
           {[
-            { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-white/80' },
-            { label: 'Concluídos',    value: ordersCompleted,                color: 'text-green-400' },
-            { label: 'Interrompidos', value: ordersInterrupted,              color: 'text-orange-400' },
+            { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-t2' },
+            { label: 'Concluídos',    value: ordersCompleted,                color: 'text-ok' },
+            { label: 'Interrompidos', value: ordersInterrupted,              color: 'text-warn' },
             { label: 'Pendentes',     value: ordersPending,                  color: 'text-violet-400' },
-            { label: 'Estoque Baixo', value: (stock as any[]).filter((s: any) => s.level === 'BAIXO').length, color: 'text-red-400' },
+            { label: 'Estoque Baixo', value: (stock as any[]).filter((s: any) => s.level === 'BAIXO').length, color: 'text-bad' },
           ].map(k => (
             <div key={k.label} className="flex items-center justify-between">
-              <span className="text-[11px] text-white/40">{k.label}</span>
+              <span className="text-[11px] text-t4">{k.label}</span>
               <span className={`text-sm font-bold ${k.color}`}>{k.value}</span>
             </div>
           ))}
           <div className="mt-2">
-            <div className="flex justify-between text-[10px] text-white/30 mb-1">
+            <div className="flex justify-between text-[10px] text-t4 mb-1">
               <span>Progresso</span>
               <span>{completionPct.toFixed(0)}%</span>
             </div>
-            <div className="w-full bg-white/10 rounded-full h-1.5">
+            <div className="w-full bg-surface-2 rounded-full h-1.5">
               <div className="bg-violet-500 h-1.5 rounded-full transition-all"
                 style={{ width: `${completionPct}%` }} />
             </div>
@@ -406,8 +408,7 @@ export default function SellerPortalPage() {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-3 px-2.5">
-          <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]"
-            style={{ color: 'rgba(255,255,255,0.22)' }}>Consultas</p>
+          <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-t5">Consultas</p>
           {navItems.map(({ id, label, icon: Icon }) => {
             const isActive = tab === id;
             return (
@@ -415,14 +416,14 @@ export default function SellerPortalPage() {
                 key={id}
                 onClick={() => { setTab(id); setSearch(''); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all mb-0.5 text-left
-                  ${isActive ? 'text-white font-medium' : 'text-white/50 hover:text-white/80 hover:bg-white/5'}`}
+                  ${isActive ? 'text-t1 font-medium' : 'text-t3 hover:text-t2 hover:bg-surface-2'}`}
                 style={isActive ? {
-                  background: 'rgba(123,99,232,0.18)',
-                  border: '1px solid rgba(123,99,232,0.28)',
-                  color: 'rgba(255,255,255,0.92)',
+                  background: 'rgb(var(--brand-soft))',
+                  border: '1px solid rgb(var(--brand-line))',
+                  color: 'rgb(var(--t1))',
                 } : {}}
               >
-                <Icon size={14} style={isActive ? { color: '#9B87F0' } : {}} />
+                <Icon size={14} style={isActive ? { color: 'rgb(var(--brand))' } : {}} />
                 {label}
               </button>
             );
@@ -431,29 +432,29 @@ export default function SellerPortalPage() {
         </nav>
 
         {/* User / Logout */}
-        <div className="p-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-3 border-t border-line-soft">
           <div className="flex items-center gap-2.5 mb-2.5">
             <div className="w-8 h-8 rounded-lg bg-violet-900/50 flex items-center justify-center flex-shrink-0">
               <span className="text-xs font-bold text-violet-300">{initials}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-[12px] font-semibold text-white/80 truncate">{user.name}</p>
-              <p className="text-[10px] text-white/30 truncate">
+              <p className="text-[12px] font-semibold text-t2 truncate">{user.name}</p>
+              <p className="text-[10px] text-t4 truncate">
                 {format(new Date(), 'dd/MM/yyyy', { locale: ptBR })}
               </p>
             </div>
           </div>
           <button
             onClick={() => setShowPwdModal(true)}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-white/40
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-t4
               hover:text-violet-400 hover:bg-violet-900/15 transition mb-1"
           >
             <KeyRound size={12} /> Alterar senha
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-white/40
-              hover:text-red-400 hover:bg-red-900/15 transition"
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-t4
+              hover:text-bad hover:bg-bad-soft transition"
           >
             <LogOut size={12} /> Sair
           </button>
@@ -464,33 +465,33 @@ export default function SellerPortalPage() {
       {/* Modal alterar senha */}
       {showPwdModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-xs p-6">
+          <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-xs p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-white text-sm flex items-center gap-2"><KeyRound size={15} className="text-violet-400" /> Alterar Senha</h3>
-              <button onClick={() => setShowPwdModal(false)} className="text-white/35 hover:text-white/60"><X size={16} /></button>
+              <h3 className="font-semibold text-t1 text-sm flex items-center gap-2"><KeyRound size={15} className="text-violet-400" /> Alterar Senha</h3>
+              <button onClick={() => setShowPwdModal(false)} className="text-t4 hover:text-t3"><X size={16} /></button>
             </div>
             <form onSubmit={handlePwdSave} className="space-y-3">
               <div>
-                <label className="block text-xs text-white/50 mb-1">Senha atual *</label>
+                <label className="block text-xs text-t3 mb-1">Senha atual *</label>
                 <input type="password" value={pwdForm.current} onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div>
-                <label className="block text-xs text-white/50 mb-1">Nova senha *</label>
+                <label className="block text-xs text-t3 mb-1">Nova senha *</label>
                 <input type="password" value={pwdForm.next} onChange={e => setPwdForm(p => ({ ...p, next: e.target.value }))}
                   placeholder="Mínimo 6 caracteres"
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div>
-                <label className="block text-xs text-white/50 mb-1">Confirmar *</label>
+                <label className="block text-xs text-t3 mb-1">Confirmar *</label>
                 <input type="password" value={pwdForm.confirm} onChange={e => setPwdForm(p => ({ ...p, confirm: e.target.value }))}
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => setShowPwdModal(false)}
-                  className="flex-1 py-2 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/4">Cancelar</button>
+                  className="flex-1 py-2 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2">Cancelar</button>
                 <button type="submit" disabled={pwdSaving}
-                  className="flex-1 py-2 text-xs text-white bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-50">
+                  className="flex-1 py-2 text-xs text-t1 bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-50">
                   {pwdSaving ? 'Salvando...' : 'Salvar'}
                 </button>
               </div>
@@ -504,22 +505,23 @@ export default function SellerPortalPage() {
 
         {/* Topo (mobile) — nome do seller + acesso rápido a senha/logout */}
         {isMobile && (
-          <div className="flex items-center gap-1.5 px-4 py-3 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-1.5 px-4 py-3 border-b border-line-soft flex-shrink-0">
             <div className="flex-1 min-w-0">
-              <p className="text-[9px] uppercase tracking-widest font-bold" style={{ color: 'rgba(255,255,255,0.35)' }}>Seller</p>
-              <p className="text-sm font-bold text-white truncate">{sellerName}</p>
+              <p className="text-[9px] uppercase tracking-widest font-bold text-t4">Seller</p>
+              <p className="text-sm font-bold text-t1 truncate">{sellerName}</p>
             </div>
+            <ThemeToggle />
             <button
               onClick={() => setShowPwdModal(true)}
               aria-label="Alterar senha"
-              className="w-9 h-9 flex items-center justify-center rounded-lg text-white/40 hover:text-violet-400 hover:bg-violet-900/15 transition"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-t4 hover:text-violet-400 hover:bg-violet-900/15 transition"
             >
               <KeyRound size={16} />
             </button>
             <button
               onClick={handleLogout}
               aria-label="Sair"
-              className="w-9 h-9 flex items-center justify-center rounded-lg text-white/40 hover:text-red-400 hover:bg-red-900/15 transition"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-t4 hover:text-bad hover:bg-bad-soft transition"
             >
               <LogOut size={16} />
             </button>
@@ -531,18 +533,18 @@ export default function SellerPortalPage() {
 
           {/* Aviso de estoque baixo (mobile) — substitui os KPIs fixos da sidebar */}
           {isMobile && lowStockCount > 0 && (
-            <div className="flex items-center gap-2.5 rounded-xl border border-red-500/25 px-3.5 py-2.5" style={{ background: 'rgba(226,75,74,0.08)' }}>
-              <span className="text-base font-bold text-red-400">{lowStockCount}</span>
-              <span className="text-xs text-red-300/85 flex-1">SKU{lowStockCount > 1 ? 's' : ''} em nível baixo de estoque</span>
+            <div className="flex items-center gap-2.5 rounded-xl border border-bad/25 px-3.5 py-2.5" style={{ background: 'rgba(226,75,74,0.08)' }}>
+              <span className="text-base font-bold text-bad">{lowStockCount}</span>
+              <span className="text-xs text-bad/85 flex-1">SKU{lowStockCount > 1 ? 's' : ''} em nível baixo de estoque</span>
             </div>
           )}
 
           {/* Header */}
           <div>
-            <h1 className="text-xl font-bold text-white">
+            <h1 className="text-xl font-bold text-t1">
               {navItems.find(n => n.id === tab)?.label}
             </h1>
-            <p className="text-sm text-white/35 mt-0.5">
+            <p className="text-sm text-t4 mt-0.5">
               {tab === 'orders'    ? 'Acompanhe o status dos seus pedidos do dia' : ''}
               {tab === 'stock'     ? 'Posição atual — clique em uma linha para ver o gráfico do SKU' : ''}
               {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
@@ -553,60 +555,58 @@ export default function SellerPortalPage() {
           {tab === 'orders' && (
             <>
               {/* Filtros: período + busca + status */}
-              <div className="flex gap-3 flex-wrap items-center bg-gray-900/60 border border-white/8 rounded-xl px-4 py-3">
+              <div className="flex gap-3 flex-wrap items-center bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
                 <div className="flex items-center gap-2">
                   <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
-                  <span className="text-xs text-white/40">De</span>
+                  <span className="text-xs text-t4">De</span>
                   <input
                     type="date"
                     value={dateFrom}
                     onChange={e => setDateFrom(e.target.value)}
-                    className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
-                    style={{ background: '#14122A', colorScheme: 'dark' }}
+                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2"
                   />
-                  <span className="text-xs text-white/40">até</span>
+                  <span className="text-xs text-t4">até</span>
                   <input
                     type="date"
                     value={dateTo}
                     onChange={e => setDateTo(e.target.value)}
-                    className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
-                    style={{ background: '#14122A', colorScheme: 'dark' }}
+                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2"
                   />
                 </div>
 
                 <div className="relative flex-1 min-w-[160px]">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar NF ou cliente..."
-                    className="w-full pl-7 pr-3 py-1.5 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                    className="w-full pl-7 pr-3 py-1.5 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
 
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                  className="border border-white/12 rounded-lg px-3 py-1.5 text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500">
+                  className="border border-line rounded-lg px-3 py-1.5 text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500">
                   <option value="">Todos os status</option>
                   {Array.from(new Set(Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([, v]) => v.label)))
                     .map(label => <option key={label} value={label}>{label}</option>)}
                 </select>
               </div>
 
-              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+              <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-white/4 border-b border-white/8">
+                    <tr className="bg-surface-2 border-b border-line-soft">
                       {['NF', 'Cliente Final', 'Transportadora', 'Data Upload', 'Status'].map(h => (
-                        <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                        <th key={h} className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredOrders.length > 0 ? filteredOrders.map((o: any) => {
-                      const st = STATUS_CONFIG[o.status] ?? { label: o.status, cls: 'bg-gray-700 text-white/50' };
+                      const st = STATUS_CONFIG[o.status] ?? { label: o.status, cls: 'bg-line-strong text-t3' };
                       return (
-                        <tr key={o.id} className="border-b border-white/5 hover:bg-white/4">
-                          <td className="py-2.5 px-3 text-sm font-mono text-white/80">{o.nf_number}</td>
-                          <td className="py-2.5 px-3 text-sm text-white/90">{o.customer_name}</td>
-                          <td className="py-2.5 px-3 text-sm text-white/50">{o.carrier || '—'}</td>
-                          <td className="py-2.5 px-3 text-sm text-white/50">
+                        <tr key={o.id} className="border-b border-line-soft hover:bg-surface-2">
+                          <td className="py-2.5 px-3 text-sm font-mono text-t2">{o.nf_number}</td>
+                          <td className="py-2.5 px-3 text-sm text-t1">{o.customer_name}</td>
+                          <td className="py-2.5 px-3 text-sm text-t3">{o.carrier || '—'}</td>
+                          <td className="py-2.5 px-3 text-sm text-t3">
                             {o.imported_at ? format(new Date(o.imported_at), 'dd/MM/yy') : o.order_date ? format(new Date(o.order_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                           </td>
                           <td className="py-2.5 px-3">
@@ -615,11 +615,11 @@ export default function SellerPortalPage() {
                         </tr>
                       );
                     }) : (
-                      <tr><td colSpan={5} className="text-center text-sm text-white/35 py-10">Nenhum pedido encontrado</td></tr>
+                      <tr><td colSpan={5} className="text-center text-sm text-t4 py-10">Nenhum pedido encontrado</td></tr>
                     )}
                   </tbody>
                 </table>
-                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
+                <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
                   {filteredOrders.length} pedido(s)
                   {dateFrom === dateTo
                     ? ` · ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy")}`
@@ -634,10 +634,10 @@ export default function SellerPortalPage() {
           {tab === 'stock' && (
             <>
               <div className="relative max-w-sm">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                 <input value={search} onChange={e => setSearch(e.target.value)}
                   placeholder="Buscar SKU ou produto..."
-                  className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
 
               {isMobile ? (
@@ -650,47 +650,47 @@ export default function SellerPortalPage() {
                       s.level === 'ALTO'  ? '#7B63E8' :
                       s.level === 'MÉDIO' ? '#F0C87E' : '#E24B4A';
                     const forecastCls =
-                      fs === 'Sem Produto'            ? 'bg-red-900/60 text-red-300 font-bold' :
-                      fs === 'Sem Dados Suficientes'  ? 'bg-gray-700/50 text-white/35' :
-                      fs === 'Baixo'                  ? 'bg-red-900/50 text-red-300 font-semibold' :
-                      fs === 'Médio'                  ? 'bg-yellow-900/40 text-yellow-300' :
-                      fs === 'Alto'                   ? 'bg-green-900/40 text-green-300' : 'bg-gray-700/40 text-white/40';
+                      fs === 'Sem Produto'            ? 'bg-bad-soft text-bad font-bold' :
+                      fs === 'Sem Dados Suficientes'  ? 'bg-line-strong/50 text-t4' :
+                      fs === 'Baixo'                  ? 'bg-bad-soft text-bad font-semibold' :
+                      fs === 'Médio'                  ? 'bg-warn-soft text-warn' :
+                      fs === 'Alto'                   ? 'bg-ok-soft text-ok' : 'bg-line-strong/40 text-t4';
                     return (
                       <div
                         key={s.sku}
                         onClick={() => setSelectedSku(s.sku)}
-                        className="flex gap-2.5 p-3 rounded-xl border border-white/8 bg-gray-900 active:bg-white/5 cursor-pointer"
+                        className="flex gap-2.5 p-3 rounded-xl border border-line-soft bg-surface active:bg-surface-2 cursor-pointer"
                       >
                         <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: stripe }} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-baseline justify-between gap-2">
-                            <span className="text-sm font-semibold text-white/90 truncate">{s.product_name}</span>
-                            <span className={`text-base font-bold tabular-nums flex-shrink-0 ${noStock ? 'text-red-400' : 'text-white'}`}>{stockVal}</span>
+                            <span className="text-sm font-semibold text-t1 truncate">{s.product_name}</span>
+                            <span className={`text-base font-bold tabular-nums flex-shrink-0 ${noStock ? 'text-bad' : 'text-t1'}`}>{stockVal}</span>
                           </div>
-                          <p className="text-[11px] font-mono text-white/30 mt-0.5">{s.sku}</p>
+                          <p className="text-[11px] font-mono text-t4 mt-0.5">{s.sku}</p>
                           <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                            <span className="text-[11px] text-white/40">entradas <b className="text-teal-400 font-medium">+{s.total_in ?? s.entries ?? 0}</b></span>
-                            <span className="text-[11px] text-white/40">saídas <b className="text-red-400 font-medium">-{s.total_out ?? s.exits ?? 0}</b></span>
+                            <span className="text-[11px] text-t4">entradas <b className="text-ok font-medium">+{s.total_in ?? s.entries ?? 0}</b></span>
+                            <span className="text-[11px] text-t4">saídas <b className="text-bad font-medium">-{s.total_out ?? s.exits ?? 0}</b></span>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full ${forecastCls}`}>{fs || s.level || '—'}</span>
                           </div>
                           {s.days_remaining != null && (
-                            <p className="text-[11px] text-white/50 mt-1">previsão: {s.days_remaining} dia{s.days_remaining === 1 ? '' : 's'}</p>
+                            <p className="text-[11px] text-t3 mt-1">previsão: {s.days_remaining} dia{s.days_remaining === 1 ? '' : 's'}</p>
                           )}
                         </div>
                       </div>
                     );
                   }) : (
-                    <p className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</p>
+                    <p className="text-center text-sm text-t4 py-10">Nenhum produto no estoque</p>
                   )}
                   {filteredStock.length > 0 && (
-                    <p className="text-xs text-white/30 text-center pt-1">{filteredStock.length} SKU(s) — toque para ver o gráfico</p>
+                    <p className="text-xs text-t4 text-center pt-1">{filteredStock.length} SKU(s) — toque para ver o gráfico</p>
                   )}
                 </div>
               ) : (
-              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+              <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full table-fixed">
                   <thead>
-                    <tr className="bg-white/4 border-b border-white/8">
+                    <tr className="bg-surface-2 border-b border-line-soft">
                       <SortTh label="SKU"       col="sku"              sort={sort} onSort={handleSort} align="left"   width="120px" />
                       <SortTh label="Produto"   col="product_name"    sort={sort} onSort={handleSort} align="left"   width="auto" />
                       <SortTh label="Entradas"  col="total_in"        sort={sort} onSort={handleSort} align="right"  width="90px" />
@@ -706,39 +706,39 @@ export default function SellerPortalPage() {
                       const fs       = s.forecast_status ?? '';
                       const noStock  = stockVal <= 0;
                       const isLow    = fs === 'Baixo';
-                      const rowBg    = noStock ? 'bg-red-950/30' : isLow ? 'bg-orange-950/20' : '';
+                      const rowBg    = noStock ? 'bg-bad-soft' : isLow ? 'bg-warn-soft' : '';
                       const levelCls =
                         s.level === 'ALTO'  ? 'bg-violet-900/40 text-violet-300' :
-                        s.level === 'MÉDIO' ? 'bg-yellow-900/40 text-yellow-300' :
-                                              'bg-red-900/40 text-red-400';
+                        s.level === 'MÉDIO' ? 'bg-warn-soft text-warn' :
+                                              'bg-bad-soft text-bad';
                       const forecastCls =
-                        fs === 'Sem Produto'            ? 'bg-red-900/60 text-red-300 font-bold' :
-                        fs === 'Sem Dados Suficientes'  ? 'bg-gray-700/50 text-white/35' :
-                        fs === 'Baixo'                  ? 'bg-red-900/50 text-red-300 font-semibold' :
-                        fs === 'Médio'                  ? 'bg-yellow-900/40 text-yellow-300' :
-                        fs === 'Alto'                   ? 'bg-green-900/40 text-green-300' : 'bg-gray-700/40 text-white/40';
+                        fs === 'Sem Produto'            ? 'bg-bad-soft text-bad font-bold' :
+                        fs === 'Sem Dados Suficientes'  ? 'bg-line-strong/50 text-t4' :
+                        fs === 'Baixo'                  ? 'bg-bad-soft text-bad font-semibold' :
+                        fs === 'Médio'                  ? 'bg-warn-soft text-warn' :
+                        fs === 'Alto'                   ? 'bg-ok-soft text-ok' : 'bg-line-strong/40 text-t4';
                       return (
                         <tr
                           key={s.sku}
                           onClick={() => setSelectedSku(s.sku)}
-                          className={`border-b border-white/5 cursor-pointer transition hover:bg-violet-900/15 ${rowBg}`}
+                          className={`border-b border-line-soft cursor-pointer transition hover:bg-violet-900/15 ${rowBg}`}
                           title="Clique para ver gráfico deste SKU"
                         >
                           <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80 align-middle">{s.sku}</td>
-                          <td className="py-2.5 px-3 text-sm text-white/90 truncate align-middle" style={{maxWidth:'220px'}}>{s.product_name}</td>
-                          <td className="py-2.5 px-3 text-sm text-teal-400 font-medium text-right tabular-nums align-middle">
+                          <td className="py-2.5 px-3 text-sm text-t1 truncate align-middle" style={{maxWidth:'220px'}}>{s.product_name}</td>
+                          <td className="py-2.5 px-3 text-sm text-ok font-medium text-right tabular-nums align-middle">
                             +{s.total_in ?? s.entries ?? 0}
                           </td>
-                          <td className="py-2.5 px-3 text-sm text-red-400 font-medium text-right tabular-nums align-middle">
+                          <td className="py-2.5 px-3 text-sm text-bad font-medium text-right tabular-nums align-middle">
                             -{s.total_out ?? s.exits ?? 0}
                           </td>
-                          <td className={`py-2.5 px-3 text-sm font-bold text-right tabular-nums align-middle ${noStock ? 'text-red-400' : 'text-white'}`}>
+                          <td className={`py-2.5 px-3 text-sm font-bold text-right tabular-nums align-middle ${noStock ? 'text-bad' : 'text-t1'}`}>
                             {stockVal}
                           </td>
                           <td className="py-2.5 px-3 text-right tabular-nums align-middle">
                             {s.days_remaining != null
-                              ? <span className="text-sm text-white/70">{s.days_remaining}d</span>
-                              : <span className="text-xs text-white/25">—</span>}
+                              ? <span className="text-sm text-t2">{s.days_remaining}d</span>
+                              : <span className="text-xs text-t5">—</span>}
                           </td>
                           <td className="py-2.5 px-3 text-center align-middle">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs ${forecastCls}`}>
@@ -748,11 +748,11 @@ export default function SellerPortalPage() {
                         </tr>
                       );
                     }) : (
-                      <tr><td colSpan={7} className="text-center text-sm text-white/35 py-10">Nenhum produto no estoque</td></tr>
+                      <tr><td colSpan={7} className="text-center text-sm text-t4 py-10">Nenhum produto no estoque</td></tr>
                     )}
                   </tbody>
                 </table>
-                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35 flex items-center gap-2">
+                <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4 flex items-center gap-2">
                   <BarChart2 size={11} className="text-violet-400" />
                   {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar · Previsão baseada na média dos últimos 60 dias
                 </div>
@@ -767,15 +767,15 @@ export default function SellerPortalPage() {
               {/* Barra de busca + tipo + exportar */}
               <div className="flex gap-3 items-center flex-wrap">
                 <div className="relative flex-1 min-w-[160px]">
-                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35" />
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar SKU, produto ou NF..."
-                    className="w-full pl-7 pr-3 py-2 border border-white/12 rounded-lg text-sm bg-gray-900 text-white outline-none focus:ring-2 focus:ring-violet-500" />
+                    className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
                 {isMobile ? (
                   <button
                     onClick={() => setMovFiltersOpen(true)}
-                    className="relative flex items-center gap-1.5 px-3 py-2 text-xs text-white/60 bg-white/5 border border-white/12 rounded-lg flex-shrink-0"
+                    className="relative flex items-center gap-1.5 px-3 py-2 text-xs text-t3 bg-surface-2 border border-line rounded-lg flex-shrink-0"
                   >
                     <SlidersHorizontal size={13} />
                     Filtros
@@ -789,7 +789,7 @@ export default function SellerPortalPage() {
                     <select
                       value={movTypeFilter}
                       onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-                      className="px-3 py-2 rounded-lg text-sm border border-white/12 bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                      className="px-3 py-2 rounded-lg text-sm border border-line bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
                     >
                       <option value="">Todos os tipos</option>
                       <option value="Entrada">Entrada</option>
@@ -798,7 +798,7 @@ export default function SellerPortalPage() {
                     {sellerId && (
                       <button
                         onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); }}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-white/12 text-white/60 hover:text-white hover:bg-white/5 hover:border-white/20"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-line text-t3 hover:text-t1 hover:bg-surface-2 hover:border-line-strong"
                       >
                         <Download size={14} />
                         Exportar CSV
@@ -806,21 +806,19 @@ export default function SellerPortalPage() {
                     )}
                   </>
                 )}
-                <span className="text-xs text-white/30 ml-auto">{filteredMovements.length} registros</span>
+                <span className="text-xs text-t4 ml-auto">{filteredMovements.length} registros</span>
               </div>
 
               {/* Filtro de datas das movimentações (desktop; no mobile fica na folha "Filtros") */}
               {!isMobile && (
-              <div className="flex gap-3 flex-wrap items-center bg-gray-900/60 border border-white/8 rounded-xl px-4 py-3">
+              <div className="flex gap-3 flex-wrap items-center bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
                 <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
-                <span className="text-xs text-white/40">De</span>
+                <span className="text-xs text-t4">De</span>
                 <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
-                  className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
-                  style={{ background: '#14122A', colorScheme: 'dark' }} />
-                <span className="text-xs text-white/40">até</span>
+                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
+                <span className="text-xs text-t4">até</span>
                 <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
-                  className="border border-white/12 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-white/80"
-                  style={{ background: '#14122A', colorScheme: 'dark' }} />
+                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
               </div>
               )}
 
@@ -829,36 +827,36 @@ export default function SellerPortalPage() {
                   {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => {
                     const isIn = m.movement_type === 'Entrada';
                     return (
-                      <div key={m.id ?? i} className="p-3 rounded-xl border border-white/8 bg-gray-900">
+                      <div key={m.id ?? i} className="p-3 rounded-xl border border-line-soft bg-surface">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-white/90 truncate">{m.product_name}</span>
-                          <span className={`text-base font-bold tabular-nums flex-shrink-0 ${isIn ? 'text-teal-400' : 'text-red-400'}`}>
+                          <span className="text-sm font-medium text-t1 truncate">{m.product_name}</span>
+                          <span className={`text-base font-bold tabular-nums flex-shrink-0 ${isIn ? 'text-ok' : 'text-bad'}`}>
                             {isIn ? '+' : '-'}{m.quantity}
                           </span>
                         </div>
-                        <p className="text-[11px] font-mono text-white/30 mt-0.5">{m.sku}</p>
+                        <p className="text-[11px] font-mono text-t4 mt-0.5">{m.sku}</p>
                         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${isIn ? 'bg-teal-900/30 text-teal-300' : 'bg-red-900/30 text-red-300'}`}>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${isIn ? 'bg-ok-soft text-ok' : 'bg-bad-soft text-bad'}`}>
                             {m.movement_type}
                           </span>
-                          <span className="text-[11px] text-white/35">
+                          <span className="text-[11px] text-t4">
                             {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                           </span>
                           {m.nf_number && (
-                            <span className="text-[11px] font-mono text-white/25">NF {m.nf_number}</span>
+                            <span className="text-[11px] font-mono text-t5">NF {m.nf_number}</span>
                           )}
                         </div>
                       </div>
                     );
                   }) : (
-                    <p className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</p>
+                    <p className="text-center text-sm text-t4 py-10">Nenhuma movimentação encontrada</p>
                   )}
                 </div>
               ) : (
-              <div className="bg-gray-900 rounded-xl border border-white/8 overflow-hidden">
+              <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-white/4 border-b border-white/8">
+                    <tr className="bg-surface-2 border-b border-line-soft">
                       {([
                         { label: 'Data',    col: 'movement_date' },
                         { label: 'Data NF', col: 'nf_date' },
@@ -870,7 +868,7 @@ export default function SellerPortalPage() {
                       ] as { label: string; col: string | null }[]).map(({ label, col }) => (
                         <th
                           key={label}
-                          className={`text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3 ${col ? 'cursor-pointer hover:text-white/80 select-none' : ''}`}
+                          className={`text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3 ${col ? 'cursor-pointer hover:text-t2 select-none' : ''}`}
                           onClick={() => {
                             if (!col) return;
                             setMovSort(s => s.col === col
@@ -890,31 +888,31 @@ export default function SellerPortalPage() {
                   </thead>
                   <tbody>
                     {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => (
-                      <tr key={m.id ?? i} className="border-b border-white/5 hover:bg-white/4">
-                        <td className="py-2.5 px-3 text-xs text-white/50">
+                      <tr key={m.id ?? i} className="border-b border-line-soft hover:bg-surface-2">
+                        <td className="py-2.5 px-3 text-xs text-t3">
                           {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                         </td>
-                        <td className="py-2.5 px-3 text-xs text-white/50">
+                        <td className="py-2.5 px-3 text-xs text-t3">
                           {m.nf_date ? format(new Date(m.nf_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
                         </td>
                         <td className="py-2.5 px-3 text-xs font-mono text-violet-300/80">{m.sku}</td>
-                        <td className="py-2.5 px-3 text-sm text-white/80 max-w-xs truncate">{m.product_name}</td>
+                        <td className="py-2.5 px-3 text-sm text-t2 max-w-xs truncate">{m.product_name}</td>
                         <td className="py-2.5 px-3">
-                          <span className={`text-xs font-semibold ${m.movement_type === 'Entrada' ? 'text-teal-400' : 'text-red-400'}`}>
+                          <span className={`text-xs font-semibold ${m.movement_type === 'Entrada' ? 'text-ok' : 'text-bad'}`}>
                             {m.movement_type}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-sm font-bold text-white">
+                        <td className="py-2.5 px-3 text-sm font-bold text-t1">
                           {m.movement_type === 'Entrada' ? '+' : '-'}{m.quantity}
                         </td>
-                        <td className="py-2.5 px-3 text-xs font-mono text-white/40">{m.nf_number || '—'}</td>
+                        <td className="py-2.5 px-3 text-xs font-mono text-t4">{m.nf_number || '—'}</td>
                       </tr>
                     )) : (
-                      <tr><td colSpan={7} className="text-center text-sm text-white/35 py-10">Nenhuma movimentação encontrada</td></tr>
+                      <tr><td colSpan={7} className="text-center text-sm text-t4 py-10">Nenhuma movimentação encontrada</td></tr>
                     )}
                   </tbody>
                 </table>
-                <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">
+                <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
                   {filteredMovements.length} movimentação(ões)
                 </div>
               </div>
@@ -928,8 +926,8 @@ export default function SellerPortalPage() {
       {/* Abas inferiores (mobile) */}
       {isMobile && (
         <nav
-          className="flex flex-shrink-0 border-t"
-          style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+          className="flex flex-shrink-0 border-t bg-sidebar border-brand-line"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           {navItems.map(({ id, label, icon: Icon }) => {
             const isActive = tab === id;
@@ -938,7 +936,7 @@ export default function SellerPortalPage() {
                 key={id}
                 onClick={() => { setTab(id); setSearch(''); }}
                 className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
-                style={{ color: isActive ? '#9B87F0' : 'rgba(255,255,255,0.40)' }}
+                style={{ color: isActive ? 'rgb(var(--brand))' : 'rgb(var(--t4))' }}
               >
                 <Icon size={18} />
                 {label}
@@ -963,11 +961,11 @@ export default function SellerPortalPage() {
         <BottomSheet open={movFiltersOpen} onClose={() => setMovFiltersOpen(false)} title="Filtros">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Tipo</label>
+              <label className="block text-xs text-t4 mb-1.5">Tipo</label>
               <select
                 value={movTypeFilter}
                 onChange={e => setMovTypeFilter(e.target.value as '' | 'Entrada' | 'Saída')}
-                className="w-full border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
               >
                 <option value="">Todos os tipos</option>
                 <option value="Entrada">Entrada</option>
@@ -975,27 +973,27 @@ export default function SellerPortalPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1.5">Período</label>
+              <label className="block text-xs text-t4 mb-1.5">Período</label>
               <div className="flex items-center gap-2">
                 <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
-                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
-                <span className="text-white/25 text-xs">→</span>
+                  className="flex-1 border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
+                <span className="text-t5 text-xs">→</span>
                 <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
-                  className="flex-1 border border-white/12 rounded-lg px-3 py-2 text-sm bg-gray-900 text-white/80 outline-none focus:ring-2 focus:ring-violet-500" />
+                  className="flex-1 border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
             </div>
             <div className="flex gap-2 pt-1">
               {(movTypeFilter || movDateFrom !== oneYearAgo || movDateTo !== today) && (
                 <button
                   onClick={() => { setMovTypeFilter(''); setMovDateFrom(oneYearAgo); setMovDateTo(today); }}
-                  className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                  className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
                 >
                   Limpar
                 </button>
               )}
               <button
                 onClick={() => setMovFiltersOpen(false)}
-                className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-600 rounded-xl hover:bg-violet-500 transition"
+                className="flex-1 py-2.5 text-sm font-semibold text-t1 bg-violet-600 rounded-xl hover:bg-violet-500 transition"
               >
                 Ver {filteredMovements.length} registro(s)
               </button>
@@ -1003,7 +1001,7 @@ export default function SellerPortalPage() {
             {sellerId && (
               <button
                 onClick={() => { inventoryApi.exportMovementsCsv(sellerId, movDateFrom || undefined, movDateTo || undefined); toast.success('Export iniciado'); setMovFiltersOpen(false); }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 text-sm rounded-xl border border-white/12 text-white/70 hover:text-white hover:bg-white/5 transition"
+                className="w-full flex items-center justify-center gap-2 py-2.5 text-sm rounded-xl border border-line text-t2 hover:text-t1 hover:bg-surface-2 transition"
               >
                 <Download size={14} />
                 Exportar CSV

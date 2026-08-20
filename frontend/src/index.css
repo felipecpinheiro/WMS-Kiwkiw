@@ -4,17 +4,113 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── CSS Custom Properties (brand palette) ─────────────────── */
+/* ── Tokens de tema ──────────────────────────────────────────────────────
+ * Triplas RGB (sem "rgb()"), para o Tailwind aplicar opacidade via
+ * rgb(var(--x) / <alpha-value>). Claro é o padrão em :root; o escuro entra
+ * por prefers-color-scheme (segue o Windows) OU por [data-theme="dark"]
+ * (escolha explícita do usuário — sempre vence sobre o sistema).
+ *
+ * A resolução do tema inicial é replicada em dois lugares que precisam
+ * ficar em sincronia manual: o <script> anti-flash em index.html (roda
+ * antes do React montar) e src/contexts/ThemeContext.tsx (assume depois).
+ * ────────────────────────────────────────────────────────────────────── */
 :root {
-  --brand-purple:       #7B63E8;
-  --brand-purple-light: #9B87F0;
-  --brand-purple-dark:  #5B47C8;
-  --brand-teal:         #3DD9A4;
-  --brand-teal-light:   #60E6B8;
-  --brand-teal-dark:    #28B885;
-  --bg-app:             #0C0B18;
-  --bg-surface:         #14122A;
-  --border-subtle:      rgba(255,255,255,0.07);
+  color-scheme: light;
+
+  /* Superfícies */
+  --app:          247 246 252;   /* #F7F6FC */
+  --surface:      255 255 255;   /* #FFFFFF */
+  --surface-2:    240 237 250;   /* #F0EDFA */
+  --sidebar:      255 255 255;
+
+  /* Linhas */
+  --line-soft:    240 237 250;   /* #F0EDFA */
+  --line:         230 226 245;   /* #E6E2F5 */
+  --line-strong:  211 203 240;   /* #D3CBF0 */
+
+  /* Texto — escala com dessaturação progressiva (proposital, ver CLAUDE.md) */
+  --t1:            33  30  60;   /* #211E3C */
+  --t2:            60  55  94;   /* #3C375E */
+  --t3:            89  85 122;   /* #59557A */
+  --t4:           114 110 143;   /* #726E8F */
+  --t5:           149 147 166;   /* #9593A6 */
+
+  /* Marca e semânticas */
+  --brand:         91  71 200;   /* #5B47C8 */
+  --brand-soft:   237 233 251;   /* #EDE9FB */
+  --brand-line:   217 209 247;   /* #D9D1F7 */
+  --ok:            22 127  92;   /* #167F5C */
+  --ok-soft:      224 245 236;   /* #E0F5EC */
+  --warn:         138  90   0;   /* #8A5A00 */
+  --warn-soft:    251 240 218;   /* #FBF0DA */
+  --bad:          179  38  30;   /* #B3261E */
+  --bad-soft:     251 230 228;   /* #FBE6E4 */
+  --info:          29  78 216;   /* #1D4ED8 */
+  --info-soft:    219 234 254;   /* #DBEAFE */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --app:           12  11  24;   /* #0C0B18 */
+    --surface:       20  18  42;   /* #14122A */
+    --surface-2:     28  26  53;   /* #1C1A35 */
+    --sidebar:       16  14  34;   /* #100E22 */
+
+    --line-soft:     30  28  56;
+    --line:          42  37  80;   /* #2A2550 */
+    --line-strong:   58  51 102;
+
+    --t1:           255 255 255;
+    --t2:           196 196 202;
+    --t3:           149 148 159;
+    --t4:           107 106 121;
+    --t5:            72  70  89;
+
+    --brand:        155 135 240;   /* #9B87F0 */
+    --brand-soft:    32  27  62;
+    --brand-line:    52  44  96;
+    --ok:            61 217 164;   /* #3DD9A4 */
+    --ok-soft:       21  46  44;
+    --warn:         251 191  36;
+    --warn-soft:     46  38  20;
+    --bad:          248 113 113;
+    --bad-soft:      48  26  30;
+    --info:         147 197 253;   /* #93C5FD */
+    --info-soft:     23  32  66;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --app:           12  11  24;
+  --surface:       20  18  42;
+  --surface-2:     28  26  53;
+  --sidebar:       16  14  34;
+
+  --line-soft:     30  28  56;
+  --line:          42  37  80;
+  --line-strong:   58  51 102;
+
+  --t1:           255 255 255;
+  --t2:           196 196 202;
+  --t3:           149 148 159;
+  --t4:           107 106 121;
+  --t5:            72  70  89;
+
+  --brand:        155 135 240;
+  --brand-soft:    32  27  62;
+  --brand-line:    52  44  96;
+  --ok:            61 217 164;
+  --ok-soft:       21  46  44;
+  --warn:         251 191  36;
+  --warn-soft:     46  38  20;
+  --bad:          248 113 113;
+  --bad-soft:      48  26  30;
+  --info:         147 197 253;
+  --info-soft:     23  32  66;
 }
 
 /* ── Base ───────────────────────────────────────────────────── */
@@ -25,44 +121,42 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Scrollbar minimalista para áreas escuras */
+  body {
+    background-color: rgb(var(--app));
+  }
+
+  /* Fade de tema — 150ms, só em propriedades de cor */
+  *, *::before, *::after {
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition: none;
+    }
+  }
+
+  /* Scrollbar minimalista */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(123, 99, 232, 0.3); border-radius: 99px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(123, 99, 232, 0.55); }
-}
 
-/* ── Form controls: dark theme override ─────────────────────── */
-/*
- * Browsers render <select> and date inputs with OS/light-theme defaults
- * (white background). Since the entire app is dark, we normalise them here
- * so every filter/selector automatically gets the right colours — no need
- * to add inline styles to every element.
- */
-select,
-input[type="date"],
-input[type="time"],
-input[type="month"],
-input[type="week"] {
-  background-color: #14122A;
-  color: rgba(255, 255, 255, 0.75);
-  color-scheme: dark;           /* makes the calendar picker dark too     */
-}
-
-select option {
-  background-color: #1C1A35;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-select option:checked,
-select option:hover {
-  background-color: #2D2A55;
-}
-
-/* Text inputs in filter bars that don't have an explicit bg */
-input[type="text"]:not([style*="background"]),
-input[type="search"] {
-  color-scheme: dark;
+  /* Fallback de tema pra select/option sem classe de fundo propria --
+     sem isso o navegador pinta com o cinza nativo dele (so color-scheme nao
+     basta). Fica em @layer base, entao qualquer classe bg ou text do
+     Tailwind no elemento continua vencendo por especificidade de camada. */
+  select,
+  input[type="date"],
+  input[type="time"],
+  input[type="month"],
+  input[type="week"] {
+    background-color: rgb(var(--surface-2));
+    color: rgb(var(--t2));
+  }
+  select option {
+    background-color: rgb(var(--surface-2));
+    color: rgb(var(--t2));
+  }
 }
 
 /* ── Utilities extras ───────────────────────────────────────── */

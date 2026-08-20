@@ -97,21 +97,21 @@ export default function BoxAlgorithmPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-white">Algoritmo de Caixas</h1>
-        <p className="text-sm text-white/50 mt-0.5">Matriz de caixas por quantidade e score do pedido</p>
+        <h1 className="text-xl font-bold text-t1">Algoritmo de Caixas</h1>
+        <p className="text-sm text-t3 mt-0.5">Matriz de caixas por quantidade e score do pedido</p>
       </div>
 
       {/* Seller selection as buttons */}
-      <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-        <p className="text-xs text-white/50 mb-3 font-medium">Selecione o Seller</p>
+      <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
+        <p className="text-xs text-t3 mb-3 font-medium">Selecione o Seller</p>
         <div className="flex flex-wrap gap-2">
           {sellers.map((s: any) => (
             <button key={s.id}
               onClick={() => { setSellerId(s.id); setCalcResult(null); }}
               className={`px-3 py-1.5 text-sm rounded-lg border font-medium transition ${
                 sellerId === s.id
-                  ? 'bg-violet-600 text-white border-violet-600'
-                  : 'bg-gray-900 text-white/60 border-white/12 hover:border-emerald-400'
+                  ? 'bg-violet-600 text-t1 border-violet-600'
+                  : 'bg-surface text-t3 border-line hover:border-ok'
               }`}>
               {s.name}
             </button>
@@ -121,15 +121,15 @@ export default function BoxAlgorithmPage() {
 
       {/* Matrix table */}
       {sellerId && (
-        <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none overflow-hidden">
-          <div className="p-4 border-b border-white/8 flex items-center justify-between">
+        <div className="bg-surface rounded-xl border border-line-soft shadow-none overflow-hidden">
+          <div className="p-4 border-b border-line-soft flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-white/80">Matriz de Caixas</h2>
-              <p className="text-xs text-white/35 mt-0.5">Linhas = Nº produtos · Colunas = Score · Cole direto do Excel</p>
+              <h2 className="text-sm font-semibold text-t2">Matriz de Caixas</h2>
+              <p className="text-xs text-t4 mt-0.5">Linhas = Nº produtos · Colunas = Score · Cole direto do Excel</p>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={handleSaveMatrix} disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-violet-600 hover:bg-violet-500 rounded-lg disabled:opacity-60 transition">
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg disabled:opacity-60 transition">
                 {saving ? <span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Check size={12} />}
                 Salvar Matriz
               </button>
@@ -139,12 +139,12 @@ export default function BoxAlgorithmPage() {
           <div className="overflow-x-auto">
             <table className="text-xs border-collapse">
               <thead>
-                <tr className="bg-white/4">
-                  <th className="sticky left-0 bg-white/4 z-10 px-3 py-2 text-xs font-semibold text-white/50 border-b border-r border-white/12 min-w-[80px]">
+                <tr className="bg-surface-2">
+                  <th className="sticky left-0 bg-surface-2 z-10 px-3 py-2 text-xs font-semibold text-t3 border-b border-r border-line min-w-[80px]">
                     Qtd ↓ / Score →
                   </th>
                   {scores.map(score => (
-                    <th key={score} className="px-2 py-2 text-center border-b border-r border-white/12 font-semibold text-white/50 min-w-[60px]">
+                    <th key={score} className="px-2 py-2 text-center border-b border-r border-line font-semibold text-t3 min-w-[60px]">
                       {editingScore === score ? (
                         <input type="number" value={newScoreVal}
                           onChange={e => setNewScoreVal(e.target.value)}
@@ -162,7 +162,7 @@ export default function BoxAlgorithmPage() {
                             }
                             setEditingScore(null);
                           }}
-                          className="w-12 text-center border border-blue-400 rounded text-xs px-1 py-0.5 outline-none"
+                          className="w-12 text-center border border-info rounded text-xs px-1 py-0.5 outline-none"
                           autoFocus />
                       ) : (
                         <span onClick={() => { setEditingScore(score); setNewScoreVal(String(score)); }}
@@ -171,7 +171,7 @@ export default function BoxAlgorithmPage() {
                     </th>
                   ))}
                   {/* + button to add score */}
-                  <th className="px-2 py-2 border-b border-white/12">
+                  <th className="px-2 py-2 border-b border-line">
                     <button onClick={() => setScores(prev => [...prev, Math.max(...prev) + 1])}
                       className="w-6 h-6 rounded-full bg-violet-900/40 text-violet-400 hover:bg-green-200 flex items-center justify-center font-bold text-base">+</button>
                   </th>
@@ -179,57 +179,57 @@ export default function BoxAlgorithmPage() {
               </thead>
               <tbody>
                 {quantities.map((qty) => (
-                  <tr key={qty} className="hover:bg-white/4">
-                    <td className="sticky left-0 bg-gray-900 px-3 py-1 font-semibold text-white/50 border-r border-b border-white/8 text-center">
+                  <tr key={qty} className="hover:bg-surface-2">
+                    <td className="sticky left-0 bg-surface px-3 py-1 font-semibold text-t3 border-r border-b border-line-soft text-center">
                       {qty} produto{qty !== 1 ? 's' : ''}
                     </td>
                     {scores.map(score => {
                       const key = `${qty}_${score}`;
                       const val = matrix[key] || '';
                       return (
-                        <td key={score} className="border-r border-b border-white/8 p-0">
+                        <td key={score} className="border-r border-b border-line-soft p-0">
                           <input
                             type="text"
                             value={val}
                             onChange={e => setMatrix(prev => ({ ...prev, [`${qty}_${score}`]: e.target.value }))}
                             onPaste={e => handleMatrixPaste(e, qty, score)}
                             placeholder="—"
-                            className={`w-full px-2 py-1.5 text-xs text-center outline-none focus:bg-violet-900/30 focus:ring-1 focus:ring-violet-400 transition ${val ? 'font-semibold text-white/90' : 'text-white/25'}`}
+                            className={`w-full px-2 py-1.5 text-xs text-center outline-none focus:bg-violet-900/30 focus:ring-1 focus:ring-violet-400 transition ${val ? 'font-semibold text-t1' : 'text-t5'}`}
                           />
                         </td>
                       );
                     })}
-                    <td className="border-b border-white/8" />
+                    <td className="border-b border-line-soft" />
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div className="p-3 bg-white/4 border-t border-white/8 flex items-center gap-3">
-            <p className="text-xs text-white/35">Dica: Selecione um intervalo no Excel e cole (Ctrl+V) diretamente na célula inicial da matriz.</p>
+          <div className="p-3 bg-surface-2 border-t border-line-soft flex items-center gap-3">
+            <p className="text-xs text-t4">Dica: Selecione um intervalo no Excel e cole (Ctrl+V) diretamente na célula inicial da matriz.</p>
           </div>
         </div>
       )}
 
       {/* Calculator */}
-      <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-5">
-        <h2 className="text-sm font-semibold text-white/80 mb-4 flex items-center gap-2">
+      <div className="bg-surface rounded-xl border border-line-soft shadow-none p-5">
+        <h2 className="text-sm font-semibold text-t2 mb-4 flex items-center gap-2">
           <Calculator size={16} className="text-violet-400" /> Testar Algoritmo
         </h2>
         <div className="flex items-end gap-3 flex-wrap">
           <div>
-            <label className="block text-xs text-white/50 mb-1">Nº de Produtos</label>
+            <label className="block text-xs text-t3 mb-1">Nº de Produtos</label>
             <input type="number" min="1" value={calcQty} onChange={e => setCalcQty(Number(e.target.value))}
-              className="w-28 border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+              className="w-28 border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
           </div>
           <div>
-            <label className="block text-xs text-white/50 mb-1">Score</label>
+            <label className="block text-xs text-t3 mb-1">Score</label>
             <input type="number" min="0" value={calcScore} onChange={e => setCalcScore(Number(e.target.value))}
-              className="w-28 border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
+              className="w-28 border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
           </div>
           <button onClick={handleCalculate}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
             <Calculator size={14} /> Calcular
           </button>
           {calcResult && (

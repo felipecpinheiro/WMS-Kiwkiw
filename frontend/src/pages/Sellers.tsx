@@ -321,8 +321,8 @@ export default function SellersPage() {
     finally { setPasting(false); }
   };
 
-  const cls = 'w-full border border-white/12 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500';
-  const clsStyle = { background: '#14122A', colorScheme: 'dark' as const, color: 'rgba(255,255,255,0.8)' };
+  const cls = 'w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500';
+  const clsStyle = { background: 'rgb(var(--surface-2))', color: 'rgb(var(--t2))' };
   const validRows = sellerGrid.filter(r => r[0]?.trim()).length;
 
   const expFileUrl = form.experiencia_file_url
@@ -333,113 +333,113 @@ export default function SellersPage() {
     <div className="p-6 space-y-5 min-h-full">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-xl font-bold text-t1 flex items-center gap-2">
             <Building2 size={20} className="text-violet-400" /> Sellers
           </h1>
-          <p className="text-sm text-white/40 mt-0.5">{filtered.length} cadastrado(s)</p>
+          <p className="text-sm text-t4 mt-0.5">{filtered.length} cadastrado(s)</p>
         </div>
         <div className="flex items-center gap-2">
           {sellersWithoutUnit.length > 0 && (
             <button onClick={() => navigate('/sellers/corrigir')}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-amber-300 bg-amber-900/25 border border-amber-500/30 hover:bg-amber-900/35 rounded-lg transition">
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-warn bg-warn-soft border border-warn/30 hover:bg-warn-soft rounded-lg transition">
               <Wrench size={14} /> Corrigir pendências ({sellersWithoutUnit.length})
             </button>
           )}
           <button onClick={() => setShowPasteModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/70 bg-gray-900 border border-white/12 hover:bg-white/4 rounded-lg transition">
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t2 bg-surface border border-line hover:bg-surface-2 rounded-lg transition">
             <ClipboardList size={14} /> Colar em massa
           </button>
           <button onClick={openCreate}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition">
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition">
             <Plus size={14} /> Novo Seller
           </button>
         </div>
       </div>
 
       <div className="relative max-w-sm">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-t4" />
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Buscar seller..."
-          className="w-full pl-8 pr-3 py-2 border border-white/12 rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500"
+          className="w-full pl-8 pr-3 py-2 border border-line rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500"
           style={clsStyle} />
       </div>
 
-      <div className="bg-gray-900 rounded-xl border border-white/8 overflow-x-auto">
+      <div className="bg-surface rounded-xl border border-line-soft overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="bg-white/4 border-b border-white/8">
+            <tr className="bg-surface-2 border-b border-line-soft">
               {['Seller','Codigo','CNPJ','Contato','E-mail','SKUs','Estoque','Status',''].map(h => (
-                <th key={h} className="text-left text-[11px] font-semibold text-white/50 uppercase tracking-wide py-2.5 px-3">{h}</th>
+                <th key={h} className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length > 0 ? filtered.map((s: any) => (
-              <tr key={s.id} className="border-b border-white/5 hover:bg-white/4">
+              <tr key={s.id} className="border-b border-line-soft hover:bg-surface-2">
                 <td className="py-2.5 px-3">
                   <div className="flex items-center gap-2">
                     <div className="w-7 h-7 bg-violet-900/40 rounded-lg flex items-center justify-center">
                       <span className="text-violet-300 text-xs font-bold">{(s.trade_name||s.name||'?').charAt(0)}</span>
                     </div>
                     <div>
-                      <span className="text-sm font-medium text-white/90">{s.trade_name||s.name}</span>
-                      {s.unit_display_name && <p className="text-[10px] text-white/35">{s.unit_display_name}</p>}
+                      <span className="text-sm font-medium text-t1">{s.trade_name||s.name}</span>
+                      {s.unit_display_name && <p className="text-[10px] text-t4">{s.unit_display_name}</p>}
                     </div>
                   </div>
                 </td>
-                <td className="py-2.5 px-3 text-xs font-mono text-white/50">{s.code||'---'}</td>
-                <td className="py-2.5 px-3 text-xs font-mono text-white/50">{s.cnpj||'---'}</td>
-                <td className="py-2.5 px-3 text-sm text-white/50">{s.contact_name||'---'}</td>
-                <td className="py-2.5 px-3 text-sm text-white/50">{s.contact_email||'---'}</td>
+                <td className="py-2.5 px-3 text-xs font-mono text-t3">{s.code||'---'}</td>
+                <td className="py-2.5 px-3 text-xs font-mono text-t3">{s.cnpj||'---'}</td>
+                <td className="py-2.5 px-3 text-sm text-t3">{s.contact_name||'---'}</td>
+                <td className="py-2.5 px-3 text-sm text-t3">{s.contact_email||'---'}</td>
                 <td className="py-2.5 px-3 text-sm text-right tabular-nums">
-                  <span className="text-white/70 font-mono">{s.total_skus ?? '---'}</span>
+                  <span className="text-t2 font-mono">{s.total_skus ?? '---'}</span>
                 </td>
                 <td className="py-2.5 px-3 text-sm text-right tabular-nums">
                   {s.skus_with_stock != null
                     ? <span className={`font-mono font-semibold ${
-                        s.skus_with_stock === 0 ? 'text-red-400' :
-                        s.skus_with_stock < (s.total_skus ?? 1) * 0.5 ? 'text-amber-400' :
-                        'text-teal-400'}`}>{s.skus_with_stock}</span>
-                    : <span className="text-white/25">---</span>}
+                        s.skus_with_stock === 0 ? 'text-bad' :
+                        s.skus_with_stock < (s.total_skus ?? 1) * 0.5 ? 'text-warn' :
+                        'text-ok'}`}>{s.skus_with_stock}</span>
+                    : <span className="text-t5">---</span>}
                 </td>
                 <td className="py-2.5 px-3">
                   <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                    (s.is_active ?? s.active) ? 'bg-violet-900/40 text-violet-300' : 'bg-white/8 text-white/40 border border-white/8'}`}>
+                    (s.is_active ?? s.active) ? 'bg-violet-900/40 text-violet-300' : 'bg-surface-2 text-t4 border border-line-soft'}`}>
                     {(s.is_active ?? s.active) ? 'Ativo' : 'Inativo'}
                   </span>
                 </td>
                 <td className="py-2.5 px-3">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => openEdit(s)} className="text-white/35 hover:text-violet-400 transition"><Pencil size={14} /></button>
-                    <button onClick={() => handleDelete(s.id, s.trade_name || s.name || '')} className="text-white/35 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                    <button onClick={() => openEdit(s)} className="text-t4 hover:text-violet-400 transition"><Pencil size={14} /></button>
+                    <button onClick={() => handleDelete(s.id, s.trade_name || s.name || '')} className="text-t4 hover:text-bad transition"><Trash2 size={14} /></button>
                   </div>
                 </td>
               </tr>
             )) : (
               <tr><td colSpan={9} className="text-center py-10">
-                <Store size={28} className="text-white/25 mx-auto mb-2" />
-                <p className="text-sm text-white/35">Nenhum seller encontrado</p>
+                <Store size={28} className="text-t5 mx-auto mb-2" />
+                <p className="text-sm text-t4">Nenhum seller encontrado</p>
               </td></tr>
             )}
           </tbody>
         </table>
-        <div className="px-4 py-2.5 border-t border-white/8 text-xs text-white/35">{filtered.length} seller(s)</div>
+        <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">{filtered.length} seller(s)</div>
       </div>
 
       {/* ── Modal Edição ──────────────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-2xl my-8 p-6">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-2xl my-8 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-white text-lg">{editId ? 'Editar Seller' : 'Novo Seller'}</h3>
-              <button onClick={() => setShowModal(false)} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+              <h3 className="font-semibold text-t1 text-lg">{editId ? 'Editar Seller' : 'Novo Seller'}</h3>
+              <button onClick={() => setShowModal(false)} className="text-t4 hover:text-t3"><X size={18} /></button>
             </div>
-            <div className="flex border-b border-white/12 mb-5">
+            <div className="flex border-b border-line mb-5">
               {(['basic','comercial','caixas','experiencia'] as const).map(tab => (
                 <button key={tab} onClick={() => setFormTab(tab)}
                   className={`px-4 py-2 text-sm font-medium border-b-2 transition ${formTab === tab
-                    ? (tab === 'experiencia' ? 'border-teal-500 text-teal-300' : 'border-violet-600 text-violet-300')
-                    : 'border-transparent text-white/50 hover:text-white/80'}`}>
+                    ? (tab === 'experiencia' ? 'border-ok text-ok' : 'border-violet-600 text-violet-300')
+                    : 'border-transparent text-t3 hover:text-t2'}`}>
                   {tab === 'basic' ? 'Dados Básicos' : tab === 'comercial' ? 'Comercial' : tab === 'caixas' ? 'Caixas' : 'Experiência'}
                 </button>
               ))}
@@ -448,45 +448,45 @@ export default function SellersPage() {
             {formTab === 'basic' && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">Nome *</label>
+                  <label className="block text-xs text-t3 mb-1">Nome *</label>
                   <input value={form.name} onChange={e => set('name', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Código</label>
+                  <label className="block text-xs text-t3 mb-1">Código</label>
                   <input value={form.code} onChange={e => set('code', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">CNPJ</label>
+                  <label className="block text-xs text-t3 mb-1">CNPJ</label>
                   <input value={form.cnpj} onChange={e => set('cnpj', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Contato</label>
+                  <label className="block text-xs text-t3 mb-1">Contato</label>
                   <input value={form.contact_name} onChange={e => set('contact_name', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Telefone</label>
+                  <label className="block text-xs text-t3 mb-1">Telefone</label>
                   <input value={form.contact_phone} onChange={e => set('contact_phone', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">E-mail</label>
+                  <label className="block text-xs text-t3 mb-1">E-mail</label>
                   <input value={form.contact_email} onChange={e => set('contact_email', e.target.value)} className={cls} style={clsStyle} />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Unidade</label>
+                  <label className="block text-xs text-t3 mb-1">Unidade</label>
                   <select value={form.unit_id} onChange={e => set('unit_id', e.target.value ? Number(e.target.value) : '')} className={cls} style={clsStyle}>
                     <option value="">Sem unidade</option>
                     {(units as any[]).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Status</label>
+                  <label className="block text-xs text-t3 mb-1">Status</label>
                   <select value={form.is_active ? 'true' : 'false'} onChange={e => set('is_active', e.target.value === 'true')} className={cls} style={clsStyle}>
                     <option value="true">Ativo</option>
                     <option value="false">Inativo</option>
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-white/50 mb-1">Outros apelidos (separados por ";")</label>
+                  <label className="block text-xs text-t3 mb-1">Outros apelidos (separados por ";")</label>
                   <input value={form.other_aliases} onChange={e => set('other_aliases', e.target.value)} className={cls} style={clsStyle} placeholder='Ex: Seller ABC; ABC Ltda' />
                 </div>
               </div>
@@ -494,11 +494,11 @@ export default function SellersPage() {
 
             {formTab === 'comercial' && (
               <div className="space-y-4">
-                <p className="text-xs text-white/40">Estes valores são sincronizados com o módulo de Faturamento.</p>
+                <p className="text-xs text-t4">Estes valores são sincronizados com o módulo de Faturamento.</p>
                 <div className="grid grid-cols-2 gap-3">
                   {BILLING_FIELDS.filter(f => f.type === 'number').map(f => (
                     <div key={f.key}>
-                      <label className="block text-xs text-white/50 mb-1">{f.label}</label>
+                      <label className="block text-xs text-t3 mb-1">{f.label}</label>
                       <input
                         type="number" step="0.01" min="0"
                         value={form.billing[f.key] as string}
@@ -511,11 +511,11 @@ export default function SellersPage() {
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="ci" checked={form.caixa_inclusa} onChange={e => set('caixa_inclusa', e.target.checked)} className="w-4 h-4 accent-violet-500" />
-                    <label htmlFor="ci" className="text-sm text-white/70">Caixa inclusa no preço</label>
+                    <label htmlFor="ci" className="text-sm text-t2">Caixa inclusa no preço</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="cp" checked={form.caixa_prop} onChange={e => set('caixa_prop', e.target.checked)} className="w-4 h-4 accent-violet-500" />
-                    <label htmlFor="cp" className="text-sm text-white/70">Caixa própria</label>
+                    <label htmlFor="cp" className="text-sm text-t2">Caixa própria</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
@@ -524,7 +524,7 @@ export default function SellersPage() {
                       onChange={e => setBilling('armazenagem_incluso', e.target.checked)}
                       className="w-4 h-4 accent-violet-500"
                     />
-                    <label htmlFor="ai" className="text-sm text-white/70">Armazenagem inclusa</label>
+                    <label htmlFor="ai" className="text-sm text-t2">Armazenagem inclusa</label>
                   </div>
                 </div>
               </div>
@@ -534,7 +534,7 @@ export default function SellersPage() {
               <div className="grid grid-cols-4 gap-3">
                 {(['caixa1','caixa2','caixa3','caixa4','caixa5','caixa6','caixa7','caixa8'] as const).map((k, i) => (
                   <div key={k}>
-                    <label className="block text-xs text-white/50 mb-1">Caixa {i+1}</label>
+                    <label className="block text-xs text-t3 mb-1">Caixa {i+1}</label>
                     <input value={form[k]} onChange={e => set(k, e.target.value)} className={cls} style={clsStyle} placeholder={`c${i+1}`} />
                   </div>
                 ))}
@@ -543,7 +543,7 @@ export default function SellersPage() {
 
             {formTab === 'experiencia' && (
               <div className="space-y-4">
-                <p className="text-sm text-white/50">Upload do roteiro de experiência do seller (PDF/DOC).</p>
+                <p className="text-sm text-t3">Upload do roteiro de experiência do seller (PDF/DOC).</p>
                 {expFileUrl && (
                   <a href={expFileUrl} target="_blank" rel="noopener noreferrer"
                     className="flex items-center gap-2 text-sm text-violet-300 hover:underline">
@@ -552,27 +552,27 @@ export default function SellersPage() {
                 )}
                 <div className="flex items-center gap-3">
                   <button onClick={() => fileRef.current?.click()}
-                    className="flex items-center gap-2 px-3 py-2 border border-white/12 rounded-lg text-sm text-white/60 hover:bg-white/4 transition">
+                    className="flex items-center gap-2 px-3 py-2 border border-line rounded-lg text-sm text-t3 hover:bg-surface-2 transition">
                     <Upload size={14} /> {expFile ? expFile.name : 'Selecionar arquivo'}
                   </button>
                   {expFile && (
-                    <button onClick={() => setExpFile(null)} className="text-xs text-white/30 hover:text-white/60"><X size={14} /></button>
+                    <button onClick={() => setExpFile(null)} className="text-xs text-t4 hover:text-t3"><X size={14} /></button>
                   )}
-                  {expUploading && <span className="text-xs text-white/40">Enviando...</span>}
+                  {expUploading && <span className="text-xs text-t4">Enviando...</span>}
                   <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" className="sr-only"
                     onChange={e => setExpFile(e.target.files?.[0] ?? null)} />
                 </div>
-                {expFile && <p className="text-xs text-amber-400/80">O arquivo será enviado ao salvar.</p>}
+                {expFile && <p className="text-xs text-warn/80">O arquivo será enviado ao salvar.</p>}
               </div>
             )}
 
             <div className="flex gap-2 mt-6">
               <button onClick={() => setShowModal(false)}
-                className="flex-1 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition">
+                className="flex-1 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
                 Cancelar
               </button>
               <button onClick={handleSave} disabled={saving}
-                className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5 disabled:opacity-60">
+                className="flex-1 py-2 text-sm text-t1 bg-violet-600 rounded-lg hover:bg-violet-500 transition flex items-center justify-center gap-1.5 disabled:opacity-60">
                 {saving ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check size={14} />}
                 {saving ? 'Salvando...' : 'Salvar'}
               </button>
@@ -584,20 +584,20 @@ export default function SellersPage() {
       {/* ── Modal Colar em Massa ─────────────────────────────── */}
       {showPasteModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
-          <div className="bg-[#14122A] rounded-2xl w-full max-w-4xl my-8 border border-white/10">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+          <div className="bg-surface rounded-2xl w-full max-w-4xl my-8 border border-line">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line-soft">
               <div>
-                <h3 className="font-semibold text-white text-sm">Colar Sellers em Massa</h3>
-                <p className="text-[11px] text-white/40 mt-0.5">Nome | Trade | CNPJ | Contato | Email | Tel | Unidade | Preço | Manuseio | Cx Inclusa | C1 | C2 | C3</p>
+                <h3 className="font-semibold text-t1 text-sm">Colar Sellers em Massa</h3>
+                <p className="text-[11px] text-t4 mt-0.5">Nome | Trade | CNPJ | Contato | Email | Tel | Unidade | Preço | Manuseio | Cx Inclusa | C1 | C2 | C3</p>
               </div>
-              <button onClick={() => setShowPasteModal(false)} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+              <button onClick={() => setShowPasteModal(false)} className="text-t4 hover:text-t3"><X size={18} /></button>
             </div>
             <div className="p-4 overflow-x-auto">
               <table className="text-xs border-collapse">
                 <thead>
                   <tr>
                     {['Nome*','Trade','CNPJ','Contato','E-mail','Tel','Unidade','Preço','Manuseio','Cx Inclusa','C1','C2','C3'].map((h, ci) => (
-                      <th key={ci} className="border border-white/10 bg-white/5 px-2 py-1 text-white/50 font-semibold whitespace-nowrap">{h}</th>
+                      <th key={ci} className="border border-line bg-surface-2 px-2 py-1 text-t3 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -605,7 +605,7 @@ export default function SellersPage() {
                   {sellerGrid.map((row, ri) => (
                     <tr key={ri}>
                       {row.map((cell, ci) => (
-                        <td key={ci} className={`border border-white/10 p-0 ${anchorCell[0]===ri && anchorCell[1]===ci ? 'ring-2 ring-violet-500 ring-inset' : ''}`}>
+                        <td key={ci} className={`border border-line p-0 ${anchorCell[0]===ri && anchorCell[1]===ci ? 'ring-2 ring-violet-500 ring-inset' : ''}`}>
                           <input
                             value={cell}
                             onChange={e => {
@@ -614,7 +614,7 @@ export default function SellersPage() {
                             }}
                             onFocus={() => setAnchorCell([ri, ci])}
                             onPaste={handleGridPaste}
-                            className="w-24 px-2 py-1 bg-transparent text-white/80 outline-none"
+                            className="w-24 px-2 py-1 bg-transparent text-t2 outline-none"
                           />
                         </td>
                       ))}
@@ -623,17 +623,17 @@ export default function SellersPage() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between px-5 py-4 border-t border-white/8">
+            <div className="flex items-center justify-between px-5 py-4 border-t border-line-soft">
               <div className="flex items-center gap-3">
                 <button onClick={() => setSellerGrid(Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill('')))}
-                  className="text-xs text-white/35 hover:underline">Limpar</button>
-                <span className="text-xs text-white/35">{validRows} seller(s) válidos</span>
+                  className="text-xs text-t4 hover:underline">Limpar</button>
+                <span className="text-xs text-t4">{validRows} seller(s) válidos</span>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => setShowPasteModal(false)}
-                  className="px-4 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4">Cancelar</button>
+                  className="px-4 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2">Cancelar</button>
                 <button onClick={handlePasteSave} disabled={pasting}
-                  className="px-4 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg font-medium disabled:opacity-50">
+                  className="px-4 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg font-medium disabled:opacity-50">
                   {pasting ? 'Salvando...' : `Importar ${validRows} seller(s)`}
                 </button>
               </div>

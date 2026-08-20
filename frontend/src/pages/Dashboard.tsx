@@ -21,6 +21,7 @@ import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 import { todayBrasiliaStr } from '../timezone';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useChartColors } from '../hooks/useChartColors';
 
 // ─── Componentes auxiliares ─────────────────────────────────
 
@@ -34,14 +35,14 @@ function StatCard({
   sub?: string;
 }) {
   return (
-    <div className="bg-gray-900 rounded-xl p-4 border border-white/8 shadow-none">
+    <div className="bg-surface rounded-xl p-4 border border-line-soft shadow-none">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs text-white/50 mb-1">{label}</p>
+          <p className="text-xs text-t3 mb-1">{label}</p>
           <p className={`text-2xl font-bold ${color}`}>{value}</p>
-          {sub && <p className="text-xs text-white/35 mt-0.5">{sub}</p>}
+          {sub && <p className="text-xs text-t4 mt-0.5">{sub}</p>}
         </div>
-        <div className={`p-2 rounded-lg bg-white/4`}>
+        <div className={`p-2 rounded-lg bg-surface-2`}>
           <Icon size={20} className={color} />
         </div>
       </div>
@@ -51,13 +52,13 @@ function StatCard({
 
 function CheckItem({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <div className={`flex items-center gap-2 p-3 rounded-lg border ${ok ? 'bg-emerald-900/30 border-emerald-500/20' : 'bg-red-900/25 border-red-500/20'}`}>
+    <div className={`flex items-center gap-2 p-3 rounded-lg border ${ok ? 'bg-ok-soft border-ok/20' : 'bg-bad-soft border-bad/20'}`}>
       {ok ? (
         <CheckSquare size={16} className="text-violet-400 flex-shrink-0" />
       ) : (
-        <XSquare size={16} className="text-red-500 flex-shrink-0" />
+        <XSquare size={16} className="text-bad flex-shrink-0" />
       )}
-      <span className={`text-xs font-medium ${ok ? 'text-violet-300' : 'text-red-600'}`}>{label}</span>
+      <span className={`text-xs font-medium ${ok ? 'text-violet-300' : 'text-bad'}`}>{label}</span>
     </div>
   );
 }
@@ -116,21 +117,21 @@ function CarrierModal({ orders, onClose, onSave }: {
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-2xl flex flex-col" style={{ maxHeight: '80vh' }}>
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-2xl flex flex-col" style={{ maxHeight: '80vh' }}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line-soft flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-white text-sm">Informar Transportadoras</h3>
-            <p className="text-[11px] text-white/40 mt-0.5">
+            <h3 className="font-semibold text-t1 text-sm">Informar Transportadoras</h3>
+            <p className="text-[11px] text-t4 mt-0.5">
               Cole do Excel (NF · Tab · Transportadora) ou edite linha a linha · {filled}/{total} preenchidas
             </p>
           </div>
-          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
         </div>
 
         {/* Instrução de paste */}
         <div className="px-5 pt-3 pb-1 flex-shrink-0">
-          <div className="flex items-center gap-2 text-[11px] text-amber-400/80 bg-amber-900/15 border border-amber-500/20 rounded-lg px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px] text-warn/80 bg-warn-soft border border-warn/20 rounded-lg px-3 py-2">
             <ClipboardPaste size={13} className="flex-shrink-0" />
             <span>Clique em qualquer célula da coluna Transportadora e cole (Ctrl+V) os dados copiados do Excel</span>
           </div>
@@ -139,7 +140,7 @@ function CarrierModal({ orders, onClose, onSave }: {
         {/* Grid */}
         <div ref={gridRef} className="flex-1 overflow-y-auto px-5 py-3" onPaste={handlePaste}>
           {/* Header row */}
-          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/30 mb-1 px-1"
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-t4 mb-1 px-1"
                style={{ gridTemplateColumns: '2rem 7rem 1fr 2fr' }}>
             <span>#</span><span>NF</span><span>Seller</span><span>Transportadora</span>
           </div>
@@ -155,21 +156,21 @@ function CarrierModal({ orders, onClose, onSave }: {
                   style={{ gridTemplateColumns: '2rem 7rem 1fr 2fr',
                            background: filled_row ? 'rgba(109,89,222,0.08)' : 'transparent' }}
                 >
-                  <span className="text-[10px] text-white/25 px-1">{idx + 1}</span>
-                  <span className="text-xs font-mono text-white/60 truncate px-1">{o.nf_number}</span>
-                  <span className="text-xs text-white/40 truncate px-1">{o.seller_name}</span>
+                  <span className="text-[10px] text-t5 px-1">{idx + 1}</span>
+                  <span className="text-xs font-mono text-t3 truncate px-1">{o.nf_number}</span>
+                  <span className="text-xs text-t4 truncate px-1">{o.seller_name}</span>
                   <input
                     value={val}
                     onChange={e => setCarriers(prev => ({ ...prev, [o.order_id]: e.target.value }))}
                     onPaste={handlePaste}
                     placeholder="—"
-                    className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-white/80 placeholder-white/20 transition-colors"
+                    className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-t2 placeholder-t5 transition-colors"
                     style={{
                       background: 'transparent',
-                      borderBottomColor: filled_row ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)',
+                      borderBottomColor: filled_row ? 'rgba(109,89,222,0.5)' : 'rgb(var(--line-soft))',
                     }}
                     onFocus={e => (e.currentTarget.style.borderBottomColor = '#7B63E8')}
-                    onBlur={e => (e.currentTarget.style.borderBottomColor = filled_row ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)')}
+                    onBlur={e => (e.currentTarget.style.borderBottomColor = filled_row ? 'rgba(109,89,222,0.5)' : 'rgb(var(--line-soft))')}
                   />
                 </div>
               );
@@ -178,18 +179,18 @@ function CarrierModal({ orders, onClose, onSave }: {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-t border-line-soft flex-shrink-0">
           <button
             onClick={() => setCarriers({})}
-            className="text-xs text-white/30 hover:text-white/60 transition"
+            className="text-xs text-t4 hover:text-t3 transition"
           >Limpar tudo</button>
           <div className="flex gap-2">
             <button onClick={onClose}
-              className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+              className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
               Cancelar
             </button>
             <button onClick={handleSave} disabled={saving || filled === 0}
-              className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+              className="px-4 py-1.5 text-xs bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
               {saving ? 'Salvando…' : `Salvar ${filled} transportadora(s)`}
             </button>
           </div>
@@ -254,16 +255,16 @@ const CarrierRow = memo(function CarrierRow({
         onClick={(e) => onToggle(rowIndex, e.shiftKey)}
         className="accent-violet-500 cursor-pointer"
       />
-      <span className="text-xs font-mono text-white/60 truncate" title={order.nf_number}>{order.nf_number}</span>
-      <span className="text-xs text-white/35 truncate" title={order.customer_name || ''}>{order.customer_name || '—'}</span>
+      <span className="text-xs font-mono text-t3 truncate" title={order.nf_number}>{order.nf_number}</span>
+      <span className="text-xs text-t4 truncate" title={order.customer_name || ''}>{order.customer_name || '—'}</span>
       <input
         value={value}
         onChange={(e) => onChange(order.order_id, e.target.value)}
         placeholder="transportadora…"
-        className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-white/80 placeholder-white/20"
+        className="w-full border-0 border-b outline-none text-xs py-1 px-2 text-t2 placeholder-t5"
         style={{
           background: 'transparent',
-          borderBottomColor: filled ? 'rgba(109,89,222,0.5)' : 'rgba(255,255,255,0.08)',
+          borderBottomColor: filled ? 'rgba(109,89,222,0.5)' : 'rgb(var(--line-soft))',
         }}
       />
     </div>
@@ -360,16 +361,16 @@ function PendingCarrierModal({ orders, onClose, onSave }: {
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-4xl flex flex-col" style={{ maxHeight: '88vh' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-4xl flex flex-col" style={{ maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line-soft flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-white text-sm">🚚 Resolver transportadoras</h3>
-            <p className="text-[11px] text-white/40 mt-0.5">
+            <h3 className="font-semibold text-t1 text-sm">🚚 Resolver transportadoras</h3>
+            <p className="text-[11px] text-t4 mt-0.5">
               {flat.length} NF(s) sem transportadora · {filledEntries.length} preenchida(s)
               {selected.size > 0 && ` · ${selected.size} selecionada(s)`}
             </p>
           </div>
-          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
         </div>
 
         <div className="px-5 pt-3 flex-shrink-0">
@@ -380,14 +381,14 @@ function PendingCarrierModal({ orders, onClose, onSave }: {
               transportadora em <b>uma</b> delas — vai para todas as selecionadas sozinho.
             </span>
           </div>
-          <label className="flex items-center gap-2 mt-2 text-[11px] text-white/50 cursor-pointer w-fit">
+          <label className="flex items-center gap-2 mt-2 text-[11px] text-t3 cursor-pointer w-fit">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-violet-500" />
             Selecionar todas ({flat.length})
           </label>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0">
-          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/25 mb-1 px-1 gap-1 sticky top-0 bg-[#14122A] py-1"
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-t5 mb-1 px-1 gap-1 sticky top-0 bg-surface py-1"
                style={{ gridTemplateColumns: '1.5rem 8rem 1fr 2fr' }}>
             <span /><span>NF</span><span>Cliente</span><span>Transportadora</span>
           </div>
@@ -395,8 +396,8 @@ function PendingCarrierModal({ orders, onClose, onSave }: {
             const base = flat.findIndex(o => o.seller_id === g.seller_id);
             return (
               <div key={g.seller_id} className="mb-2">
-                <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-white/8">
-                  {g.seller_name} <span className="text-white/25 font-normal">({g.rows.length})</span>
+                <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-line-soft">
+                  {g.seller_name} <span className="text-t5 font-normal">({g.rows.length})</span>
                 </div>
                 <div className="space-y-0.5 mt-0.5">
                   {g.rows.map((o, i) => (
@@ -417,26 +418,26 @@ function PendingCarrierModal({ orders, onClose, onSave }: {
         </div>
 
         {confirmPartial && emptyRows.length > 0 && (
-          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-amber-300 bg-amber-900/20 border border-amber-500/30 rounded-lg px-3 py-2">
+          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-warn bg-warn-soft border border-warn/30 rounded-lg px-3 py-2">
             <b>{emptyRows.length} NF(s) ainda sem transportadora:</b>{' '}
             {emptyRows.slice(0, 12).map(o => o.nf_number).join(', ')}
             {emptyRows.length > 12 && ` … e mais ${emptyRows.length - 12}`}
-            <div className="text-amber-400/70 mt-1">
+            <div className="text-warn/70 mt-1">
               Elas continuam pendentes. Clique de novo para salvar só as preenchidas.
             </div>
           </div>
         )}
 
-        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-t border-line-soft flex-shrink-0">
           <button onClick={() => { setValues({}); setSelected(new Set()); setConfirmPartial(false); }}
-                  className="text-xs text-white/30 hover:text-white/60 transition">Limpar tudo</button>
+                  className="text-xs text-t4 hover:text-t3 transition">Limpar tudo</button>
           <div className="flex gap-2">
             <button onClick={onClose}
-                    className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+                    className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
               Cancelar
             </button>
             <button onClick={handleSave} disabled={saving || filledEntries.length === 0}
-                    className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+                    className="px-4 py-1.5 text-xs bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
               {saving ? 'Salvando…'
                 : confirmPartial ? `Salvar mesmo assim (${filledEntries.length})`
                 : `Aplicar ${filledEntries.length} transportadora(s)`}
@@ -517,15 +518,15 @@ function PendingSkuModal({ missing, onClose, onSave }: {
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/10 rounded-2xl w-full max-w-5xl flex flex-col" style={{ maxHeight: '88vh' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8 flex-shrink-0">
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-5xl flex flex-col" style={{ maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line-soft flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-white text-sm">📦 Resolver SKUs sem produto</h3>
-            <p className="text-[11px] text-white/40 mt-0.5">
+            <h3 className="font-semibold text-t1 text-sm">📦 Resolver SKUs sem produto</h3>
+            <p className="text-[11px] text-t4 mt-0.5">
               {rows.length} SKU(s) segurando a baixa · {decided.length} resolvido(s)
             </p>
           </div>
-          <button onClick={onClose} className="text-white/35 hover:text-white/60"><X size={18} /></button>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
         </div>
 
         <div className="px-5 pt-3 flex-shrink-0">
@@ -537,14 +538,14 @@ function PendingSkuModal({ missing, onClose, onSave }: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0">
-          <div className="grid text-[10px] font-bold uppercase tracking-wider text-white/25 mb-1 px-1 gap-2"
+          <div className="grid text-[10px] font-bold uppercase tracking-wider text-t5 mb-1 px-1 gap-2"
                style={{ gridTemplateColumns: '10rem 1fr 1.2fr 1.4fr' }}>
             <span>SKU da NF</span><span>Nome na NF</span><span>NFs afetadas</span><span>Ação</span>
           </div>
           {groups.map(g => (
             <div key={g.seller_id} className="mb-3">
-              <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-white/8">
-                {g.seller_name} <span className="text-white/25 font-normal">({g.rows.length} SKU)</span>
+              <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-line-soft">
+                {g.seller_name} <span className="text-t5 font-normal">({g.rows.length} SKU)</span>
               </div>
               <div className="space-y-1 mt-1">
                 {g.rows.map(m => {
@@ -556,19 +557,19 @@ function PendingSkuModal({ missing, onClose, onSave }: {
                     <div key={k} className="grid items-center gap-2 px-1 py-1 rounded"
                          style={{ gridTemplateColumns: '10rem 1fr 1.2fr 1.4fr',
                                   background: c ? 'rgba(109,89,222,0.10)' : 'transparent' }}>
-                      <span className="text-xs font-mono text-white/70 truncate" title={m.sku}>{m.sku}</span>
-                      <span className="text-xs text-white/40 truncate" title={m.product_name || ''}>
+                      <span className="text-xs font-mono text-t2 truncate" title={m.sku}>{m.sku}</span>
+                      <span className="text-xs text-t4 truncate" title={m.product_name || ''}>
                         {m.product_name || '—'}
                       </span>
                       {/* NFs em texto corrido; o que não couber fica no title (hover) */}
-                      <span className="text-[11px] text-white/35 truncate cursor-help" title={nfs}>
+                      <span className="text-[11px] text-t4 truncate cursor-help" title={nfs}>
                         {nfs}
                       </span>
                       <div className="flex gap-1 items-center min-w-0">
                         <select
                           value={c}
                           onChange={(e) => { setChoice(prev => ({ ...prev, [k]: e.target.value })); setConfirmPartial(false); }}
-                          className="flex-1 min-w-0 bg-[#1B1836] border border-white/10 rounded px-2 py-1 text-xs text-white/80 outline-none focus:border-violet-500"
+                          className="flex-1 min-w-0 bg-surface-2 border border-line rounded px-2 py-1 text-xs text-t2 outline-none focus:border-violet-500"
                         >
                           <option value="">— escolher —</option>
                           <option value="create">+ Cadastrar agora com este SKU</option>
@@ -584,7 +585,7 @@ function PendingSkuModal({ missing, onClose, onSave }: {
                             value={names[k] ?? m.product_name ?? ''}
                             onChange={(e) => setNames(prev => ({ ...prev, [k]: e.target.value }))}
                             placeholder="nome do produto"
-                            className="flex-1 min-w-0 bg-transparent border-0 border-b border-white/10 outline-none text-xs px-1 py-1 text-white/80 placeholder-white/20 focus:border-violet-500"
+                            className="flex-1 min-w-0 bg-transparent border-0 border-b border-line outline-none text-xs px-1 py-1 text-t2 placeholder-t5 focus:border-violet-500"
                           />
                         )}
                       </div>
@@ -597,26 +598,26 @@ function PendingSkuModal({ missing, onClose, onSave }: {
         </div>
 
         {confirmPartial && undecided.length > 0 && (
-          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-amber-300 bg-amber-900/20 border border-amber-500/30 rounded-lg px-3 py-2">
+          <div className="mx-5 mb-2 flex-shrink-0 text-[11px] text-warn bg-warn-soft border border-warn/30 rounded-lg px-3 py-2">
             <b>{undecided.length} SKU(s) ainda sem decisão:</b>{' '}
             {undecided.slice(0, 12).map(m => m.sku).join(', ')}
             {undecided.length > 12 && ` … e mais ${undecided.length - 12}`}
-            <div className="text-amber-400/70 mt-1">
+            <div className="text-warn/70 mt-1">
               As NFs deles continuam pendentes. Clique de novo para aplicar só os resolvidos.
             </div>
           </div>
         )}
 
-        <div className="flex items-center justify-between px-5 py-4 border-t border-white/8 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-t border-line-soft flex-shrink-0">
           <button onClick={() => { setChoice({}); setConfirmPartial(false); }}
-                  className="text-xs text-white/30 hover:text-white/60 transition">Limpar tudo</button>
+                  className="text-xs text-t4 hover:text-t3 transition">Limpar tudo</button>
           <div className="flex gap-2">
             <button onClick={onClose}
-                    className="px-4 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+                    className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
               Cancelar
             </button>
             <button onClick={handleSave} disabled={saving || decided.length === 0}
-                    className="px-4 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
+                    className="px-4 py-1.5 text-xs bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 transition disabled:opacity-50">
               {saving ? 'Salvando…'
                 : confirmPartial ? `Aplicar mesmo assim (${decided.length})`
                 : `Aplicar ${decided.length} resolução(ões)`}
@@ -640,6 +641,7 @@ export default function DashboardPage() {
     ? `Processando NF ${importProgress.processed} de ${importProgress.total}...`
     : 'Importando...';
   const isMobile = useIsMobile();
+  const chartColors = useChartColors();
   const [checksExpanded, setChecksExpanded] = useState(false);
   const todayStr = todayBrasiliaStr();
   const isToday = targetDate === todayStr;
@@ -1236,7 +1238,7 @@ export default function DashboardPage() {
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-white/35 text-sm">Carregando dashboard...</p>
+          <p className="text-t4 text-sm">Carregando dashboard...</p>
         </div>
       </div>
     );
@@ -1246,23 +1248,23 @@ export default function DashboardPage() {
   const completionPct = stats?.completion_rate ?? 0;
 
   return (
-    <div className="p-6 space-y-6 min-h-full text-white">
+    <div className="p-6 space-y-6 min-h-full text-t1">
 
       {/* ⚠️ Warning: sellers sem unidade associada */}
       {(sellersWithoutUnit as any[]).length > 0 && (
-        <div className="flex items-start gap-3 bg-amber-900/25 border border-amber-500/30 rounded-xl px-4 py-3">
-          <span className="text-amber-400 mt-0.5 flex-shrink-0">⚠</span>
+        <div className="flex items-start gap-3 bg-warn-soft border border-warn/30 rounded-xl px-4 py-3">
+          <span className="text-warn mt-0.5 flex-shrink-0">⚠</span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-amber-300">Sellers sem unidade associada</p>
-            <p className="text-xs text-amber-400/80 mt-0.5">
+            <p className="text-sm font-semibold text-warn">Sellers sem unidade associada</p>
+            <p className="text-xs text-warn/80 mt-0.5">
               PDFs desses sellers serão salvos em <span className="font-mono">SEM_UNIDADE/</span>.
               Pode ser um seller duplicado com pedidos presos, ou só falta associar uma unidade.
             </p>
-            <p className="text-xs text-amber-400/60 mt-1">
+            <p className="text-xs text-warn/60 mt-1">
               {(sellersWithoutUnit as any[]).map((s: any) => `${s.trade_name} (${s.order_count} pedido(s))`).join(', ')}
             </p>
           </div>
-          <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-amber-400 hover:underline mt-0.5">Corrigir →</a>
+          <a href="/sellers/corrigir" className="flex-shrink-0 text-xs text-warn hover:underline mt-0.5">Corrigir →</a>
         </div>
       )}
 
@@ -1279,18 +1281,18 @@ export default function DashboardPage() {
         const semTransp = blocked.filter(p => p.missing_carrier).length;
         const semProduto = blocked.filter(p => p.missing_skus.length > 0).length;
         return (
-          <div className="flex items-start gap-3 bg-red-900/25 border border-red-500/30 rounded-xl px-4 py-3">
-            <span className="text-red-400 mt-0.5 flex-shrink-0">📦</span>
+          <div className="flex items-start gap-3 bg-bad-soft border border-bad/30 rounded-xl px-4 py-3">
+            <span className="text-bad mt-0.5 flex-shrink-0">📦</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-red-300">
+              <p className="text-sm font-semibold text-bad">
                 {pendingStock!.pending_orders.length} NF(s) não subiram ao estoque
               </p>
-              <p className="text-xs text-red-400/80 mt-0.5">
+              <p className="text-xs text-bad/80 mt-0.5">
                 O estoque desses sellers está desatualizado enquanto isso. Resolva a pendência e a
                 baixa acontece sozinha — não precisa reimportar nada.
               </p>
               {(semTransp > 0 || semProduto > 0) && (
-                <p className="text-xs text-red-400/60 mt-1">
+                <p className="text-xs text-bad/60 mt-1">
                   {[
                     semTransp ? `${semTransp} sem transportadora` : null,
                     semProduto ? `${semProduto} com SKU sem produto cadastrado` : null,
@@ -1299,10 +1301,10 @@ export default function DashboardPage() {
               )}
               {stuck.length > 0 && (
                 <div className="mt-1.5">
-                  <p className="text-xs text-amber-300/90">
+                  <p className="text-xs text-warn/90">
                     {stuck.length} sem motivo aparente — já estão liberadas, só falta tentar de novo:
                   </p>
-                  <p className="text-xs text-red-400/60 mt-0.5">
+                  <p className="text-xs text-bad/60 mt-0.5">
                     {stuck.slice(0, 10).map(p => `${p.nf_number} (${p.seller_name ?? 'sem seller'})`).join(', ')}
                     {stuck.length > 10 && ` … e mais ${stuck.length - 10}`}
                   </p>
@@ -1316,7 +1318,7 @@ export default function DashboardPage() {
               {semTransp > 0 && (
                 <button
                   onClick={() => setPendingCarrierOpen(true)}
-                  className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                  className="text-xs font-medium text-t1 bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
                 >
                   🚚 Resolver transportadoras
                 </button>
@@ -1324,7 +1326,7 @@ export default function DashboardPage() {
               {pendingStock!.missing_products.length > 0 && (
                 <button
                   onClick={() => setPendingSkuOpen(true)}
-                  className="text-xs font-medium text-white bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                  className="text-xs font-medium text-t1 bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
                 >
                   📦 Resolver SKUs sem produto
                 </button>
@@ -1333,7 +1335,7 @@ export default function DashboardPage() {
                 <button
                   onClick={() => handleRetryPendingStock(stuck.map(p => p.order_id))}
                   disabled={retryingPendingStock}
-                  className="text-xs font-medium text-white bg-amber-600/80 hover:bg-amber-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap disabled:opacity-50"
+                  className="text-xs font-medium text-t1 bg-amber-600/80 hover:bg-amber-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap disabled:opacity-50"
                 >
                   {retryingPendingStock ? 'Tentando…' : `🔁 Tentar novamente (${stuck.length})`}
                 </button>
@@ -1348,18 +1350,18 @@ export default function DashboardPage() {
           terminar; some só quando a transportadora é preenchida de verdade. */}
       {Array.isArray(stats?.checks?.pending_carrier_sessions) &&
         (stats.checks.pending_carrier_sessions as any[]).length > 0 && (
-          <div className="flex flex-col gap-2 bg-amber-900/25 border border-amber-500/30 rounded-xl px-4 py-3">
+          <div className="flex flex-col gap-2 bg-warn-soft border border-warn/30 rounded-xl px-4 py-3">
             {(stats.checks.pending_carrier_sessions as any[]).map((p: any) => (
               <div key={p.session_id} className="flex items-center gap-3">
-                <span className="text-amber-400 flex-shrink-0">🚚</span>
-                <p className="flex-1 text-sm text-amber-300">
+                <span className="text-warn flex-shrink-0">🚚</span>
+                <p className="flex-1 text-sm text-warn">
                   Sessão #{p.session_id} sem transportadora — {p.count} pedido(s) bloqueado(s) pra bipagem e PDF
                 </p>
                 <button
                   onClick={() => setCarrierModalOrders(
                     ((stats?.checks?.missing_carriers ?? []) as any[]).filter((mc: any) => mc.session_id === p.session_id)
                   )}
-                  className="flex-shrink-0 text-xs font-semibold text-amber-300 hover:underline"
+                  className="flex-shrink-0 text-xs font-semibold text-warn hover:underline"
                 >
                   Preencher aqui →
                 </button>
@@ -1371,8 +1373,8 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">Dashboard Master</h1>
-          <p className="text-sm text-white/50 mt-0.5">
+          <h1 className="text-xl font-bold text-t1">Dashboard Master</h1>
+          <p className="text-sm text-t3 mt-0.5">
             {format(new Date(targetDate + 'T12:00:00'), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
             {isToday ? ' · Atualiza a cada 60s' : ' · Visualizando histórico'}
           </p>
@@ -1380,12 +1382,12 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {/* Seletor de unidade — admin e manager */}
           {(user.role === 'admin' || user.role === 'manager') && (units as any[]).length > 1 && (
-            <div className="flex items-center gap-1.5 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg">
-              <span className="text-xs text-white/40">Unidade:</span>
+            <div className="flex items-center gap-1.5 px-2 py-1.5 bg-surface border border-line rounded-lg">
+              <span className="text-xs text-t4">Unidade:</span>
               <select
                 value={activeUnitId ?? ''}
                 onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
-                className="bg-transparent text-sm text-white/80 outline-none"
+                className="bg-transparent text-sm text-t2 outline-none"
               >
                 {user.role === 'admin' && <option value="">Todas</option>}
                 {(units as any[]).map((u: any) => (
@@ -1396,13 +1398,13 @@ export default function DashboardPage() {
           )}
 
           {/* Seletor de data */}
-          <div className="flex items-center gap-1 px-2 py-1.5 bg-gray-900 border border-white/12 rounded-lg">
+          <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border border-line rounded-lg">
             <input
               type="date"
               value={targetDate}
               max={todayStr}
               onChange={(e) => setTargetDate(e.target.value || todayStr)}
-              className="text-sm text-white/80 bg-transparent focus:outline-none"
+              className="text-sm text-t2 bg-transparent focus:outline-none"
               title="Selecione a data (pelo dia do upload)"
             />
             {!isToday && (
@@ -1418,14 +1420,14 @@ export default function DashboardPage() {
 
           <button
             onClick={() => refetch()}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white/60 hover:text-white bg-gray-900 border border-white/12 rounded-lg transition"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-t3 hover:text-t1 bg-surface border border-line rounded-lg transition"
           >
             <RefreshCw size={14} />
             Atualizar
           </button>
 
           {/* Upload de Excel — só permitido no dia de hoje */}
-          <label className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 rounded-lg cursor-pointer transition ${uploading || !isToday ? 'opacity-60 cursor-not-allowed' : ''}`}>
+          <label className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg cursor-pointer transition ${uploading || !isToday ? 'opacity-60 cursor-not-allowed' : ''}`}>
             <Upload size={14} />
             {uploading ? importingLabel : 'Importar Excel'}
             <input
@@ -1442,13 +1444,13 @@ export default function DashboardPage() {
 
       {/* ── Conteúdo principal: vazio se não houver dados ── */}
       {(!stats || stats.total_orders_today === 0) ? (
-        <div className="bg-gray-900 rounded-xl border border-dashed border-white/12 p-12 text-center">
-          <Package size={44} className="text-white/20 mx-auto mb-3" />
-          <p className="text-white/50 text-sm font-medium">
+        <div className="bg-surface rounded-xl border border-dashed border-line p-12 text-center">
+          <Package size={44} className="text-t5 mx-auto mb-3" />
+          <p className="text-t3 text-sm font-medium">
             Nenhum pedido importado {isToday ? 'hoje' : 'nessa data'}
           </p>
           {isToday && (
-            <p className="text-white/25 text-xs mt-1">
+            <p className="text-t5 text-xs mt-1">
               Use o botão "Importar Excel" para começar
             </p>
           )}
@@ -1461,7 +1463,7 @@ export default function DashboardPage() {
               icon={Package}
               label="Total de Pedidos"
               value={stats.total_orders_today}
-              color="text-white/80"
+              color="text-t2"
             />
             <StatCard
               icon={CheckCircle}
@@ -1474,30 +1476,30 @@ export default function DashboardPage() {
               icon={Clock}
               label="Pendentes"
               value={stats.orders_pending}
-              color="text-amber-500"
+              color="text-warn"
             />
             <StatCard
               icon={ScanLine}
               label="Em Bipagem"
               value={stats.orders_scanning}
-              color="text-blue-600"
+              color="text-info"
             />
           </div>
 
           {/* Barra de progresso geral */}
-          <div className="bg-gray-900 rounded-xl p-4 border border-white/8 shadow-none">
+          <div className="bg-surface rounded-xl p-4 border border-line-soft shadow-none">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-medium text-white/50">Progresso geral do dia</p>
-              <p className="text-sm font-bold text-white/80">{completionPct}%</p>
+              <p className="text-xs font-medium text-t3">Progresso geral do dia</p>
+              <p className="text-sm font-bold text-t2">{completionPct}%</p>
             </div>
-            <div className="w-full bg-white/10 rounded-full h-3">
+            <div className="w-full bg-surface-2 rounded-full h-3">
               <div
                 className="bg-violet-500 h-3 rounded-full transition-all duration-500"
                 style={{ width: `${completionPct}%` }}
               />
             </div>
             {stats.active_sessions > 0 && (
-              <p className="text-xs text-white/35 mt-1.5">
+              <p className="text-xs text-t4 mt-1.5">
                 {stats.active_sessions} sessão(ões) ativa(s) em andamento
               </p>
             )}
@@ -1515,15 +1517,15 @@ export default function DashboardPage() {
             const pendingCount = checkList.filter(c => !c.ok).length;
             const showBody = !isMobile || checksExpanded;
             return (
-            <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
+            <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
               <button
                 type="button"
                 onClick={() => isMobile && setChecksExpanded(v => !v)}
                 className={`w-full flex items-center justify-between ${showBody ? 'mb-3' : ''} ${isMobile ? 'cursor-pointer' : 'cursor-default'}`}
               >
-                <h2 className="text-sm font-semibold text-white/80">Checagens do Dia</h2>
+                <h2 className="text-sm font-semibold text-t2">Checagens do Dia</h2>
                 {isMobile && (
-                  <span className={`flex items-center gap-1.5 text-xs font-medium ${pendingCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  <span className={`flex items-center gap-1.5 text-xs font-medium ${pendingCount > 0 ? 'text-warn' : 'text-ok'}`}>
                     {pendingCount > 0 ? `${pendingCount} pendente(s)` : 'tudo OK'}
                     <ChevronDown size={13} className={`transition-transform ${checksExpanded ? 'rotate-180' : ''}`} />
                   </span>
@@ -1535,8 +1537,8 @@ export default function DashboardPage() {
               </div>
               )}
               {showBody && stats.checks.all_ok && (
-                <div className="mt-3 p-2.5 bg-emerald-900/30 border border-emerald-500/20 rounded-lg text-center">
-                  <p className="text-xs text-emerald-300 font-semibold">
+                <div className="mt-3 p-2.5 bg-ok-soft border border-ok/20 rounded-lg text-center">
+                  <p className="text-xs text-ok font-semibold">
                     ✓ Todas as checagens OK — pronto para bipagem
                   </p>
                 </div>
@@ -1547,16 +1549,16 @@ export default function DashboardPage() {
                 !stats.checks.products_registered &&
                 Array.isArray(stats.checks.missing_products) &&
                 stats.checks.missing_products.length > 0 && (
-                  <div className="mt-3 p-3 bg-red-900/25 border border-red-500/20 rounded-lg">
-                    <p className="text-xs font-semibold text-red-300 mb-2 flex items-center gap-1">
+                  <div className="mt-3 p-3 bg-bad-soft border border-bad/20 rounded-lg">
+                    <p className="text-xs font-semibold text-bad mb-2 flex items-center gap-1">
                       <AlertTriangle size={12} />
                       {stats.checks.missing_products.length} produto(s) sem cadastro
                     </p>
                     <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
                       {stats.checks.missing_products.map((mp: any, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-xs text-red-300">
-                          <span className="font-mono bg-red-900/40 px-1.5 py-0.5 rounded">{mp.sku}</span>
-                          <span className="text-red-400">{mp.seller_name}</span>
+                        <div key={i} className="flex items-center gap-2 text-xs text-bad">
+                          <span className="font-mono bg-bad-soft px-1.5 py-0.5 rounded">{mp.sku}</span>
+                          <span className="text-bad">{mp.seller_name}</span>
                         </div>
                       ))}
                     </div>
@@ -1566,7 +1568,7 @@ export default function DashboardPage() {
                           state: { prefill: stats.checks?.missing_products },
                         })
                       }
-                      className="mt-2 text-xs text-red-300 hover:underline flex items-center gap-1"
+                      className="mt-2 text-xs text-bad hover:underline flex items-center gap-1"
                     >
                       <ChevronRight size={11} /> Cadastrar produtos agora (pré-preenchido)
                     </button>
@@ -1577,23 +1579,23 @@ export default function DashboardPage() {
                 !stats.checks.transport &&
                 Array.isArray(stats.checks.missing_carriers) &&
                 (stats.checks.missing_carriers as any[]).length > 0 && (
-                  <div className="mt-3 p-3 bg-amber-900/25 border border-amber-500/20 rounded-lg">
-                    <p className="text-xs font-semibold text-amber-300 mb-2 flex items-center gap-1">
+                  <div className="mt-3 p-3 bg-warn-soft border border-warn/20 rounded-lg">
+                    <p className="text-xs font-semibold text-warn mb-2 flex items-center gap-1">
                       <AlertTriangle size={12} />
                       {(stats.checks.missing_carriers as any[]).length} pedido(s) sem transportadora
                     </p>
                     <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
                       {(stats.checks.missing_carriers as any[]).map((mc: any, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-xs text-amber-300">
-                          <span className="font-mono bg-amber-900/40 px-1.5 py-0.5 rounded">{mc.nf_number}</span>
-                          <span className="text-amber-400">{mc.seller_name}</span>
-                          <span className="text-amber-200/60 truncate">{mc.customer_name}</span>
+                        <div key={i} className="flex items-center gap-2 text-xs text-warn">
+                          <span className="font-mono bg-warn-soft px-1.5 py-0.5 rounded">{mc.nf_number}</span>
+                          <span className="text-warn">{mc.seller_name}</span>
+                          <span className="text-warn/60 truncate">{mc.customer_name}</span>
                         </div>
                       ))}
                     </div>
                     <button
                       onClick={() => setCarrierModalOrders((stats.checks?.missing_carriers ?? []) as any[])}
-                      className="mt-2 text-xs text-amber-300 hover:underline flex items-center gap-1"
+                      className="mt-2 text-xs text-warn hover:underline flex items-center gap-1"
                     >
                       <ChevronRight size={11} /> Informar transportadoras agora
                     </button>
@@ -1611,8 +1613,8 @@ export default function DashboardPage() {
                   key={i}
                   className={`flex items-start gap-2 p-3 rounded-lg border text-xs ${
                     alert.type === 'error'
-                      ? 'bg-red-900/25 border-red-500/20 text-red-300'
-                      : 'bg-amber-900/25 border-amber-500/20 text-amber-300'
+                      ? 'bg-bad-soft border-bad/20 text-bad'
+                      : 'bg-warn-soft border-warn/20 text-warn'
                   }`}
                 >
                   <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
@@ -1626,18 +1628,18 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Resumo por unidade */}
             {stats.units_summary && stats.units_summary.length > 0 && (
-              <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-                <h2 className="text-sm font-semibold text-white/80 mb-4">Por Unidade</h2>
+              <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
+                <h2 className="text-sm font-semibold text-t2 mb-4">Por Unidade</h2>
                 <div className="space-y-3">
                   {stats.units_summary.map((unit: any) => (
                     <div key={unit.unit_id}>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-white/60">{unit.unit_name}</span>
-                        <span className="text-xs text-white/35">
+                        <span className="text-xs font-medium text-t3">{unit.unit_name}</span>
+                        <span className="text-xs text-t4">
                           {unit.completed}/{unit.total} ({unit.pct}%)
                         </span>
                       </div>
-                      <div className="w-full bg-white/10 rounded-full h-2">
+                      <div className="w-full bg-surface-2 rounded-full h-2">
                         <div
                           className="bg-violet-500 h-2 rounded-full transition-all duration-500"
                           style={{ width: `${unit.pct}%` }}
@@ -1651,8 +1653,8 @@ export default function DashboardPage() {
 
             {/* Sellers com pedidos no dia */}
             {stats.sellers_with_orders && stats.sellers_with_orders.length > 0 && (
-              <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-                <h2 className="text-sm font-semibold text-white/80 mb-3">Sellers com Pedidos</h2>
+              <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
+                <h2 className="text-sm font-semibold text-t2 mb-3">Sellers com Pedidos</h2>
                 <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -1666,25 +1668,30 @@ export default function DashboardPage() {
                       }))}
                       margin={{ top: 4, right: 8, left: -20, bottom: 4 }}
                     >
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: chartColors.axisText }} />
+                      <YAxis tick={{ fontSize: 10, fill: chartColors.axisText }} allowDecimals={false} />
                       <Tooltip
                         formatter={(value: any, name: string) => [
                           value,
                           name === 'concluído' ? 'Concluídos' : 'Total',
                         ]}
-                        contentStyle={{ fontSize: '11px' }}
+                        contentStyle={{
+                          fontSize: '11px',
+                          background: chartColors.tooltipBg,
+                          border: `1px solid ${chartColors.tooltipBorder}`,
+                          color: chartColors.tooltipText,
+                        }}
                       />
-                      <Bar dataKey="total" fill="#2D2A4A" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="concluído" fill="#7B63E8" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="total" fill={chartColors.neutral} radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="concluído" fill={chartColors.brand} radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-3 space-y-1.5">
                   {stats.sellers_with_orders.map((s: any) => (
                     <div key={s.seller_id} className="flex items-center justify-between text-xs">
-                      <span className="text-white/60 truncate max-w-[60%]">{s.seller_name}</span>
-                      <span className="text-white/35">
+                      <span className="text-t3 truncate max-w-[60%]">{s.seller_name}</span>
+                      <span className="text-t4">
                         {s.completed}/{s.total} ({s.pct}%)
                       </span>
                     </div>
@@ -1696,26 +1703,26 @@ export default function DashboardPage() {
 
           {/* Scans recentes */}
           {stats.recent_scans && stats.recent_scans.length > 0 && (
-            <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-              <h2 className="text-sm font-semibold text-white/80 mb-3">
+            <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
+              <h2 className="text-sm font-semibold text-t2 mb-3">
                 Scans Recentes (últimas 2h)
               </h2>
-              <div className="divide-y divide-white/5">
+              <div className="divide-y divide-line-soft">
                 {stats.recent_scans.map((scan: any, i: number) => (
                   <div
                     key={i}
                     className="flex items-center gap-3 py-1.5 text-xs"
                   >
-                    <span className="font-mono text-white/35 w-16 flex-shrink-0">
+                    <span className="font-mono text-t4 w-16 flex-shrink-0">
                       {scan.timestamp}
                     </span>
-                    <span className="text-white/60 font-medium w-28 truncate flex-shrink-0">
+                    <span className="text-t3 font-medium w-28 truncate flex-shrink-0">
                       {scan.operator}
                     </span>
                     <span className="font-mono text-violet-300 bg-violet-900/20 px-1.5 py-0.5 rounded">
                       {scan.sku}
                     </span>
-                    <span className="text-white/35 truncate">NF {scan.order_nf}</span>
+                    <span className="text-t4 truncate">NF {scan.order_nf}</span>
                   </div>
                 ))}
               </div>
@@ -1724,8 +1731,8 @@ export default function DashboardPage() {
 
           {/* ── Acompanhamento por Operador ─────────────────── */}
           {stats.operators_summary && (stats.operators_summary.length > 0 || (stats.orders_no_operator ?? 0) > 0) && (
-            <div className="bg-gray-900 rounded-xl border border-white/8 p-4">
-              <h2 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
+            <div className="bg-surface rounded-xl border border-line-soft p-4">
+              <h2 className="text-sm font-semibold text-t2 mb-3 flex items-center gap-2">
                 <ScanLine size={14} className="text-violet-400" />
                 Produtividade por Operador
               </h2>
@@ -1734,37 +1741,37 @@ export default function DashboardPage() {
                   const pct = op.orders_touched > 0 ? Math.round(op.orders_completed / op.orders_touched * 100) : 0;
                   return (
                     <div key={op.operator_id}
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/6"
-                      style={{ background: 'rgba(255,255,255,0.03)' }}>
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-line-soft"
+                      style={{ background: 'rgb(var(--surface-2))' }}>
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-t1 flex-shrink-0"
                         style={{ background: 'linear-gradient(135deg,#7B63E8,#3DD9A4)' }}>
                         {op.operator_name?.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white/80 truncate">{op.operator_name}</p>
+                        <p className="text-sm font-medium text-t2 truncate">{op.operator_name}</p>
                         <div className="flex items-center gap-3 mt-0.5">
-                          <span className="text-[11px] text-white/40">{op.scans} scan(s)</span>
-                          <span className="text-[11px] text-white/40">{op.orders_touched} pedido(s) tocados</span>
-                          <span className="text-[11px] text-teal-400 font-medium">{op.orders_completed} concluído(s)</span>
+                          <span className="text-[11px] text-t4">{op.scans} scan(s)</span>
+                          <span className="text-[11px] text-t4">{op.orders_touched} pedido(s) tocados</span>
+                          <span className="text-[11px] text-ok font-medium">{op.orders_completed} concluído(s)</span>
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0">
                         {op.scans > 0
-                          ? <span className={`text-sm font-bold ${pct === 100 ? 'text-teal-400' : pct > 50 ? 'text-violet-300' : 'text-amber-400'}`}>{pct}%</span>
-                          : <span className="text-xs text-white/25">Sem scans</span>}
+                          ? <span className={`text-sm font-bold ${pct === 100 ? 'text-ok' : pct > 50 ? 'text-violet-300' : 'text-warn'}`}>{pct}%</span>
+                          : <span className="text-xs text-t5">Sem scans</span>}
                       </div>
                     </div>
                   );
                 })}
                 {(stats.orders_no_operator ?? 0) > 0 && (
-                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/6 border-dashed"
-                    style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white/25 flex-shrink-0 border border-white/12">?</div>
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-line-soft border-dashed"
+                    style={{ background: 'rgb(var(--surface-2))' }}>
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-t5 flex-shrink-0 border border-line">?</div>
                     <div className="flex-1">
-                      <p className="text-sm text-white/40">Sem operador associado</p>
-                      <p className="text-[11px] text-white/25 mt-0.5">Pedidos ainda não iniciados ou sem scan registrado</p>
+                      <p className="text-sm text-t4">Sem operador associado</p>
+                      <p className="text-[11px] text-t5 mt-0.5">Pedidos ainda não iniciados ou sem scan registrado</p>
                     </div>
-                    <span className="text-sm font-bold text-white/35">{stats.orders_no_operator ?? 0}</span>
+                    <span className="text-sm font-bold text-t4">{stats.orders_no_operator ?? 0}</span>
                   </div>
                 )}
               </div>
@@ -1773,15 +1780,15 @@ export default function DashboardPage() {
 
           {/* ── Sellers sem pedidos hoje ─────────────────────── */}
           {stats.sellers_no_orders && stats.sellers_no_orders.length > 0 && (
-            <div className="bg-amber-900/20 border border-amber-500/20 rounded-xl p-4">
-              <h2 className="text-sm font-semibold text-amber-300 mb-2 flex items-center gap-2">
+            <div className="bg-warn-soft border border-warn/20 rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-warn mb-2 flex items-center gap-2">
                 <AlertTriangle size={14} />
                 {stats.sellers_no_orders.length} seller(s) sem pedidos hoje
               </h2>
               <div className="flex flex-wrap gap-2">
                 {stats.sellers_no_orders.map((s: any) => (
                   <span key={s.seller_id}
-                    className="px-2.5 py-1 bg-gray-900 border border-amber-200 rounded-full text-xs text-amber-700 font-medium">
+                    className="px-2.5 py-1 bg-surface border border-warn/30 rounded-full text-xs text-warn font-medium">
                     {s.seller_name}
                   </span>
                 ))}
@@ -1791,34 +1798,34 @@ export default function DashboardPage() {
 
           {/* ── Histórico de uploads do dia ──────────────────── */}
           {stats.sessions_today && stats.sessions_today.length > 0 && (
-            <div className="bg-gray-900 rounded-xl border border-white/8 shadow-none p-4">
-              <h2 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
-                <Upload size={14} className="text-white/35" />
+            <div className="bg-surface rounded-xl border border-line-soft shadow-none p-4">
+              <h2 className="text-sm font-semibold text-t2 mb-3 flex items-center gap-2">
+                <Upload size={14} className="text-t4" />
                 Uploads do Dia
               </h2>
               <div className="space-y-2">
                 {stats.sessions_today.map((sess: any) => (
                   <div key={sess.session_id}
-                    className="flex flex-col sm:flex-row items-start gap-3 p-3 bg-white/4 rounded-lg border border-white/8">
+                    className="flex flex-col sm:flex-row items-start gap-3 p-3 bg-surface-2 rounded-lg border border-line-soft">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-white/80">
+                        <span className="text-xs font-semibold text-t2">
                           Sessão #{sess.session_id}
                         </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sess.file_type === 'Entrada' ? 'bg-blue-900/40 text-blue-300' : 'bg-violet-900/40 text-violet-300'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sess.file_type === 'Entrada' ? 'bg-info-soft text-info' : 'bg-violet-900/40 text-violet-300'}`}>
                           {sess.file_type}
                         </span>
-                        <span className="text-[10px] text-white/35">{sess.created_at}</span>
+                        <span className="text-[10px] text-t4">{sess.created_at}</span>
                       </div>
                       {sess.source_file && (
-                        <p className="text-[11px] text-white/35 truncate mb-1" title={sess.source_file}>
+                        <p className="text-[11px] text-t4 truncate mb-1" title={sess.source_file}>
                           📄 {sess.source_file}
                         </p>
                       )}
                       <div className="flex items-center gap-3">
-                        <span className="text-xs text-white/50">{sess.total_orders} pedido(s)</span>
+                        <span className="text-xs text-t3">{sess.total_orders} pedido(s)</span>
                         {sess.seller_names?.length > 0 && (
-                          <span className="text-xs text-white/35 truncate">
+                          <span className="text-xs text-t4 truncate">
                             {sess.seller_names.join(', ')}
                           </span>
                         )}
@@ -1831,7 +1838,7 @@ export default function DashboardPage() {
                           ordersApi.downloadSessionPdf(sess.session_id, 'separation')
                             .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Separação'))
                         }
-                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-emerald-300 bg-emerald-900/25 border border-emerald-500/20 hover:bg-emerald-900/35' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
+                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-ok bg-ok-soft border border-ok/20 hover:bg-ok-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
                       >
                         <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
                       </button>
@@ -1840,14 +1847,14 @@ export default function DashboardPage() {
                           ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
                             .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Expedição'))
                         }
-                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-blue-300 bg-blue-900/25 border border-blue-500/20 hover:bg-blue-900/40' : 'text-white/40 bg-white/5 border border-white/10 hover:bg-white/10'}`}
+                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-info bg-info-soft border border-info/20 hover:bg-info-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
                       >
                         <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
                       </button>
                       {sess.sellers_in_session?.length > 0 && (
                         <button
                           onClick={() => openCancelDupModal(sess.session_id, sess.sellers_in_session)}
-                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition text-red-300 bg-red-900/20 border border-red-500/20 hover:bg-red-900/35"
+                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition text-bad bg-bad-soft border border-bad/20 hover:bg-bad-soft"
                         >
                           <Trash2 size={11} /> Excluir sellers
                         </button>
@@ -1865,7 +1872,7 @@ export default function DashboardPage() {
       {uploadModalOpen && pendingFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelUpload}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
@@ -1873,31 +1880,31 @@ export default function DashboardPage() {
                 <Upload size={20} className="text-violet-400" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">Configurar importação</h3>
-                <p className="text-xs text-white/50 mt-0.5 break-all">{pendingFile.name}</p>
+                <h3 className="text-base font-semibold text-t1">Configurar importação</h3>
+                <p className="text-xs text-t3 mt-0.5 break-all">{pendingFile.name}</p>
               </div>
             </div>
 
             {/* Gerar PDFs */}
             <div className="mb-4">
-              <label className="block text-xs font-medium text-white/80 mb-2">Gerar relatórios PDF</label>
+              <label className="block text-xs font-medium text-t2 mb-2">Gerar relatórios PDF</label>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={generateSepPdf} onChange={e => setGenerateSepPdf(e.target.checked)}
-                    className="h-4 w-4 rounded bg-white/10 border-white/20 text-violet-500 focus:ring-violet-500" />
-                  <span className="text-sm text-white/80">PDF de Separação</span>
+                    className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
+                  <span className="text-sm text-t2">PDF de Separação</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={generateExpPdf} onChange={e => setGenerateExpPdf(e.target.checked)}
-                    className="h-4 w-4 rounded bg-white/10 border-white/20 text-violet-500 focus:ring-violet-500" />
-                  <span className="text-sm text-white/80">PDF de Expedição</span>
+                    className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
+                  <span className="text-sm text-t2">PDF de Expedição</span>
                 </label>
               </div>
             </div>
 
             {/* Tipo de arquivo (nível da sessão) */}
             <div className="mb-4">
-              <label className="block text-xs font-medium text-white/80 mb-2">
+              <label className="block text-xs font-medium text-t2 mb-2">
                 Tipo da movimentação
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -1907,7 +1914,7 @@ export default function DashboardPage() {
                   className={`px-3 py-2 text-sm rounded-lg border transition ${
                     fileType === 'Saída'
                       ? 'bg-violet-900/25 border-violet-500 text-violet-300 font-medium'
-                      : 'bg-white/5 border-white/10 text-white/50 hover:border-white/25'
+                      : 'bg-surface-2 border-line text-t3 hover:border-line-strong'
                   }`}
                 >
                   Saída (Expedição)
@@ -1917,14 +1924,14 @@ export default function DashboardPage() {
                   onClick={() => setFileType('Entrada')}
                   className={`px-3 py-2 text-sm rounded-lg border transition ${
                     fileType === 'Entrada'
-                      ? 'bg-blue-900/30 border-blue-500 text-blue-300 font-medium'
-                      : 'bg-white/5 border-white/10 text-white/50 hover:border-white/25'
+                      ? 'bg-info-soft border-info text-info font-medium'
+                      : 'bg-surface-2 border-line text-t3 hover:border-line-strong'
                   }`}
                 >
                   Entrada (Recebimento)
                 </button>
               </div>
-              <p className="text-[11px] text-white/35 mt-1.5">
+              <p className="text-[11px] text-t4 mt-1.5">
                 Aplica-se a todos os pedidos deste arquivo.
               </p>
             </div>
@@ -1936,13 +1943,13 @@ export default function DashboardPage() {
                   type="checkbox"
                   checked={forBilling}
                   onChange={(e) => setForBilling(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-white/20 text-violet-500 focus:ring-violet-500"
+                  className="mt-0.5 h-4 w-4 rounded border-line-strong text-violet-500 focus:ring-violet-500"
                 />
                 <div>
-                  <span className="text-sm font-medium text-white/80">
+                  <span className="text-sm font-medium text-t2">
                     Considerar para faturamento
                   </span>
-                  <p className="text-[11px] text-white/35 mt-0.5">
+                  <p className="text-[11px] text-t4 mt-0.5">
                     Quando marcado, os pedidos deste arquivo entram na contagem mensal de cobrança dos sellers.
                   </p>
                 </div>
@@ -1952,7 +1959,7 @@ export default function DashboardPage() {
             {/* Progresso — só aparece durante o import, sem layout shift no resto do modal */}
             {uploading && (
               <div className="pt-1">
-                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                <div className="h-1.5 w-full rounded-full bg-surface-2 overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-300"
                     style={{
@@ -1963,7 +1970,7 @@ export default function DashboardPage() {
                     }}
                   />
                 </div>
-                <p className="mt-1.5 text-xs text-white/50">
+                <p className="mt-1.5 text-xs text-t3">
                   {importProgress && importProgress.total > 0
                     ? `NF ${importProgress.processed} de ${importProgress.total} — pode levar alguns minutos, não feche esta aba`
                     : 'Enviando arquivo... não feche esta aba'}
@@ -1975,14 +1982,14 @@ export default function DashboardPage() {
             <div className="flex gap-2 pt-2">
               <button
                 onClick={handleCancelUpload}
-                className="flex-1 px-4 py-2 text-sm text-white/60 border border-white/10 rounded-lg hover:bg-white/4 transition"
+                className="flex-1 px-4 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => runImport(false)}
                 disabled={uploading}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white rounded-lg transition disabled:opacity-50"
+                className="flex-1 px-4 py-2 text-sm font-medium text-t1 rounded-lg transition disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 {uploading ? importingLabel : 'Importar agora'}
@@ -2024,18 +2031,18 @@ export default function DashboardPage() {
       {duplicateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelDuplicates}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-red-900/30">
-                <AlertTriangle size={20} className="text-red-400" />
+              <div className="p-2 rounded-lg bg-bad-soft">
+                <AlertTriangle size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">
+                <h3 className="text-base font-semibold text-t1">
                   {duplicates.length} NF(s) já importada(s)
                 </h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <p className="text-xs text-t3 mt-0.5">
                   Algumas notas fiscais deste arquivo já existem no banco. Confirme se deseja reimportar mesmo assim.
                 </p>
               </div>
@@ -2044,21 +2051,21 @@ export default function DashboardPage() {
             {/* Desde 06/08/2026 o estoque baixa na importação: reimportar
                 duplicata erra o estoque do seller NA HORA, não só se alguém
                 bipar. Por isso o aviso é explícito e em vermelho. */}
-            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-900/20 px-3 py-2.5">
-              <p className="text-xs text-red-200 font-semibold mb-1">
+            <div className="mb-4 rounded-lg border border-bad/30 bg-bad-soft px-3 py-2.5">
+              <p className="text-xs text-bad font-semibold mb-1">
                 Atenção: isso vai baixar o estoque destas NFs DE NOVO.
               </p>
-              <p className="text-xs text-red-200/70">
+              <p className="text-xs text-bad/70">
                 O estoque é sensibilizado na importação. Reimportar duplica a baixa imediatamente,
                 antes de qualquer bipagem. Só confirme se realmente for uma nota nova com o mesmo número.
                 Para corrigir depois, use “Excluir sellers” no card da sessão.
               </p>
             </div>
 
-            <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4">
+            <div className="max-h-72 overflow-y-auto border border-line-soft rounded-lg mb-4">
               <table className="w-full text-xs">
-                <thead className="bg-white/5 sticky top-0">
-                  <tr className="text-white/50">
+                <thead className="bg-surface-2 sticky top-0">
+                  <tr className="text-t3">
                     <th className="text-left px-3 py-2 font-medium">NF</th>
                     <th className="text-left px-3 py-2 font-medium">Seller</th>
                     <th className="text-left px-3 py-2 font-medium">Importada em</th>
@@ -2066,10 +2073,10 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {duplicates.map((d, i) => (
-                    <tr key={i} className="border-t border-white/5">
-                      <td className="px-3 py-1.5 font-mono text-white/90">{d.nf_number}</td>
-                      <td className="px-3 py-1.5 text-white/60 truncate max-w-[160px]">{d.seller_name}</td>
-                      <td className="px-3 py-1.5 text-white/35">
+                    <tr key={i} className="border-t border-line-soft">
+                      <td className="px-3 py-1.5 font-mono text-t1">{d.nf_number}</td>
+                      <td className="px-3 py-1.5 text-t3 truncate max-w-[160px]">{d.seller_name}</td>
+                      <td className="px-3 py-1.5 text-t4">
                         {d.existing_imported_at
                           ? format(new Date(d.existing_imported_at), 'dd/MM HH:mm', { locale: ptBR })
                           : '—'}
@@ -2082,13 +2089,13 @@ export default function DashboardPage() {
             <div className="flex gap-2 justify-end mt-2">
               <button
                 onClick={handleCancelDuplicates}
-                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
+                className="px-4 py-2 text-sm rounded-lg border border-line text-t3 hover:text-t1 hover:border-line-strong transition-all"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleForceImport}
-                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-t1 transition-all"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Reimportar mesmo assim
@@ -2102,37 +2109,37 @@ export default function DashboardPage() {
       {inactiveModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelInactiveSellers}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-yellow-900/30">
-                <AlertTriangle size={20} className="text-yellow-600" />
+              <div className="p-2 rounded-lg bg-warn-soft">
+                <AlertTriangle size={20} className="text-warn" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">
+                <h3 className="text-base font-semibold text-t1">
                   {inactiveSellers.length} seller(s) inativo(s) neste arquivo
                 </h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <p className="text-xs text-t3 mt-0.5">
                   Escolha, para cada seller, se deseja reativá-lo e importar os pedidos dele, ou ignorar só os pedidos desse seller neste arquivo.
                 </p>
               </div>
             </div>
 
-            <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+            <div className="max-h-72 overflow-y-auto border border-line-soft rounded-lg mb-4 divide-y divide-line-soft">
               {inactiveSellers.map((s) => (
                 <div key={s.seller_id} className="px-3 py-2.5 flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm text-white/90 truncate">{s.seller_name}</p>
-                    <p className="text-xs text-white/35">{s.nf_numbers.length} NF(s): {s.nf_numbers.slice(0, 5).join(', ')}{s.nf_numbers.length > 5 ? '…' : ''}</p>
+                    <p className="text-sm text-t1 truncate">{s.seller_name}</p>
+                    <p className="text-xs text-t4">{s.nf_numbers.length} NF(s): {s.nf_numbers.slice(0, 5).join(', ')}{s.nf_numbers.length > 5 ? '…' : ''}</p>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
                     <button
                       onClick={() => handleSetInactiveDecision(s.seller_id, 'reactivate')}
                       className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
                         inactiveDecisions[s.seller_id] === 'reactivate'
-                          ? 'bg-violet-600 border-violet-600 text-white'
-                          : 'border-white/12 text-white/50 hover:text-white hover:border-white/25'
+                          ? 'bg-violet-600 border-violet-600 text-t1'
+                          : 'border-line text-t3 hover:text-t1 hover:border-line-strong'
                       }`}
                     >
                       Reativar
@@ -2141,8 +2148,8 @@ export default function DashboardPage() {
                       onClick={() => handleSetInactiveDecision(s.seller_id, 'ignore')}
                       className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
                         inactiveDecisions[s.seller_id] === 'ignore'
-                          ? 'bg-white/15 border-white/25 text-white'
-                          : 'border-white/12 text-white/50 hover:text-white hover:border-white/25'
+                          ? 'bg-brand-soft border-line-strong text-t1'
+                          : 'border-line text-t3 hover:text-t1 hover:border-line-strong'
                       }`}
                     >
                       Ignorar
@@ -2155,14 +2162,14 @@ export default function DashboardPage() {
             <div className="flex gap-2 justify-end mt-2">
               <button
                 onClick={handleCancelInactiveSellers}
-                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
+                className="px-4 py-2 text-sm rounded-lg border border-line text-t3 hover:text-t1 hover:border-line-strong transition-all"
               >
                 Cancelar importação
               </button>
               <button
                 onClick={handleConfirmInactiveSellers}
                 disabled={!allInactiveDecided}
-                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-t1 transition-all disabled:opacity-40"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Continuar
@@ -2175,33 +2182,33 @@ export default function DashboardPage() {
       {unmatchedModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleCancelUnmatchedSellers}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-yellow-900/30">
-                <AlertTriangle size={20} className="text-yellow-600" />
+              <div className="p-2 rounded-lg bg-warn-soft">
+                <AlertTriangle size={20} className="text-warn" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">
+                <h3 className="text-base font-semibold text-t1">
                   {unmatchedSellers.length} nome(s) de seller não reconhecido(s)
                 </h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <p className="text-xs text-t3 mt-0.5">
                   Esses nomes não batem com nenhum seller cadastrado. Escolha, para cada um, se deseja
                   vincular a um seller já existente ou criar um novo (com unidade).
                 </p>
               </div>
             </div>
 
-            <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+            <div className="max-h-80 overflow-y-auto border border-line-soft rounded-lg mb-4 divide-y divide-line-soft">
               {unmatchedSellers.map((s) => {
                 const decision = unmatchedDecisions[s.seller_name];
                 const isCreate = decision?.action === 'create';
                 const selectValue = !decision ? '' : decision.action === 'create' ? 'create' : String(decision.seller_id);
                 return (
                   <div key={s.seller_name} className="px-3 py-2.5">
-                    <p className="text-sm text-white/90 truncate">{s.seller_name}</p>
-                    <p className="text-xs text-white/35 mb-2">
+                    <p className="text-sm text-t1 truncate">{s.seller_name}</p>
+                    <p className="text-xs text-t4 mb-2">
                       {s.nf_numbers.length} NF(s): {s.nf_numbers.slice(0, 5).join(', ')}{s.nf_numbers.length > 5 ? '…' : ''}
                     </p>
                     <div className="flex gap-2">
@@ -2216,7 +2223,7 @@ export default function DashboardPage() {
                             handleSetUnmatchedDecision(s.seller_name, { action: 'link', seller_id: Number(v) });
                           }
                         }}
-                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                        className="flex-1 bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
                       >
                         <option value="" disabled>Selecione...</option>
                         <option value="create">Criar novo seller</option>
@@ -2228,7 +2235,7 @@ export default function DashboardPage() {
                         <select
                           value={decision?.action === 'create' && decision.unit_id ? decision.unit_id : ''}
                           onChange={(e) => handleSetUnmatchedDecision(s.seller_name, { action: 'create', unit_id: Number(e.target.value) })}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                          className="flex-1 bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
                         >
                           <option value="" disabled>Unidade...</option>
                           {(units as any[]).map((u: any) => (
@@ -2245,14 +2252,14 @@ export default function DashboardPage() {
             <div className="flex gap-2 justify-end mt-2">
               <button
                 onClick={handleCancelUnmatchedSellers}
-                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all"
+                className="px-4 py-2 text-sm rounded-lg border border-line text-t3 hover:text-t1 hover:border-line-strong transition-all"
               >
                 Cancelar importação
               </button>
               <button
                 onClick={handleConfirmUnmatchedSellers}
                 disabled={!allUnmatchedDecided}
-                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-t1 transition-all disabled:opacity-40"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Continuar
@@ -2269,30 +2276,30 @@ export default function DashboardPage() {
       {missingSkuModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setMissingSkuModalOpen(false)}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-red-900/30">
-                <AlertTriangle size={20} className="text-red-400" />
+              <div className="p-2 rounded-lg bg-bad-soft">
+                <AlertTriangle size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">
+                <h3 className="text-base font-semibold text-t1">
                   Não subimos o arquivo porque tem {missingSkuLines.length} linha(s) com SKU vazio
                 </h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <p className="text-xs text-t3 mt-0.5">
                   Nada deste arquivo foi importado. Corrija o SKU dessas linhas na planilha de origem e envie o arquivo novamente.
                 </p>
               </div>
             </div>
 
-            <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+            <div className="max-h-80 overflow-y-auto border border-line-soft rounded-lg mb-4 divide-y divide-line-soft">
               {missingSkuLines.map((l, idx) => (
                 <div key={idx} className="px-3 py-2.5">
-                  <p className="text-sm text-white/90">
+                  <p className="text-sm text-t1">
                     NF {l.nf_number} · {l.seller_name}
                   </p>
-                  <p className="text-xs text-white/40">
+                  <p className="text-xs text-t4">
                     {l.customer_name || 'Cliente não informado'} — {l.product_name || 'produto sem nome'}
                   </p>
                 </div>
@@ -2302,7 +2309,7 @@ export default function DashboardPage() {
             <div className="flex justify-end">
               <button
                 onClick={() => setMissingSkuModalOpen(false)}
-                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-t1 transition-all"
                 style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #5B43C8 100%)' }}
               >
                 Fechar
@@ -2317,23 +2324,23 @@ export default function DashboardPage() {
       {stockModalOpen && stockReport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setStockModalOpen(false)}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-3xl mx-4 max-h-[85vh] overflow-y-auto"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-3xl mx-4 max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-amber-900/30">
-                <AlertTriangle size={20} className="text-amber-400" />
+              <div className="p-2 rounded-lg bg-warn-soft">
+                <AlertTriangle size={20} className="text-warn" />
               </div>
               <div className="flex-1">
-                <h3 className="text-base font-semibold text-white">Resultado do estoque</h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <h3 className="text-base font-semibold text-t1">Resultado do estoque</h3>
+                <p className="text-xs text-t3 mt-0.5">
                   {stockReport.applied_orders > 0
                     ? `Estoque baixado em ${stockReport.applied_orders} NF(s). `
                     : ''}
                   Confira os pontos abaixo — nada aqui bloqueia a operação.
                 </p>
               </div>
-              <button onClick={() => setStockModalOpen(false)} className="text-white/40 hover:text-white">
+              <button onClick={() => setStockModalOpen(false)} className="text-t4 hover:text-t1">
                 <X size={18} />
               </button>
             </div>
@@ -2347,15 +2354,15 @@ export default function DashboardPage() {
               }, {} as Record<string, typeof stockReport.negatives>);
               return (
                 <div className="mb-5">
-                  <p className="text-sm font-semibold text-red-300 mb-2">
+                  <p className="text-sm font-semibold text-bad mb-2">
                     Estoque negativo em {stockReport.negatives.length} SKU(s)
                   </p>
                   {Object.entries(bySeller).map(([sellerName, rows]) => (
-                    <div key={sellerName} className="mb-3 border border-white/8 rounded-lg overflow-hidden">
-                      <div className="px-3 py-2 bg-white/5 text-sm text-white/90 font-medium">{sellerName}</div>
+                    <div key={sellerName} className="mb-3 border border-line-soft rounded-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-surface-2 text-sm text-t1 font-medium">{sellerName}</div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs">
-                          <thead className="text-white/40">
+                          <thead className="text-t4">
                             <tr>
                               <th className="text-left px-3 py-1.5 font-medium">SKU</th>
                               <th className="text-left px-3 py-1.5 font-medium">Produto</th>
@@ -2364,20 +2371,20 @@ export default function DashboardPage() {
                               <th className="text-left px-3 py-1.5 font-medium">Situação</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-white/5">
+                          <tbody className="divide-y divide-line-soft">
                             {rows.map((n) => (
                               <tr key={n.sku}>
-                                <td className="px-3 py-1.5 text-white/80 font-mono">{n.sku}</td>
-                                <td className="px-3 py-1.5 text-white/60 truncate max-w-[220px]">{n.product_name}</td>
-                                <td className="px-3 py-1.5 text-right text-red-300 font-semibold">{n.current_stock}</td>
-                                <td className="px-3 py-1.5 text-right text-white/60">
+                                <td className="px-3 py-1.5 text-t2 font-mono">{n.sku}</td>
+                                <td className="px-3 py-1.5 text-t3 truncate max-w-[220px]">{n.product_name}</td>
+                                <td className="px-3 py-1.5 text-right text-bad font-semibold">{n.current_stock}</td>
+                                <td className="px-3 py-1.5 text-right text-t3">
                                   {n.applied_qty > 0 ? `+${n.applied_qty}` : n.applied_qty}
                                 </td>
                                 <td className="px-3 py-1.5">
                                   {n.was_negative_before ? (
-                                    <span className="text-amber-300/80">Já estava negativo</span>
+                                    <span className="text-warn/80">Já estava negativo</span>
                                   ) : (
-                                    <span className="text-red-300">Ficou negativo agora</span>
+                                    <span className="text-bad">Ficou negativo agora</span>
                                   )}
                                 </td>
                               </tr>
@@ -2394,18 +2401,18 @@ export default function DashboardPage() {
             {/* ── NFs que não subiram ao estoque ── */}
             {stockReport.pending_orders.length > 0 && (
               <div className="mb-5">
-                <p className="text-sm font-semibold text-amber-300 mb-1">
+                <p className="text-sm font-semibold text-warn mb-1">
                   {stockReport.pending_orders.length} NF(s) NÃO subiram ao estoque
                 </p>
-                <p className="text-xs text-white/45 mb-2">
+                <p className="text-xs text-t3 mb-2">
                   Enquanto não forem resolvidas, o estoque do seller não reflete essas notas — e o
                   negativo acima pode aumentar quando elas subirem.
                 </p>
-                <div className="max-h-48 overflow-y-auto border border-white/8 rounded-lg divide-y divide-white/5">
+                <div className="max-h-48 overflow-y-auto border border-line-soft rounded-lg divide-y divide-line-soft">
                   {stockReport.pending_orders.map((p) => (
                     <div key={p.order_id} className="px-3 py-2">
-                      <p className="text-sm text-white/90">NF {p.nf_number} — {p.seller_name}</p>
-                      <p className="text-xs text-white/40">
+                      <p className="text-sm text-t1">NF {p.nf_number} — {p.seller_name}</p>
+                      <p className="text-xs text-t4">
                         {p.missing_carrier && 'Sem transportadora'}
                         {p.missing_carrier && p.missing_skus.length > 0 && ' · '}
                         {p.missing_skus.length > 0 && `SKU sem cadastro: ${p.missing_skus.join(', ')}`}
@@ -2419,20 +2426,20 @@ export default function DashboardPage() {
             {/* ── Produtos a cadastrar (destrava sozinho ao salvar) ── */}
             {stockReport.missing_products.length > 0 && (
               <div className="mb-4">
-                <p className="text-sm font-semibold text-white/90 mb-1">
+                <p className="text-sm font-semibold text-t1 mb-1">
                   Cadastrar {stockReport.missing_products.length} produto(s) para liberar
                 </p>
-                <p className="text-xs text-white/45 mb-2">
+                <p className="text-xs text-t3 mb-2">
                   Ao salvar, as NFs que dependem do SKU baixam o estoque automaticamente.
                 </p>
-                <div className="border border-white/8 rounded-lg divide-y divide-white/5">
+                <div className="border border-line-soft rounded-lg divide-y divide-line-soft">
                   {stockReport.missing_products.map((mp) => {
                     const key = `${mp.seller_id}:${mp.sku}`;
                     const form = newProductForm[key] ?? { name: mp.product_name ?? '', barcode: '' };
                     return (
                       <div key={key} className="px-3 py-2.5">
-                        <p className="text-xs text-white/50 mb-1.5">
-                          <span className="font-mono text-white/80">{mp.sku}</span> · {mp.seller_name} ·{' '}
+                        <p className="text-xs text-t3 mb-1.5">
+                          <span className="font-mono text-t2">{mp.sku}</span> · {mp.seller_name} ·{' '}
                           {mp.nf_numbers.length} NF(s)
                         </p>
                         <div className="flex flex-wrap gap-2">
@@ -2440,13 +2447,13 @@ export default function DashboardPage() {
                             value={form.name}
                             onChange={(e) => setNewProductForm(prev => ({ ...prev, [key]: { ...form, name: e.target.value } }))}
                             placeholder="Nome do produto (obrigatório)"
-                            className="flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                            className="flex-1 min-w-[180px] bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
                           />
                           <input
                             value={form.barcode}
                             onChange={(e) => setNewProductForm(prev => ({ ...prev, [key]: { ...form, barcode: e.target.value } }))}
                             placeholder="Código de barras (opcional)"
-                            className="w-44 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
+                            className="w-44 bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
                           />
                           <button
                             onClick={() => handleCreateMissingProduct(mp)}
@@ -2466,7 +2473,7 @@ export default function DashboardPage() {
             <div className="flex justify-end">
               <button
                 onClick={() => setStockModalOpen(false)}
-                className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                className="px-4 py-2 rounded-lg bg-surface-2 text-t1 text-sm hover:bg-brand-soft"
               >
                 Fechar
               </button>
@@ -2478,18 +2485,18 @@ export default function DashboardPage() {
       {cancelDupSession && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeCancelDupModal}>
           <div
-            className="bg-[#14122A] border border-white/10 rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
+            className="bg-surface border border-line rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-red-900/30">
-                <Trash2 size={20} className="text-red-400" />
+              <div className="p-2 rounded-lg bg-bad-soft">
+                <Trash2 size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">
+                <h3 className="text-base font-semibold text-t1">
                   Excluir sellers da Sessão #{cancelDupSession.session_id}
                 </h3>
-                <p className="text-xs text-white/50 mt-0.5">
+                <p className="text-xs text-t3 mt-0.5">
                   {cancelDupPreview === null
                     ? 'Escolha quais sellers desta sessão devem ter os pedidos cancelados (ex: upload duplicado). Os demais sellers da sessão não são afetados.'
                     : 'Confira antes de confirmar — alguns pedidos já têm bipagem registrada.'}
@@ -2498,32 +2505,32 @@ export default function DashboardPage() {
             </div>
 
             {cancelDupPreview === null ? (
-              <div className="max-h-72 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+              <div className="max-h-72 overflow-y-auto border border-line-soft rounded-lg mb-4 divide-y divide-line-soft">
                 {cancelDupSession.sellers.map((s) => (
-                  <label key={s.seller_id} className="px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-white/5">
+                  <label key={s.seller_id} className="px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-surface-2">
                     <input
                       type="checkbox"
                       checked={cancelDupSelected.includes(s.seller_id)}
                       onChange={() => toggleCancelDupSeller(s.seller_id)}
                       className="accent-red-500"
                     />
-                    <span className="text-sm text-white/90">{s.seller_name}</span>
+                    <span className="text-sm text-t1">{s.seller_name}</span>
                   </label>
                 ))}
               </div>
             ) : (
-              <div className="max-h-80 overflow-y-auto border border-white/8 rounded-lg mb-4 divide-y divide-white/5">
+              <div className="max-h-80 overflow-y-auto border border-line-soft rounded-lg mb-4 divide-y divide-line-soft">
                 {cancelDupPreview.map((p) => (
                   <div key={p.order_id} className="px-3 py-2.5">
-                    <p className="text-sm text-white/90">NF {p.nf_number} — {p.seller_name}</p>
+                    <p className="text-sm text-t1">NF {p.nf_number} — {p.seller_name}</p>
                     {p.bucket === 'stock_reversal' && (
-                      <p className="text-xs text-red-300 mt-0.5">⚠ NF já baixou estoque — será revertido</p>
+                      <p className="text-xs text-bad mt-0.5">⚠ NF já baixou estoque — será revertido</p>
                     )}
                     {p.bucket === 'partial_scan' && (
-                      <p className="text-xs text-amber-300 mt-0.5">⚠ Bipagem parcial em andamento será descartada (sem impacto de estoque)</p>
+                      <p className="text-xs text-warn mt-0.5">⚠ Bipagem parcial em andamento será descartada (sem impacto de estoque)</p>
                     )}
                     {p.bucket === 'pending' && (
-                      <p className="text-xs text-white/35 mt-0.5">Pendente — sem impacto</p>
+                      <p className="text-xs text-t4 mt-0.5">Pendente — sem impacto</p>
                     )}
                   </div>
                 ))}
@@ -2534,14 +2541,14 @@ export default function DashboardPage() {
               <button
                 onClick={closeCancelDupModal}
                 disabled={cancelDupLoading}
-                className="px-4 py-2 text-sm rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/25 transition-all disabled:opacity-40"
+                className="px-4 py-2 text-sm rounded-lg border border-line text-t3 hover:text-t1 hover:border-line-strong transition-all disabled:opacity-40"
               >
                 Cancelar
               </button>
               <button
                 onClick={cancelDupPreview === null ? handleCancelDupContinue : handleCancelDupConfirm}
                 disabled={cancelDupLoading || (cancelDupPreview === null && cancelDupSelected.length === 0)}
-                className="px-4 py-2 text-sm rounded-lg font-medium text-white transition-all disabled:opacity-40 bg-red-600 hover:bg-red-500"
+                className="px-4 py-2 text-sm rounded-lg font-medium text-t1 transition-all disabled:opacity-40 bg-red-600 hover:bg-red-500"
               >
                 {cancelDupLoading ? 'Processando...' : cancelDupPreview === null ? 'Continuar' : 'Confirmar cancelamento'}
               </button>

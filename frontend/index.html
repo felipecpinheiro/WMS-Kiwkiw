@@ -6,10 +6,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kiwkiw WMS</title>
     <meta name="theme-color" content="#7B63E8" />
-    <style>
-      /* Prevent white flash on load */
-      html, body, #root { background: #0C0B18; }
-    </style>
+    <script>
+      // Anti-flash: resolve o tema antes do React montar.
+      // Mesmo algoritmo de src/contexts/ThemeContext.tsx — manter os dois em sincronia.
+      (function () {
+        try {
+          var userRaw = localStorage.getItem('wms_user');
+          var userId = null;
+          if (userRaw) {
+            var u = JSON.parse(userRaw);
+            userId = u && u.id != null ? u.id : null;
+          }
+          var key = userId != null ? 'wms_theme_' + userId : 'wms_theme';
+          var stored = localStorage.getItem(key);
+          var theme = (stored === 'light' || stored === 'dark')
+            ? stored
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.style.backgroundColor = theme === 'dark' ? '#0C0B18' : '#F7F6FC';
+        } catch (e) {
+          // Silencioso: sem tema salvo/detectável, cai no :root claro por padrão.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

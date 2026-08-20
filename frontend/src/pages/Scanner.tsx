@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { scanningApi, cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import ThemeToggle from '../components/ThemeToggle';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const photoSrc = (url: string | null | undefined) =>
@@ -99,11 +100,11 @@ function ItemCard({
   const iconSize = isSmall ? 16 : 26;
 
   // Estilo do card
-  let cardClass = 'bg-gray-900/80 border-gray-700/50';
-  if (isFlashing)      cardClass = 'bg-green-800/60 border-green-400 ring-2 ring-green-400/70 scale-[1.02]';
-  else if (done)       cardClass = 'bg-green-900/20 border-green-500/20 opacity-50';
+  let cardClass = 'bg-surface/80 border-line-strong/50';
+  if (isFlashing)      cardClass = 'bg-green-800/60 border-ok ring-2 ring-green-400/70 scale-[1.02]';
+  else if (done)       cardClass = 'bg-ok-soft border-ok/20 opacity-50';
   else if (isFirst)    cardClass = 'bg-violet-900/30 border-violet-400/60 ring-2 ring-violet-400/25 shadow-lg shadow-violet-900/20';
-  else if (inProgress) cardClass = 'bg-blue-900/40 border-blue-500/50';
+  else if (inProgress) cardClass = 'bg-info-soft border-info/50';
 
   const padding = isSmall ? 'p-2' : 'p-3';
   const src = photoSrc(item.photo_url);
@@ -119,8 +120,7 @@ function ItemCard({
           <img
             src={src}
             alt={item.product_name}
-            className={`w-full ${imgH} object-contain rounded-lg mb-2 opacity-95`}
-            style={{ background: 'rgba(255,255,255,0.04)' }}
+            className={`w-full ${imgH} object-contain rounded-lg mb-2 opacity-95 bg-surface-2`}
           />
           {onImageClick && (
             <button
@@ -128,26 +128,26 @@ function ItemCard({
               onClick={(e) => { e.stopPropagation(); e.preventDefault(); onImageClick(src); }}
               title="Ampliar imagem"
             >
-              <ZoomIn size={20} className="text-white drop-shadow" />
+              <ZoomIn size={20} className="text-t1 drop-shadow" />
             </button>
           )}
         </div>
       ) : (
-        <div className={`w-full ${imgH} bg-white/5 rounded-lg flex items-center justify-center mb-2`}>
-          <Package size={iconSize} className="text-white/15" />
+        <div className={`w-full ${imgH} bg-surface-2 rounded-lg flex items-center justify-center mb-2`}>
+          <Package size={iconSize} className="text-t5" />
         </div>
       )}
 
       {/* Badge SEM CADASTRO */}
       {!item.barcode_seller && !isSmall && (
-        <div className="absolute top-2 left-2 bg-yellow-500/20 border border-yellow-400/30 text-yellow-300 text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+        <div className="absolute top-2 left-2 bg-yellow-500/20 border border-warn/30 text-warn text-[9px] px-1.5 py-0.5 rounded-full font-bold">
           SEM CADASTRO
         </div>
       )}
 
       {/* Badge EM CURSO — primeiro item pendente */}
       {isFirst && !done && (
-        <div className="absolute top-2 right-2 bg-violet-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold tracking-wide">
+        <div className="absolute top-2 right-2 bg-violet-500 text-t1 text-[9px] px-2 py-0.5 rounded-full font-bold tracking-wide">
           EM CURSO
         </div>
       )}
@@ -155,29 +155,29 @@ function ItemCard({
       {/* SKU e barcode — só em cards normais */}
       {!isSmall && (
         <>
-          <p className="text-xs font-mono text-white/40 mb-0.5 truncate">{item.sku}</p>
+          <p className="text-xs font-mono text-t4 mb-0.5 truncate">{item.sku}</p>
           {item.barcode_seller && (
-            <p className="text-sm font-mono font-semibold text-yellow-300/80 mb-1 truncate" title="Cód. barras">
+            <p className="text-sm font-mono font-semibold text-warn/80 mb-1 truncate" title="Cód. barras">
               ⬛ {item.barcode_seller}
             </p>
           )}
         </>
       )}
 
-      <p className={`${isSmall ? 'text-[10px]' : 'text-sm'} font-bold text-white leading-snug mb-2 ${isSmall ? 'line-clamp-1' : 'line-clamp-2'}`}>
+      <p className={`${isSmall ? 'text-[10px]' : 'text-sm'} font-bold text-t1 leading-snug mb-2 ${isSmall ? 'line-clamp-1' : 'line-clamp-2'}`}>
         {item.product_name}
       </p>
 
       <div className="flex items-center justify-between">
-        <span className={`${isSmall ? 'text-lg' : 'text-2xl'} font-black ${over ? 'text-amber-300' : done ? 'text-green-400' : inProgress ? 'text-blue-300' : 'text-white/40'}`}>
+        <span className={`${isSmall ? 'text-lg' : 'text-2xl'} font-black ${over ? 'text-warn' : done ? 'text-ok' : inProgress ? 'text-info' : 'text-t4'}`}>
           {item.scanned}
-          <span className={`${isSmall ? 'text-sm' : 'text-base'} text-white/30`}>/{item.quantity}</span>
+          <span className={`${isSmall ? 'text-sm' : 'text-base'} text-t4`}>/{item.quantity}</span>
         </span>
         {over
-          ? <span className="text-[9px] font-bold text-amber-300 bg-amber-500/15 border border-amber-400/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+          ? <span className="text-[9px] font-bold text-warn bg-amber-500/15 border border-warn/30 px-1.5 py-0.5 rounded-full whitespace-nowrap">
               +{item.scanned - item.quantity}
             </span>
-          : done && <CheckCircle size={isSmall ? 14 : 18} className="text-green-400" />}
+          : done && <CheckCircle size={isSmall ? 14 : 18} className="text-ok" />}
       </div>
     </div>
   );
@@ -834,26 +834,26 @@ export default function ScannerPage() {
   // ── Feedback styles ──────────────────────────────────────
 
   const feedbackBg: Record<FeedbackState, string> = {
-    idle: 'border-white/10 bg-white/5',
-    success: 'border-green-500/50 bg-green-900/30',
-    error: 'border-red-500/50 bg-red-900/30',
-    warning: 'border-yellow-500/50 bg-yellow-900/30',
+    idle: 'border-line bg-surface-2',
+    success: 'border-ok/50 bg-ok-soft',
+    error: 'border-bad/50 bg-bad-soft',
+    warning: 'border-warn/50 bg-warn-soft',
   };
 
   const feedbackTextColor: Record<FeedbackState, string> = {
-    idle: 'text-white/30',
-    success: 'text-green-300',
-    error: 'text-red-300',
-    warning: 'text-yellow-300',
+    idle: 'text-t4',
+    success: 'text-ok',
+    error: 'text-bad',
+    warning: 'text-warn',
   };
 
   const feedbackIcon: Record<FeedbackState, React.ReactNode> = {
     idle: scanPhase === 'nfe'
-      ? <KeyRound size={28} className="text-white/20" />
-      : <ScanLine size={28} className="text-white/20" />,
-    success: <CheckCircle size={28} className="text-green-400" />,
-    error: <XCircle size={28} className="text-red-400" />,
-    warning: <AlertTriangle size={28} className="text-yellow-400" />,
+      ? <KeyRound size={28} className="text-t5" />
+      : <ScanLine size={28} className="text-t5" />,
+    success: <CheckCircle size={28} className="text-ok" />,
+    error: <XCircle size={28} className="text-bad" />,
+    warning: <AlertTriangle size={28} className="text-warn" />,
   };
 
   // ── Sem sessionId: redireciona para Manuseios ──────────────────────────────
@@ -864,24 +864,25 @@ export default function ScannerPage() {
 
 
   return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+    <div className="flex h-screen bg-app text-t1 overflow-hidden">
 
       {/* ── LEFT: order list ─────────────────────────── */}
-      <aside className="w-60 bg-gray-900 border-r border-white/5 flex flex-col flex-shrink-0">
+      <aside className="w-60 bg-surface border-r border-line-soft flex flex-col flex-shrink-0">
         {/* Header */}
-        <div className="p-4 border-b border-white/5">
+        <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2 mb-1">
             <img src="/logo.svg" alt="Kiwkiw" className="w-7 h-7 flex-shrink-0" />
-            <div>
-              <p className="text-xs font-bold text-white">Sessão #{sessionId}</p>
-              <p className="text-[10px] text-white/40">Bipagem</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-t1">Sessão #{sessionId}</p>
+              <p className="text-[10px] text-t4">Bipagem</p>
             </div>
+            <ThemeToggle />
           </div>
           {/* Sellers presentes na sessão */}
           {(() => {
             const uniqueSellers = Array.from(new Set(localOrders.map(o => o.seller).filter(Boolean)));
             return uniqueSellers.length > 0 ? (
-              <p className="text-[9px] mt-1.5 font-medium truncate" style={{ color: '#9B87F0' }}>
+              <p className="text-[9px] mt-1.5 font-medium truncate" style={{ color: 'rgb(var(--brand))' }}>
                 {uniqueSellers.join(' · ')}
               </p>
             ) : null;
@@ -891,18 +892,18 @@ export default function ScannerPage() {
             const sellerName = localOrders.find(o => o.seller_id === sellerId)?.seller;
             return sellerName ? (
               <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-semibold"
-                style={{ background: 'rgba(123,99,232,0.15)', color: '#9B87F0', border: '1px solid rgba(123,99,232,0.25)' }}>
+                style={{ background: 'rgba(123,99,232,0.15)', color: 'rgb(var(--brand))', border: '1px solid rgba(123,99,232,0.25)' }}>
                 <span>Filtrando:</span>
                 <span className="truncate">{sellerName}</span>
               </div>
             ) : null;
           })()}
           <div className="mt-2">
-            <div className="flex justify-between text-[10px] text-white/40 mb-1">
+            <div className="flex justify-between text-[10px] text-t4 mb-1">
               <span>{doneOrders}/{totalOrders} pedidos</span>
               <span>{sessionPct}%</span>
             </div>
-            <div className="w-full bg-white/10 rounded-full h-1.5">
+            <div className="w-full bg-surface-2 rounded-full h-1.5">
               <div className="bg-violet-500 h-1.5 rounded-full transition-all" style={{ width: `${sessionPct}%` }} />
             </div>
           </div>
@@ -911,9 +912,9 @@ export default function ScannerPage() {
         {/* Order list — informativo apenas (não clicável para abrir) */}
         <div className="flex-1 overflow-y-auto p-2">
           <div className="flex items-center justify-between px-2 mb-2">
-            <p className="text-[9px] text-white/25 uppercase tracking-widest">Pedidos da sessão</p>
+            <p className="text-[9px] text-t5 uppercase tracking-widest">Pedidos da sessão</p>
             {isAdmin && (
-              <label className="flex items-center gap-1 text-[9px] text-white/30 cursor-pointer select-none">
+              <label className="flex items-center gap-1 text-[9px] text-t4 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={showInactive}
@@ -925,9 +926,9 @@ export default function ScannerPage() {
             )}
           </div>
           {isLoading ? (
-            <p className="text-xs text-white/30 text-center py-4">Carregando...</p>
+            <p className="text-xs text-t4 text-center py-4">Carregando...</p>
           ) : isError ? (
-            <p className="text-xs text-red-400 text-center py-4 px-2">
+            <p className="text-xs text-bad text-center py-4 px-2">
               {(error as any)?.response?.data?.detail || 'Erro ao carregar'}
             </p>
           ) : localOrders.map(order => {
@@ -942,20 +943,20 @@ export default function ScannerPage() {
             if (order.is_inactive) {
               return (
                 <div key={order.id}
-                  className="p-2.5 rounded-lg mb-1 border border-red-500/10 bg-red-500/5 opacity-60">
+                  className="p-2.5 rounded-lg mb-1 border border-bad/10 bg-red-500/5 opacity-60">
                   <div className="flex items-center gap-2 mb-0.5">
                     <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
-                    <p className="text-[10px] font-mono text-white/50 truncate flex-1">NF {order.nf_number}</p>
-                    <span className="text-[9px] font-semibold text-red-400/70">inativa</span>
+                    <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>
+                    <span className="text-[9px] font-semibold text-bad/70">inativa</span>
                   </div>
                   {order.seller && (
-                    <p className="text-[9px] font-medium pl-4 truncate" style={{ color: '#9B87F0' }}>{order.seller}</p>
+                    <p className="text-[9px] font-medium pl-4 truncate" style={{ color: 'rgb(var(--brand))' }}>{order.seller}</p>
                   )}
-                  <p className="text-xs text-white/70 truncate pl-4">{order.customer_name}</p>
+                  <p className="text-xs text-t2 truncate pl-4">{order.customer_name}</p>
                   <button
                     onClick={() => handleReactivateOrder(order.id)}
                     disabled={reactivatingId === order.id}
-                    className="mt-1.5 ml-4 flex items-center gap-1 text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                    className="mt-1.5 ml-4 flex items-center gap-1 text-[9px] font-semibold text-ok hover:text-ok disabled:opacity-40"
                   >
                     <RotateCcw size={10} /> {reactivatingId === order.id ? 'Reativando...' : 'Reativar'}
                   </button>
@@ -965,29 +966,29 @@ export default function ScannerPage() {
 
             return (
               <div key={order.id}
-                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-green-500/30' : 'border-transparent hover:bg-white/3'}`}>
+                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'}`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
-                  <p className="text-[10px] font-mono text-white/50 truncate flex-1">NF {order.nf_number}</p>
-                  <span className="text-[9px] text-white/30">{pct}%</span>
+                  <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>
+                  <span className="text-[9px] text-t4">{pct}%</span>
                   {isAdmin && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setDeactivateTarget(order); setDeactivateReason(''); }}
                       title="Inativar NF"
-                      className="opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition"
+                      className="opacity-0 group-hover:opacity-100 text-t5 hover:text-bad transition"
                     >
                       <Ban size={11} />
                     </button>
                   )}
                 </div>
                 {order.seller && (
-                  <p className="text-[9px] font-medium pl-4 truncate" style={{ color: '#9B87F0' }}>{order.seller}</p>
+                  <p className="text-[9px] font-medium pl-4 truncate" style={{ color: 'rgb(var(--brand))' }}>{order.seller}</p>
                 )}
-                <p className="text-xs text-white/70 truncate pl-4">{order.customer_name}</p>
+                <p className="text-xs text-t2 truncate pl-4">{order.customer_name}</p>
                 {!order.carrier && order.status !== 'completed' && (
-                  <p className="text-[9px] font-semibold text-amber-400 pl-4 mt-0.5">🚚 sem transportadora</p>
+                  <p className="text-[9px] font-semibold text-warn pl-4 mt-0.5">🚚 sem transportadora</p>
                 )}
-                <div className="w-full bg-white/10 rounded-full h-0.5 mt-1.5 ml-4">
+                <div className="w-full bg-surface-2 rounded-full h-0.5 mt-1.5 ml-4">
                   <div className={`h-0.5 rounded-full ${order.status === 'completed' ? 'bg-green-400' : 'bg-blue-400'}`}
                     style={{ width: `${Math.min(100, pct)}%` }} />
                 </div>
@@ -997,7 +998,7 @@ export default function ScannerPage() {
         </div>
 
         {/* Actions */}
-        <div className="p-3 border-t border-white/5">
+        <div className="p-3 border-t border-line-soft">
           <button
             onClick={() => {
               if (activeOrder && scanPhase === 'product') {
@@ -1006,7 +1007,7 @@ export default function ScannerPage() {
                 navigate('/manuseios');
               }
             }}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-white bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 hover:border-red-500/60 rounded-lg transition">
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold text-t1 bg-red-600/20 hover:bg-red-600/40 border border-bad/30 hover:border-bad/60 rounded-lg transition">
             <LogOut size={15} /> Sair da Bipagem
           </button>
         </div>
@@ -1016,17 +1017,17 @@ export default function ScannerPage() {
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
         {/* Fixed header */}
-        <div className="flex-shrink-0 p-5 border-b border-white/5 bg-gray-900/60 backdrop-blur">
+        <div className="flex-shrink-0 p-5 border-b border-line-soft bg-surface/60 backdrop-blur">
           {activeOrder && scanPhase === 'product' ? (
             <div>
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className="text-[10px] font-mono text-white/35">NF {activeOrder.nf_number}</span>
+                    <span className="text-[10px] font-mono text-t4">NF {activeOrder.nf_number}</span>
                     {activeOrder.carrier && (
                       <span
                         className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold"
-                        style={{ background: 'rgba(61,217,164,0.15)', color: '#3DD9A4', border: '1px solid rgba(61,217,164,0.30)' }}
+                        style={{ background: 'rgba(61,217,164,0.15)', color: 'rgb(var(--ok))', border: '1px solid rgba(61,217,164,0.30)' }}
                       >
                         🚚 {activeOrder.carrier}
                       </span>
@@ -1043,13 +1044,13 @@ export default function ScannerPage() {
                             if (e.key === 'Escape') setBoxEditing(false);
                           }}
                           placeholder="Ex: c1"
-                          className="w-20 bg-white/10 border border-violet-400/50 rounded px-2 py-0.5 text-xs text-white outline-none"
+                          className="w-20 bg-surface-2 border border-violet-400/50 rounded px-2 py-0.5 text-xs text-t1 outline-none"
                         />
                         <button onClick={() => handleBoxSave(boxEditVal)} disabled={boxSaving}
                           className="text-[10px] text-violet-300 hover:text-violet-100 px-1">
                           {boxSaving ? '…' : '✓'}
                         </button>
-                        <button onClick={() => setBoxEditing(false)} className="text-[10px] text-white/30 hover:text-white/60 px-1">✕</button>
+                        <button onClick={() => setBoxEditing(false)} className="text-[10px] text-t4 hover:text-t3 px-1">✕</button>
                       </span>
                     ) : (
                       <button
@@ -1063,10 +1064,10 @@ export default function ScannerPage() {
                         }
                         style={
                           awaitingBox
-                            ? { background: 'rgba(239,68,68,0.22)', color: '#f87171', border: '1px solid rgba(239,68,68,0.55)' }
+                            ? { background: 'rgba(239,68,68,0.22)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.55)' }
                             : (boxUsed || boxSuggested)
-                              ? { background: 'rgba(123,99,232,0.18)', color: '#9B87F0', border: '1px solid rgba(123,99,232,0.35)' }
-                              : { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)' }
+                              ? { background: 'rgba(123,99,232,0.18)', color: 'rgb(var(--brand))', border: '1px solid rgba(123,99,232,0.35)' }
+                              : { background: 'rgba(239,68,68,0.15)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.35)' }
                         }
                       >
                         📦 {boxUsed ? `${boxUsed} ✏` : boxSuggested ? boxSuggested : 'N.A'}
@@ -1074,9 +1075,9 @@ export default function ScannerPage() {
                     ))}
                   </div>
                   {activeOrder.seller && (
-                    <p className="text-sm font-semibold mb-0.5" style={{ color: '#9B87F0' }}>{activeOrder.seller}</p>
+                    <p className="text-sm font-semibold mb-0.5" style={{ color: 'rgb(var(--brand))' }}>{activeOrder.seller}</p>
                   )}
-                  <h2 className="text-2xl font-black text-white">{activeOrder.customer_name}</h2>
+                  <h2 className="text-2xl font-black text-t1">{activeOrder.customer_name}</h2>
                 </div>
                 <div className="flex items-center gap-2">
                   {activeOrder.seller_id && (
@@ -1086,24 +1087,24 @@ export default function ScannerPage() {
                         '_blank'
                       )}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition"
-                      style={{ color: '#9B87F0', borderColor: 'rgba(123,99,232,0.30)', background: 'rgba(123,99,232,0.10)' }}
+                      style={{ color: 'rgb(var(--brand))', borderColor: 'rgba(123,99,232,0.30)', background: 'rgba(123,99,232,0.10)' }}
                       title="Ver roteiro de experiência deste seller"
                     >
                       ✨ Experiência
                     </button>
                   )}
                   <button onClick={() => setShowInterruptDialog(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-orange-400 border border-orange-400/25 hover:border-orange-400/50 rounded-lg transition">
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
                     <Pause size={12} /> Interromper
                   </button>
                 </div>
               </div>
               {/* Progress */}
-              <div className="flex justify-between text-xs text-white/35 mb-1">
+              <div className="flex justify-between text-xs text-t4 mb-1">
                 <span>{activeOrder.items_scanned} bipados</span>
                 <span>{activeOrder.items_total} total</span>
               </div>
-              <div className="w-full bg-white/10 rounded-full h-2">
+              <div className="w-full bg-surface-2 rounded-full h-2">
                 {/* Clamp em 100%: na entrada o bipado pode passar do previsto
                     (excedente) e a barra vazaria do container. Os números reais
                     continuam visíveis acima ("1200 bipados / 1000 total"). */}
@@ -1113,12 +1114,12 @@ export default function ScannerPage() {
             </div>
           ) : (
             <div>
-              <h2 className="text-xl font-black text-white/60 mb-1">
+              <h2 className="text-xl font-black text-t3 mb-1">
                 {scanPhase === 'nfe' && activeOrder?.status === 'completed'
                   ? '✅ Pedido concluído!'
                   : 'Aguardando pedido...'}
               </h2>
-              <p className="text-sm text-white/30">
+              <p className="text-sm text-t4">
                 {scanPhase === 'nfe'
                   ? 'Escaneie a etiqueta física da NFe para abrir o próximo pedido'
                   : 'Finalize o pedido atual antes de abrir outro'}
@@ -1133,17 +1134,17 @@ export default function ScannerPage() {
               {feedback.state !== 'idle' ? (
                 <>
                   <p className={`font-bold text-sm ${feedbackTextColor[feedback.state]}`}>{feedback.title}</p>
-                  <p className="text-xs text-white/50 mt-0.5">{feedback.message}</p>
+                  <p className="text-xs text-t3 mt-0.5">{feedback.message}</p>
                 </>
               ) : (
-                <p className="text-sm text-white/25">
+                <p className="text-sm text-t5">
                   {scanPhase === 'nfe' ? 'Aguardando scan da NFe...' : 'Aguardando scan do produto...'}
                 </p>
               )}
             </div>
             {feedback.photoUrl && (
               <img src={photoSrc(feedback.photoUrl)!} alt="Produto"
-                className="w-14 h-14 object-cover rounded-lg border border-white/10 flex-shrink-0" />
+                className="w-14 h-14 object-cover rounded-lg border border-line flex-shrink-0" />
             )}
           </div>
 
@@ -1153,7 +1154,7 @@ export default function ScannerPage() {
                 uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
             {showQtyField && (
               <div className="relative w-32 flex-shrink-0">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-400/70 pointer-events-none">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ok/70 pointer-events-none">
                   QTD
                 </span>
                 <input
@@ -1168,15 +1169,15 @@ export default function ScannerPage() {
                   onFocus={e => e.target.select()}
                   disabled={scanning}
                   title="Quantidade deste bipe. Enter volta para o código de barras."
-                  className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-white outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition disabled:opacity-40"
+                  className="w-full bg-emerald-500/10 border border-ok/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-t1 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-ok transition disabled:opacity-40"
                   autoComplete="off"
                 />
               </div>
             )}
             <div className="flex-1 relative">
               {scanPhase === 'nfe'
-                ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-400/60" />
-                : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-green-400 animate-pulse' : 'text-white/30'}`} />
+                ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-warn/60" />
+                : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-ok animate-pulse' : 'text-t4'}`} />
               }
               <input
                 ref={inputRef}
@@ -1193,7 +1194,7 @@ export default function ScannerPage() {
                     ? 'Pedido concluído — escaneie a próxima NFe'
                     : 'Escaneie o código de barras do produto...'
                 }
-                className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-base text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
+                className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-3 text-base text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
                 autoComplete="off"
                 autoFocus
               />
@@ -1231,7 +1232,7 @@ export default function ScannerPage() {
 
                 return (
                   <>
-                    <h3 className="text-[11px] font-semibold text-white/30 uppercase tracking-widest mb-3">
+                    <h3 className="text-[11px] font-semibold text-t4 uppercase tracking-widest mb-3">
                       Itens do Pedido ({activeOrder.items.length})
                       {pendingCount > 0 && (
                         <span className="ml-2 text-violet-400">{pendingCount} restante{pendingCount > 1 ? 's' : ''}</span>
@@ -1269,9 +1270,9 @@ export default function ScannerPage() {
           ) : (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <KeyRound size={48} className="text-white/10 mx-auto mb-3" />
-                <p className="text-white/25 text-sm font-medium">Escaneie a etiqueta NFe para começar</p>
-                <p className="text-white/15 text-xs mt-1">O código está na etiqueta física do pedido</p>
+                <KeyRound size={48} className="text-t5 mx-auto mb-3" />
+                <p className="text-t5 text-sm font-medium">Escaneie a etiqueta NFe para começar</p>
+                <p className="text-t5 text-xs mt-1">O código está na etiqueta física do pedido</p>
               </div>
             </div>
           )}
@@ -1279,71 +1280,71 @@ export default function ScannerPage() {
       </main>
 
       {/* ── RIGHT: log ──────────────────────────────────── */}
-      <aside className="w-56 bg-gray-900 border-l border-white/5 flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-white/5 flex items-center gap-2">
-          <ClipboardList size={14} className="text-white/40" />
-          <p className="text-xs font-semibold text-white/40 uppercase tracking-widest">Log</p>
+      <aside className="w-56 bg-surface border-l border-line-soft flex flex-col flex-shrink-0">
+        <div className="p-4 border-b border-line-soft flex items-center gap-2">
+          <ClipboardList size={14} className="text-t4" />
+          <p className="text-xs font-semibold text-t4 uppercase tracking-widest">Log</p>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {(scanLogs as ScanLog[]).length === 0 ? (
-            <p className="text-[10px] text-white/20 text-center mt-6 px-2">Nenhuma bipagem ainda nesta sessão.</p>
+            <p className="text-[10px] text-t5 text-center mt-6 px-2">Nenhuma bipagem ainda nesta sessão.</p>
           ) : (
             (scanLogs as ScanLog[]).map(log => (
               <div key={log.id}
-                className={`mb-1.5 p-2 rounded-lg border text-[10px] ${log.is_error ? 'bg-red-900/20 border-red-500/20' : 'bg-green-900/15 border-green-500/15'}`}>
+                className={`mb-1.5 p-2 rounded-lg border text-[10px] ${log.is_error ? 'bg-bad-soft border-bad/20' : 'bg-ok-soft border-ok/15'}`}>
                 <div className="flex items-center justify-between mb-0.5">
-                  <span className={`font-mono font-bold ${log.is_error ? 'text-red-400' : 'text-green-400'}`}>
+                  <span className={`font-mono font-bold ${log.is_error ? 'text-bad' : 'text-ok'}`}>
                     {log.is_error ? '✗' : '✓'} {log.sku}
                   </span>
-                  <span className="text-white/30">{log.timestamp}</span>
+                  <span className="text-t4">{log.timestamp}</span>
                 </div>
-                <p className="text-white/40 truncate">NF {log.order_nf}</p>
+                <p className="text-t4 truncate">NF {log.order_nf}</p>
                 {log.is_error && log.error_message && (
-                  <p className="text-red-400/60 truncate text-[9px] mt-0.5">{log.error_message}</p>
+                  <p className="text-bad/60 truncate text-[9px] mt-0.5">{log.error_message}</p>
                 )}
-                <p className="text-white/25">{log.operator_name}</p>
+                <p className="text-t5">{log.operator_name}</p>
               </div>
             ))
           )}
         </div>
         {/* Operator info */}
-        <div className="p-3 border-t border-white/5 flex-shrink-0">
-          <p className="text-[10px] text-white/30 font-medium truncate">{user?.name}</p>
-          <p className="text-[10px] text-white/20 capitalize">{user?.role}</p>
+        <div className="p-3 border-t border-line-soft flex-shrink-0">
+          <p className="text-[10px] text-t4 font-medium truncate">{user?.name}</p>
+          <p className="text-[10px] text-t5 capitalize">{user?.role}</p>
         </div>
       </aside>
 
       {/* ── Interrupt dialog ─────────────────────────────── */}
       {showInterruptDialog && activeOrder && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-orange-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-orange-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <Pause size={20} className="text-orange-400" />
+                <Pause size={20} className="text-warn" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Interromper Pedido</h3>
-                <p className="text-xs text-white/40">NF {activeOrder.nf_number} · {activeOrder.customer_name}</p>
+                <h3 className="text-base font-bold text-t1">Interromper Pedido</h3>
+                <p className="text-xs text-t4">NF {activeOrder.nf_number} · {activeOrder.customer_name}</p>
               </div>
             </div>
-            <p className="text-sm text-white/60 mb-3">O pedido ficará como "interrompido". Informe o motivo:</p>
+            <p className="text-sm text-t3 mb-3">O pedido ficará como "interrompido". Informe o motivo:</p>
             <textarea
               value={interruptReason}
               onChange={e => setInterruptReason(e.target.value)}
               placeholder="Ex: produto danificado, falta de estoque, cliente solicitou..."
               rows={3}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+              className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-orange-500 resize-none"
             />
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowInterruptDialog(false); setInterruptReason(''); }}
-                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleInterrupt}
-                className="flex-1 py-2.5 text-sm font-semibold text-orange-400 border border-orange-400/40 rounded-xl hover:bg-orange-500/10 transition"
+                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition"
               >
                 Interromper
               </button>
@@ -1355,17 +1356,17 @@ export default function ScannerPage() {
       {/* ── Inativar NF dialog (admin) ──────────────────────── */}
       {deactivateTarget && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-red-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-bad/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <Ban size={20} className="text-red-400" />
+                <Ban size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Inativar NF</h3>
-                <p className="text-xs text-white/40">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
+                <h3 className="text-base font-bold text-t1">Inativar NF</h3>
+                <p className="text-xs text-t4">NF {deactivateTarget.nf_number} · {deactivateTarget.customer_name}</p>
               </div>
             </div>
-            <p className="text-sm text-white/60 mb-3">
+            <p className="text-sm text-t3 mb-3">
               A NF some da operação (Pedidos, Manuseios, Dashboard) e só volta se você mesmo reativar. Informe o motivo:
             </p>
             <textarea
@@ -1374,20 +1375,20 @@ export default function ScannerPage() {
               placeholder="Ex: NF errada, duplicidade, pedido cancelado pelo cliente..."
               rows={3}
               autoFocus
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setDeactivateTarget(null); setDeactivateReason(''); }}
                 disabled={deactivating}
-                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition disabled:opacity-40"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition disabled:opacity-40"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleDeactivateOrder}
                 disabled={deactivating || !deactivateReason.trim()}
-                className="flex-1 py-2.5 text-sm font-semibold text-red-400 border border-red-400/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
+                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40"
               >
                 {deactivating ? 'Inativando...' : 'Inativar'}
               </button>
@@ -1399,39 +1400,39 @@ export default function ScannerPage() {
       {/* ── Exit confirmation dialog ─────────────────────── */}
       {showExitDialog && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-red-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-bad/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <LogOut size={20} className="text-red-400" />
+                <LogOut size={20} className="text-bad" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Sair da Bipagem</h3>
+                <h3 className="text-base font-bold text-t1">Sair da Bipagem</h3>
                 {activeOrder && (
-                  <p className="text-xs text-white/40">NF {activeOrder.nf_number} está em aberto</p>
+                  <p className="text-xs text-t4">NF {activeOrder.nf_number} está em aberto</p>
                 )}
               </div>
             </div>
-            <p className="text-sm text-white/60 mb-3">
-              Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-orange-300 font-semibold">interrompido</span>. Informe o motivo:
+            <p className="text-sm text-t3 mb-3">
+              Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-warn font-semibold">interrompido</span>. Informe o motivo:
             </p>
             <textarea
               value={exitReason}
               onChange={e => setExitReason(e.target.value)}
               placeholder="Ex: fim de turno, problema operacional, retorno depois..."
               rows={3}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-red-500 resize-none"
               autoFocus
             />
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowExitDialog(false); setExitReason(''); inputRef.current?.focus(); }}
-                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleConfirmExit}
-                className="flex-1 py-2.5 text-sm font-semibold text-red-400 border border-red-400/40 rounded-xl hover:bg-red-500/10 transition"
+                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition"
               >
                 Interromper e Sair
               </button>
@@ -1443,18 +1444,18 @@ export default function ScannerPage() {
       {/* ── Confirmação: outro operador bipando o mesmo seller ── */}
       {sellerLockConfirm && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-yellow-500/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-yellow-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <AlertTriangle size={20} className="text-yellow-400" />
+                <AlertTriangle size={20} className="text-warn" />
               </div>
-              <h3 className="text-base font-bold text-white">Seller em bipagem</h3>
+              <h3 className="text-base font-bold text-t1">Seller em bipagem</h3>
             </div>
-            <p className="text-sm text-white/60 mb-4">{sellerLockConfirm.message}</p>
+            <p className="text-sm text-t3 mb-4">{sellerLockConfirm.message}</p>
             <div className="flex gap-2">
               <button
                 onClick={() => { setSellerLockConfirm(null); setBarcodeInput(''); inputRef.current?.focus(); }}
-                className="flex-1 py-2.5 text-sm text-white/60 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
@@ -1464,7 +1465,7 @@ export default function ScannerPage() {
                   setSellerLockConfirm(null);
                   handleNfeScan(nfeKey, true);
                 }}
-                className="flex-1 py-2.5 text-sm font-semibold text-yellow-300 border border-yellow-400/40 rounded-xl hover:bg-yellow-500/10 transition"
+                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-yellow-500/10 transition"
               >
                 Continuar mesmo assim
               </button>
@@ -1476,63 +1477,63 @@ export default function ScannerPage() {
       {/* ── Modal de produto inline (right-click) ─────────── */}
       {productModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-base font-bold text-t1">
                   {productModal.mode === 'create'
                     ? 'Cadastrar Produto'
                     : productModal.item.barcode_seller
                     ? 'Detalhes do Produto'
                     : 'Atualizar Código de Barras'}
                 </h3>
-                <p className="text-xs text-white/40 mt-0.5">{productModal.seller_name}</p>
+                <p className="text-xs text-t4 mt-0.5">{productModal.seller_name}</p>
               </div>
-              <button onClick={() => { setProductModal(null); setTimeout(() => inputRef.current?.focus(), 50); }} className="text-white/30 hover:text-white/70">✕</button>
+              <button onClick={() => { setProductModal(null); setTimeout(() => inputRef.current?.focus(), 50); }} className="text-t4 hover:text-t2">✕</button>
             </div>
 
             <div className="space-y-3">
               {/* SKU — read-only */}
               <div>
-                <label className="block text-xs text-white/40 mb-1">SKU</label>
-                <p className="text-sm font-mono text-white/80 bg-white/5 rounded-lg px-3 py-2">
+                <label className="block text-xs text-t4 mb-1">SKU</label>
+                <p className="text-sm font-mono text-t2 bg-surface-2 rounded-lg px-3 py-2">
                   {productModal.item.sku}
                 </p>
               </div>
 
               {/* Nome */}
               <div>
-                <label className="block text-xs text-white/40 mb-1">Nome</label>
+                <label className="block text-xs text-t4 mb-1">Nome</label>
                 <input
                   value={productForm.name}
                   onChange={e => setProductForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500"
                   readOnly={productModal.mode === 'view' && !!productModal.item.barcode_seller && !!productModal.product_id}
                 />
               </div>
 
               {/* Cód. Barras Seller */}
               <div>
-                <label className="block text-xs text-white/40 mb-1">
-                  Cód. Barras {productModal.mode === 'create' && <span className="text-red-400">*</span>}
+                <label className="block text-xs text-t4 mb-1">
+                  Cód. Barras {productModal.mode === 'create' && <span className="text-bad">*</span>}
                 </label>
                 <input
                   value={productForm.barcode_seller}
                   onChange={e => setProductForm(f => ({ ...f, barcode_seller: e.target.value }))}
                   placeholder="Ex: 7898996051716"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-white/20 outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 font-mono placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500"
                   autoFocus
                 />
               </div>
 
               {/* Caixa */}
               <div>
-                <label className="block text-xs text-white/40 mb-1">Tipo de Caixa</label>
+                <label className="block text-xs text-t4 mb-1">Tipo de Caixa</label>
                 <input
                   value={productForm.box_type}
                   onChange={e => setProductForm(f => ({ ...f, box_type: e.target.value }))}
                   placeholder="Ex: Caixa1"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500"
                 />
               </div>
             </div>
@@ -1540,14 +1541,14 @@ export default function ScannerPage() {
             <div className="flex gap-2 mt-5">
               <button
                 onClick={() => { setProductModal(null); setTimeout(() => inputRef.current?.focus(), 50); }}
-                className="flex-1 py-2.5 text-sm text-white/50 border border-white/10 rounded-xl hover:bg-white/5 transition"
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSaveProductInline}
                 disabled={savingProduct}
-                className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-xl transition disabled:opacity-50"
+                className="flex-1 py-2.5 text-sm font-semibold text-t1 bg-violet-600 hover:bg-violet-500 rounded-xl transition disabled:opacity-50"
               >
                 {savingProduct ? 'Salvando...' : 'Salvar'}
               </button>
@@ -1568,12 +1569,11 @@ export default function ScannerPage() {
             <img
               src={lightboxUrl}
               alt="Produto ampliado"
-              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl bg-surface-2 border border-line-soft"
             />
             <button
               onClick={() => setLightboxUrl(null)}
-              className="absolute -top-3 -right-3 w-9 h-9 bg-gray-800 border border-white/15 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-gray-700 transition shadow-xl"
+              className="absolute -top-3 -right-3 w-9 h-9 bg-surface-2 border border-line-strong rounded-full flex items-center justify-center text-t2 hover:text-t1 hover:bg-line-strong transition shadow-xl"
             >
               <X size={16} />
             </button>
@@ -1584,17 +1584,17 @@ export default function ScannerPage() {
       {/* ── Context menu (right-click no item) ──────────── */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-gray-800 border border-white/10 rounded-xl shadow-2xl py-1 min-w-[220px]"
+          className="fixed z-50 bg-surface-2 border border-line rounded-xl shadow-2xl py-1 min-w-[220px]"
           style={{ left: Math.min(contextMenu.x, window.innerWidth - 240), top: Math.min(contextMenu.y, window.innerHeight - 120) }}
           onClick={e => e.stopPropagation()}
         >
-          <div className="px-3 py-2 border-b border-white/10 mb-1">
-            <p className="text-xs font-mono text-white/40 truncate">{contextMenu.item.sku}</p>
-            <p className="text-xs text-white/70 font-medium truncate">{contextMenu.item.product_name}</p>
+          <div className="px-3 py-2 border-b border-line mb-1">
+            <p className="text-xs font-mono text-t4 truncate">{contextMenu.item.sku}</p>
+            <p className="text-xs text-t2 font-medium truncate">{contextMenu.item.product_name}</p>
           </div>
           {contextMenu.item.product_id === null ? (
             <button
-              className="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-white/10 flex items-center gap-2.5 transition"
+              className="w-full text-left px-4 py-2.5 text-sm text-t1 hover:bg-surface-2 flex items-center gap-2.5 transition"
               onClick={() => {
                 setProductModal({
                   mode: 'create',
@@ -1612,12 +1612,12 @@ export default function ScannerPage() {
                 setContextMenu(null);
               }}
             >
-              <Plus size={14} className="text-emerald-400 flex-shrink-0" />
+              <Plus size={14} className="text-ok flex-shrink-0" />
               <span>Cadastrar produto</span>
             </button>
           ) : (
             <button
-              className="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-white/10 flex items-center gap-2.5 transition"
+              className="w-full text-left px-4 py-2.5 text-sm text-t1 hover:bg-surface-2 flex items-center gap-2.5 transition"
               onClick={() => {
                 setProductModal({
                   mode: 'view',
@@ -1635,7 +1635,7 @@ export default function ScannerPage() {
                 setContextMenu(null);
               }}
             >
-              <Package size={14} className="text-blue-400 flex-shrink-0" />
+              <Package size={14} className="text-info flex-shrink-0" />
               <span>Ver detalhes do produto</span>
             </button>
           )}

@@ -61,33 +61,33 @@ function CardContextMenu({
     <div
       ref={ref}
       style={style}
-      className="w-56 bg-[#1a1833] border border-white/15 rounded-xl shadow-2xl overflow-hidden py-1"
+      className="w-56 bg-surface-2 border border-line-strong rounded-xl shadow-2xl overflow-hidden py-1"
     >
-      <div className="px-3 py-1.5 border-b border-white/8 mb-1">
-        <p className="text-[10px] text-white/35 uppercase tracking-wider">Admin — {menu.card.seller_name}</p>
+      <div className="px-3 py-1.5 border-b border-line-soft mb-1">
+        <p className="text-[10px] text-t4 uppercase tracking-wider">Admin — {menu.card.seller_name}</p>
       </div>
 
       <button
         onClick={() => { onAction('force_complete', menu.card); onClose(); }}
-        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-emerald-300
-          hover:bg-emerald-900/30 transition text-left"
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-ok
+          hover:bg-ok-soft transition text-left"
       >
         <CheckCheck size={15} className="flex-shrink-0" />
         <div>
           <p className="font-medium leading-tight">Finalizar sem bipagem</p>
-          <p className="text-[10px] text-white/35 mt-0.5">Conclui e sensibiliza estoque</p>
+          <p className="text-[10px] text-t4 mt-0.5">Conclui e sensibiliza estoque</p>
         </div>
       </button>
 
       <button
         onClick={() => { onAction('cancel_handling', menu.card); onClose(); }}
-        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-red-400
-          hover:bg-red-900/30 transition text-left"
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-bad
+          hover:bg-bad-soft transition text-left"
       >
         <Ban size={15} className="flex-shrink-0" />
         <div>
           <p className="font-medium leading-tight">Cancelar manuseio</p>
-          <p className="text-[10px] text-white/35 mt-0.5">Remove da fila, sem mover estoque</p>
+          <p className="text-[10px] text-t4 mt-0.5">Remove da fila, sem mover estoque</p>
         </div>
       </button>
     </div>
@@ -113,26 +113,26 @@ function ConfirmAdminModal({
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#14122A] border border-white/12 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-sm p-6">
         <div className={`w-11 h-11 rounded-full flex items-center justify-center mb-4
-          ${isForce ? 'bg-emerald-900/40' : 'bg-red-900/40'}`}>
-          <AlertTriangle size={22} className={isForce ? 'text-emerald-400' : 'text-red-400'} />
+          ${isForce ? 'bg-ok-soft' : 'bg-bad-soft'}`}>
+          <AlertTriangle size={22} className={isForce ? 'text-ok' : 'text-bad'} />
         </div>
 
-        <h3 className="text-base font-semibold text-white mb-1">
+        <h3 className="text-base font-semibold text-t1 mb-1">
           {isForce ? 'Finalizar sem bipagem?' : 'Cancelar manuseio?'}
         </h3>
-        <p className="text-sm text-white/50 mb-1">
-          Seller: <span className="text-white/80 font-medium">{card.seller_name}</span>
+        <p className="text-sm text-t3 mb-1">
+          Seller: <span className="text-t2 font-medium">{card.seller_name}</span>
         </p>
-        <p className="text-sm text-white/50 mb-5">
+        <p className="text-sm text-t3 mb-5">
           {card.total_orders - card.completed_orders} pedido(s) pendente(s) serão afetados.
         </p>
 
         <div className={`rounded-xl border px-4 py-3 mb-5 text-xs
           ${isForce
-            ? 'bg-emerald-900/20 border-emerald-500/25 text-emerald-300'
-            : 'bg-red-900/20 border-red-500/25 text-red-300'}`}>
+            ? 'bg-ok-soft border-ok/25 text-ok'
+            : 'bg-bad-soft border-bad/25 text-bad'}`}>
           {isForce
             ? '✓ Todos os pedidos serão marcados como concluídos e o estoque será debitado automaticamente.'
             : '⚠ Os pedidos serão cancelados e removidos da fila. O estoque NÃO será movimentado.'}
@@ -142,8 +142,8 @@ function ConfirmAdminModal({
           <button
             onClick={onCancel}
             disabled={loading}
-            className="flex-1 py-2 rounded-xl border border-white/12 text-sm text-white/60
-              hover:bg-white/5 transition disabled:opacity-40"
+            className="flex-1 py-2 rounded-xl border border-line text-sm text-t3
+              hover:bg-surface-2 transition disabled:opacity-40"
           >
             Cancelar
           </button>
@@ -152,8 +152,8 @@ function ConfirmAdminModal({
             disabled={loading}
             className={`flex-1 py-2 rounded-xl text-sm font-semibold transition disabled:opacity-40
               ${isForce
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                : 'bg-red-600 hover:bg-red-500 text-white'}`}
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-t1'
+                : 'bg-red-600 hover:bg-red-500 text-t1'}`}
           >
             {loading ? 'Aguarde...' : isForce ? 'Finalizar' : 'Cancelar manuseio'}
           </button>
@@ -184,31 +184,31 @@ function statusInfo(status: string, isEntrada = false) {
         return {
           label: 'Finalizado',
           icon: <CheckCircle2 size={13} />,
-          color: 'text-cyan-300',
-          bg: 'bg-cyan-900/25',
-          border: 'border-cyan-500/25',
+          color: 'text-info',
+          bg: 'bg-info-soft',
+          border: 'border-info/25',
           bar: 'bg-cyan-400',
-          headerBg: 'bg-cyan-900/30 border-cyan-500/25',
+          headerBg: 'bg-info-soft border-info/25',
         };
       case 'in_progress':
         return {
           label: 'Em Processo',
           icon: <PlayCircle size={13} />,
-          color: 'text-sky-300',
-          bg: 'bg-sky-900/25',
-          border: 'border-sky-500/25',
+          color: 'text-info',
+          bg: 'bg-info-soft',
+          border: 'border-info/25',
           bar: 'bg-sky-400',
-          headerBg: 'bg-sky-900/30 border-sky-500/25',
+          headerBg: 'bg-info-soft border-info/25',
         };
       default:
         return {
           label: 'A Iniciar',
           icon: <Circle size={13} />,
-          color: 'text-blue-300/70',
-          bg: 'bg-blue-950/40',
-          border: 'border-blue-500/20',
+          color: 'text-info/70',
+          bg: 'bg-info-soft',
+          border: 'border-info/20',
           bar: 'bg-blue-500/40',
-          headerBg: 'bg-blue-950/50 border-blue-500/20',
+          headerBg: 'bg-info-soft border-info/20',
         };
     }
   }
@@ -218,11 +218,11 @@ function statusInfo(status: string, isEntrada = false) {
       return {
         label: 'Finalizado',
         icon: <CheckCircle2 size={13} />,
-        color: 'text-teal-300',
-        bg: 'bg-teal-900/25',
-        border: 'border-teal-500/25',
+        color: 'text-ok',
+        bg: 'bg-ok-soft',
+        border: 'border-ok/25',
         bar: 'bg-teal-400',
-        headerBg: 'bg-teal-900/30 border-teal-500/25',
+        headerBg: 'bg-ok-soft border-ok/25',
       };
     case 'in_progress':
       return {
@@ -238,11 +238,11 @@ function statusInfo(status: string, isEntrada = false) {
       return {
         label: 'A Iniciar',
         icon: <Circle size={13} />,
-        color: 'text-white/40',
-        bg: 'bg-gray-800/50',
-        border: 'border-white/8',
-        bar: 'bg-white/20',
-        headerBg: 'bg-gray-800/60 border-white/8',
+        color: 'text-t4',
+        bg: 'bg-surface-2/50',
+        border: 'border-line-soft',
+        bar: 'bg-brand-soft',
+        headerBg: 'bg-surface-2/60 border-line-soft',
       };
   }
 }
@@ -274,21 +274,21 @@ function HandlingCard({
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-white/90 truncate">{card.seller_name}</p>
+          <p className="text-sm font-bold text-t1 truncate">{card.seller_name}</p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <div className="flex items-center gap-1">
-              <Clock size={9} className="text-white/25" />
-              <span className="text-[10px] text-white/35 font-mono">{uploadTime(card)}</span>
+              <Clock size={9} className="text-t5" />
+              <span className="text-[10px] text-t5 font-mono">{uploadTime(card)}</span>
             </div>
             {card.source_file && (
-              <span className="text-[10px] text-white/20 truncate max-w-[110px]" title={card.source_file}>
+              <span className="text-[10px] text-t5 truncate max-w-[110px]" title={card.source_file}>
                 {card.source_file.split(/[\\/]/).pop()}
               </span>
             )}
           </div>
           {!!card.pending_carrier_orders && (
             <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
-              text-amber-300 bg-amber-900/25 border border-amber-500/20">
+              text-warn bg-warn-soft border border-warn/20">
               🚚 {card.pending_carrier_orders} sem transportadora
             </span>
           )}
@@ -299,7 +299,7 @@ function HandlingCard({
             <span
               title="Essas NFs não podem ser bipadas porque algum SKU não tem produto cadastrado. Cadastre o produto no Dashboard e elas voltam sozinhas."
               className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
-              text-red-300 bg-red-900/25 border border-red-500/20"
+              text-bad bg-bad-soft border border-bad/20"
             >
               🔒 {card.held_orders} sem produto cadastrado
             </span>
@@ -315,10 +315,10 @@ function HandlingCard({
       {/* Progress bar */}
       <div className="mb-3">
         <div className="flex justify-between items-center mb-1">
-          <span className="text-[10px] text-white/30">Progresso</span>
+          <span className="text-[10px] text-t4">Progresso</span>
           <span className={`text-xs font-bold ${info.color}`}>{progress}%</span>
         </div>
-        <div className="h-1.5 bg-white/6 rounded-full overflow-hidden">
+        <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
           <div
             className={`h-full ${info.bar} rounded-full transition-all duration-500`}
             style={{ width: `${progress}%` }}
@@ -329,24 +329,24 @@ function HandlingCard({
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2 text-center mb-3">
         <div className="bg-black/20 rounded-lg py-1.5">
-          <p className="text-sm font-bold text-white/90">{card.total_orders}</p>
-          <p className="text-[9px] text-white/30">Total</p>
+          <p className="text-sm font-bold text-t1">{card.total_orders}</p>
+          <p className="text-[9px] text-t4">Total</p>
         </div>
         <div className="bg-black/20 rounded-lg py-1.5">
-          <p className="text-sm font-bold text-teal-300">{card.completed_orders}</p>
-          <p className="text-[9px] text-white/30">Feitos</p>
+          <p className="text-sm font-bold text-ok">{card.completed_orders}</p>
+          <p className="text-[9px] text-t4">Feitos</p>
         </div>
         <div className="bg-black/20 rounded-lg py-1.5">
-          <p className={`text-sm font-bold ${pending > 0 ? 'text-amber-300' : 'text-white/25'}`}>{pending}</p>
-          <p className="text-[9px] text-white/30">Pendente</p>
+          <p className={`text-sm font-bold ${pending > 0 ? 'text-warn' : 'text-t5'}`}>{pending}</p>
+          <p className="text-[9px] text-t4">Pendente</p>
         </div>
       </div>
 
       {/* Footer CTA */}
-      <div className="flex items-center justify-end pt-2 border-t border-white/5">
+      <div className="flex items-center justify-end pt-2 border-t border-line-soft">
         <span className={`flex items-center gap-1 text-[10px] font-medium transition
           ${card.status === 'completed'
-            ? 'text-white/25'
+            ? 'text-t5'
             : 'text-violet-400 group-hover:text-violet-300'}`}>
           {card.status === 'completed' ? 'Ver detalhes' : 'Abrir bipagem'}
           <ChevronRight size={11} className="group-hover:translate-x-0.5 transition-transform" />
@@ -384,7 +384,7 @@ function KanbanColumn({
           </span>
         </div>
         {totalOrders > 0 && (
-          <span className="text-[10px] text-white/25 font-mono">
+          <span className="text-[10px] text-t5 font-mono">
             {doneOrders}/{totalOrders}
           </span>
         )}
@@ -392,7 +392,7 @@ function KanbanColumn({
 
       {/* Cards */}
       {cards.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-14 text-white/12 gap-2">
+        <div className="flex flex-col items-center justify-center py-14 text-t5 gap-2">
           <Layers size={22} />
           <p className="text-xs">Nenhum card</p>
         </div>
@@ -544,8 +544,8 @@ export default function HandlingPage() {
     }
   }
 
-  const inputCls = "border border-white/12 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-white/80";
-  const inputStyle = { background: '#14122A', colorScheme: 'dark' as const };
+  const inputCls = "border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t2";
+  const inputStyle = { background: 'rgb(var(--surface-2))' };
 
   return (
     <div className="space-y-5">
@@ -556,43 +556,43 @@ export default function HandlingPage() {
             <Package size={18} className="text-violet-400" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-white/90">Manuseios</h1>
-            <p className="text-xs text-white/35">Um card por seller por upload — acompanhe a bipagem em tempo real</p>
+            <h1 className="text-lg font-semibold text-t1">Manuseios</h1>
+            <p className="text-xs text-t4">Um card por seller por upload — acompanhe a bipagem em tempo real</p>
           </div>
         </div>
         <button onClick={() => refetch()}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/50 border border-white/10 rounded-lg hover:bg-white/4 transition">
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
           <RefreshCw size={12} /> Atualizar
         </button>
       </div>
 
       {/* Filters + summary */}
-      <div className="flex flex-wrap items-center gap-3 bg-gray-900 rounded-xl border border-white/8 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3 bg-surface rounded-xl border border-line-soft px-4 py-3">
         <div className="flex items-center gap-2">
-          <CalendarDays size={14} className="text-white/30" />
-          <span className="text-xs text-white/40">De</span>
+          <CalendarDays size={14} className="text-t4" />
+          <span className="text-xs text-t4">De</span>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             className={inputCls} style={inputStyle} />
-          <span className="text-xs text-white/40">ate</span>
+          <span className="text-xs text-t4">ate</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             className={inputCls} style={inputStyle} />
         </div>
 
         {/* Interruptor Saída / Entrada */}
-        <div className="flex items-center rounded-lg border border-white/12 overflow-hidden text-xs font-medium">
+        <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs font-medium">
           <button
             onClick={() => setFileTypeView('saida')}
             className={`px-3 py-1.5 transition ${fileTypeView === 'saida'
-              ? 'bg-violet-600 text-white'
-              : 'text-white/40 hover:bg-white/5'}`}
+              ? 'bg-violet-600 text-t1'
+              : 'text-t4 hover:bg-surface-2'}`}
           >
             Saída
           </button>
           <button
             onClick={() => setFileTypeView('entrada')}
             className={`px-3 py-1.5 transition ${fileTypeView === 'entrada'
-              ? 'bg-sky-600 text-white'
-              : 'text-white/40 hover:bg-white/5'}`}
+              ? 'bg-sky-600 text-t1'
+              : 'text-t4 hover:bg-surface-2'}`}
           >
             Entrada
           </button>
@@ -623,20 +623,20 @@ export default function HandlingPage() {
         {/* Global pill */}
         <div className="ml-auto flex items-center gap-3 bg-black/20 rounded-xl px-4 py-2">
           <div className="text-center">
-            <p className="text-base font-bold text-white/90">{filtered.length}</p>
-            <p className="text-[9px] text-white/30">cards</p>
+            <p className="text-base font-bold text-t1">{filtered.length}</p>
+            <p className="text-[9px] text-t4">cards</p>
           </div>
-          <div className="w-px h-7 bg-white/8" />
+          <div className="w-px h-7 bg-surface-2" />
           <div className="text-center">
-            <p className="text-base font-bold text-white/90">{totalOrders}</p>
-            <p className="text-[9px] text-white/30">pedidos</p>
+            <p className="text-base font-bold text-t1">{totalOrders}</p>
+            <p className="text-[9px] text-t4">pedidos</p>
           </div>
-          <div className="w-px h-7 bg-white/8" />
+          <div className="w-px h-7 bg-surface-2" />
           <div className="text-center">
-            <p className={`text-base font-bold ${globalPct === 100 ? 'text-teal-300' : globalPct > 0 ? 'text-violet-300' : 'text-white/40'}`}>
+            <p className={`text-base font-bold ${globalPct === 100 ? 'text-ok' : globalPct > 0 ? 'text-violet-300' : 'text-t4'}`}>
               {globalPct}%
             </p>
-            <p className="text-[9px] text-white/30">concluido</p>
+            <p className="text-[9px] text-t4">concluido</p>
           </div>
         </div>
       </div>
@@ -646,8 +646,8 @@ export default function HandlingPage() {
         <div className="grid grid-cols-3 gap-4">
           {[0, 1, 2].map(i => (
             <div key={i} className="space-y-3">
-              <div className="h-10 bg-gray-800/60 rounded-xl animate-pulse" />
-              {[0, 1, 2].map(j => <div key={j} className="h-40 bg-gray-900/60 rounded-2xl animate-pulse" />)}
+              <div className="h-10 bg-surface-2/60 rounded-xl animate-pulse" />
+              {[0, 1, 2].map(j => <div key={j} className="h-40 bg-surface/60 rounded-2xl animate-pulse" />)}
             </div>
           ))}
         </div>
@@ -660,7 +660,7 @@ export default function HandlingPage() {
       )}
 
       {!isLoading && filtered.length === 0 && (
-        <div className="text-center py-20 text-white/20">
+        <div className="text-center py-20 text-t5">
           <Package size={48} className="mx-auto mb-4 opacity-30" />
           <p className="text-sm font-medium">Nenhum card encontrado</p>
           <p className="text-xs mt-1">Ajuste os filtros ou importe um arquivo no Dashboard</p>

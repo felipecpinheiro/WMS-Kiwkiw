@@ -1,6 +1,6 @@
 /**
  * WMS Kiwkiw - Layout Principal com Sidebar
- * Identidade visual: roxo #7B63E8 · teal #3DD9A4 · fundo dark #0C0B18
+ * Identidade visual: roxo #7B63E8 · teal #3DD9A4 · tokens de tema em src/index.css
  */
 
 import { useState } from 'react';
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
+import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { group: 'Principal', items: [
@@ -79,16 +80,15 @@ export default function Layout() {
     : 'U';
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#0C0B18' }}>
+    <div className="flex h-screen overflow-hidden bg-app">
 
       {/* ── SIDEBAR (desktop) ────────────────────────────────── */}
       {!isMobile && (
       <aside
-        className="w-56 flex flex-col flex-shrink-0 border-r"
-        style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)' }}
+        className="w-56 flex flex-col flex-shrink-0 border-r bg-sidebar border-brand-line"
       >
         {/* Logo */}
-        <div className="p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2.5">
             {/* Logo da marca */}
             <img
@@ -97,8 +97,8 @@ export default function Layout() {
               className="w-10 h-10 flex-shrink-0 drop-shadow-lg"
             />
             <div>
-              <div className="text-sm font-bold text-white leading-tight">Kiwkiw</div>
-              <div className="text-[10px] font-medium" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              <div className="text-sm font-bold text-t1 leading-tight">Kiwkiw</div>
+              <div className="text-[10px] font-medium text-t4">
                 WMS · Fulfillment
               </div>
             </div>
@@ -110,8 +110,7 @@ export default function Layout() {
           {activeNav.map((group) => (
             <div key={group.group} className="mb-5">
               {/* Group label */}
-              <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]"
-                style={{ color: 'rgba(255,255,255,0.22)' }}>
+              <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-t5">
                 {group.group}
               </p>
 
@@ -122,17 +121,17 @@ export default function Layout() {
                   className={({ isActive }) =>
                     `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all mb-0.5 ${
                       isActive
-                        ? 'text-white font-medium'
-                        : 'hover:bg-white/5'
+                        ? 'text-t1 font-medium'
+                        : 'hover:bg-surface-2'
                     }`
                   }
                   style={({ isActive }) => isActive ? {
-                    background: 'rgba(123,99,232,0.18)',
-                    border: '1px solid rgba(123,99,232,0.28)',
-                    color: '#9B87F0',
+                    background: 'rgb(var(--brand-soft))',
+                    border: '1px solid rgb(var(--brand-line))',
+                    color: 'rgb(var(--brand))',
                   } : {
                     border: '1px solid transparent',
-                    color: 'rgba(255,255,255,0.45)',
+                    color: 'rgb(var(--t4))',
                   }}
                 >
                   <Icon size={14} />
@@ -144,33 +143,31 @@ export default function Layout() {
         </nav>
 
         {/* User Footer */}
-        <div className="p-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="p-3 border-t border-line-soft">
           {/* Avatar + info */}
           <div className="flex items-center gap-2.5 px-1 mb-2.5">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 text-white"
-              style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #3DD9A4 100%)' }}
-            >
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 text-t1 bg-brand-gradient">
               {initials}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold truncate text-white/80">{user.name}</p>
-              <p className="text-[10px] capitalize" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              <p className="text-xs font-semibold truncate text-t2">{user.name}</p>
+              <p className="text-[10px] capitalize text-t4">
                 {user.role}
               </p>
             </div>
+            <ThemeToggle />
           </div>
 
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg transition-all"
-            style={{ color: 'rgba(255,255,255,0.30)' }}
+            style={{ color: 'rgb(var(--t4))' }}
             onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.color = '#f87171';
-              (e.currentTarget as HTMLElement).style.background = 'rgba(248,113,113,0.08)';
+              (e.currentTarget as HTMLElement).style.color = 'rgb(var(--bad))';
+              (e.currentTarget as HTMLElement).style.background = 'rgb(var(--bad-soft))';
             }}
             onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.30)';
+              (e.currentTarget as HTMLElement).style.color = 'rgb(var(--t4))';
               (e.currentTarget as HTMLElement).style.background = 'transparent';
             }}
           >
@@ -183,21 +180,21 @@ export default function Layout() {
 
       {/* ── MAIN CONTENT + BARRA INFERIOR (mobile) ────────────── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <main className="flex-1 overflow-y-auto" style={{ background: '#0C0B18' }}>
+        <main className="flex-1 overflow-y-auto bg-app">
           <Outlet />
         </main>
 
         {isMobile && (
           <nav
-            className="flex flex-shrink-0 border-t"
-            style={{ background: '#100E22', borderColor: 'rgba(123,99,232,0.12)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+            className="flex flex-shrink-0 border-t bg-sidebar border-brand-line"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
             {mobileTabs.map(({ to, icon: Icon, label }) => (
               <NavLink
                 key={to}
                 to={to}
                 className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
-                style={({ isActive }) => ({ color: isActive ? '#9B87F0' : 'rgba(255,255,255,0.40)' })}
+                style={({ isActive }) => ({ color: isActive ? 'rgb(var(--brand))' : 'rgb(var(--t4))' })}
               >
                 <Icon size={18} />
                 {label}
@@ -205,8 +202,7 @@ export default function Layout() {
             ))}
             <button
               onClick={() => setDrawerOpen(true)}
-              className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
-              style={{ color: 'rgba(255,255,255,0.40)' }}
+              className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px] text-t4"
             >
               <MoreHorizontal size={18} />
               Mais
@@ -219,22 +215,19 @@ export default function Layout() {
       {isMobile && (
         <BottomSheet open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Menu">
           <div className="flex items-center gap-2.5 mb-4">
-            <div
-              className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 text-white"
-              style={{ background: 'linear-gradient(135deg, #7B63E8 0%, #3DD9A4 100%)' }}
-            >
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 text-t1 bg-brand-gradient">
               {initials}
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-white/90 truncate">{user.name}</p>
-              <p className="text-xs capitalize" style={{ color: 'rgba(255,255,255,0.40)' }}>{user.role}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-t1 truncate">{user.name}</p>
+              <p className="text-xs capitalize text-t4">{user.role}</p>
             </div>
+            <ThemeToggle />
           </div>
 
           {activeNav.map((group) => (
             <div key={group.group} className="mb-4">
-              <p className="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em]"
-                style={{ color: 'rgba(255,255,255,0.25)' }}>
+              <p className="px-1 mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-t5">
                 {group.group}
               </p>
               {group.items.map(({ to, icon: Icon, label }) => (
@@ -244,13 +237,13 @@ export default function Layout() {
                   onClick={() => setDrawerOpen(false)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm mb-0.5"
                   style={({ isActive }) => isActive ? {
-                    background: 'rgba(123,99,232,0.18)',
-                    border: '1px solid rgba(123,99,232,0.28)',
-                    color: '#9B87F0',
+                    background: 'rgb(var(--brand-soft))',
+                    border: '1px solid rgb(var(--brand-line))',
+                    color: 'rgb(var(--brand))',
                     fontWeight: 500,
                   } : {
                     border: '1px solid transparent',
-                    color: 'rgba(255,255,255,0.55)',
+                    color: 'rgb(var(--t3))',
                   }}
                 >
                   <Icon size={16} />
@@ -262,8 +255,7 @@ export default function Layout() {
 
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-3 py-2.5 mt-2 text-sm rounded-lg"
-            style={{ color: 'rgba(248,113,113,0.75)' }}
+            className="w-full flex items-center gap-2 px-3 py-2.5 mt-2 text-sm rounded-lg text-bad/75"
           >
             <LogOut size={15} />
             Sair da conta

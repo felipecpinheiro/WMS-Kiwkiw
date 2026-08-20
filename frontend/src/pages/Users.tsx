@@ -28,17 +28,17 @@ const ROLE_CONFIG: Record<string, { label: string; desc: string; badgeCls: strin
   manager: {
     label: 'Gerente',
     desc: 'Vê e edita o grupo de sellers que gerencia. Associe os sellers abaixo.',
-    badgeCls: 'bg-blue-900/40 text-blue-300',
+    badgeCls: 'bg-info-soft text-info',
   },
   operator: {
     label: 'Operador',
     desc: 'Realiza bipagem dos sellers que atende. Associe os sellers abaixo.',
-    badgeCls: 'bg-green-900/40 text-green-300',
+    badgeCls: 'bg-ok-soft text-ok',
   },
   client: {
     label: 'Cliente',
     desc: 'Portal somente leitura. Selecione o seller do portal abaixo.',
-    badgeCls: 'bg-amber-900/40 text-amber-300',
+    badgeCls: 'bg-warn-soft text-warn',
   },
 };
 
@@ -103,18 +103,18 @@ function SellerMultiSelect({
   };
 
   return (
-    <div className="border border-white/12 rounded-lg overflow-hidden">
+    <div className="border border-line rounded-lg overflow-hidden">
       {/* Botão selecionar/desmarcar todos da unidade */}
       {visible.length > 0 && (
         <button
           type="button"
           onClick={toggleAll}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-violet-400 hover:bg-white/4 border-b border-white/8 transition"
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-violet-400 hover:bg-surface-2 border-b border-line-soft transition"
         >
           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
-            ${allVisibleSelected ? 'bg-violet-500 border-violet-500' : 'border-white/25 bg-transparent'}`}
+            ${allVisibleSelected ? 'bg-violet-500 border-violet-500' : 'border-line-strong bg-transparent'}`}
           >
-            {allVisibleSelected && <Check size={10} className="text-white" />}
+            {allVisibleSelected && <Check size={10} className="text-t1" />}
           </div>
           {allVisibleSelected ? 'Desmarcar todos desta unidade' : 'Selecionar todos desta unidade'}
         </button>
@@ -122,7 +122,7 @@ function SellerMultiSelect({
 
       <div className="max-h-44 overflow-y-auto">
         {visible.length === 0 && (
-          <p className="text-xs text-white/35 p-3">
+          <p className="text-xs text-t4 p-3">
             {unitId ? 'Nenhum seller nesta unidade' : 'Nenhum seller cadastrado'}
           </p>
         )}
@@ -132,14 +132,14 @@ function SellerMultiSelect({
             <label
               key={s.id}
               className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition select-none
-                ${checked ? 'bg-violet-900/30' : 'hover:bg-white/4'}`}
+                ${checked ? 'bg-violet-900/30' : 'hover:bg-surface-2'}`}
             >
               <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition
-                ${checked ? 'bg-violet-500 border-violet-500' : 'border-white/25 bg-transparent'}`}
+                ${checked ? 'bg-violet-500 border-violet-500' : 'border-line-strong bg-transparent'}`}
               >
-                {checked && <Check size={10} className="text-white" />}
+                {checked && <Check size={10} className="text-t1" />}
               </div>
-              <span className="text-sm text-white/80">{s.trade_name || s.name}</span>
+              <span className="text-sm text-t2">{s.trade_name || s.name}</span>
               <input
                 type="checkbox"
                 className="hidden"
@@ -274,8 +274,8 @@ export default function UsersPage() {
 
   if (!isAdmin) {
     return (
-      <div className="p-6 text-center text-white/35 py-20">
-        <Shield size={32} className="mx-auto mb-3 text-white/20" />
+      <div className="p-6 text-center text-t4 py-20">
+        <Shield size={32} className="mx-auto mb-3 text-t5" />
         <p className="text-sm">Acesso restrito ao administrador.</p>
       </div>
     );
@@ -286,14 +286,14 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">Usuários</h1>
-          <p className="text-sm text-white/50 mt-0.5">
+          <h1 className="text-xl font-bold text-t1">Usuários</h1>
+          <p className="text-sm text-t3 mt-0.5">
             {users.length} usuário{users.length !== 1 ? 's' : ''} cadastrado{users.length !== 1 ? 's' : ''}
           </p>
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-violet-600 hover:bg-violet-500 rounded-lg transition"
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 rounded-lg transition"
         >
           <Plus size={14} /> Novo Usuário
         </button>
@@ -301,20 +301,20 @@ export default function UsersPage() {
 
       {/* Grid de usuários */}
       {isLoading ? (
-        <div className="text-center text-white/35 py-12">Carregando...</div>
+        <div className="text-center text-t4 py-12">Carregando...</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {users.map((u: any) => {
             const roleConf = ROLE_CONFIG[u.role] ?? {
               label: u.role,
               desc: '',
-              badgeCls: 'bg-gray-700 text-white/50',
+              badgeCls: 'bg-line-strong text-t3',
             };
             return (
               <div
                 key={u.id}
-                className={`bg-gray-900 rounded-xl border shadow-none p-4 transition
-                  ${u.active === false ? 'opacity-40 border-white/5' : 'border-white/8'}`}
+                className={`bg-surface rounded-xl border shadow-none p-4 transition
+                  ${u.active === false ? 'opacity-40 border-line-soft' : 'border-line-soft'}`}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
@@ -322,8 +322,8 @@ export default function UsersPage() {
                       <User size={18} className="text-violet-300" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-white/90">{u.name}</p>
-                      <p className="text-xs text-white/35">{u.email}</p>
+                      <p className="text-sm font-semibold text-t1">{u.name}</p>
+                      <p className="text-xs text-t4">{u.email}</p>
                     </div>
                   </div>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleConf.badgeCls}`}>
@@ -331,34 +331,34 @@ export default function UsersPage() {
                   </span>
                 </div>
 
-                <div className="text-xs text-white/35 space-y-0.5 mb-3">
+                <div className="text-xs text-t4 space-y-0.5 mb-3">
                   {u.role === 'admin' ? (
-                    <p>Unidades: <span className="text-white/60">Todas</span></p>
+                    <p>Unidades: <span className="text-t3">Todas</span></p>
                   ) : u.unit_name && (
-                    <p>Unidade: <span className="text-white/60">{u.unit_name}</span></p>
+                    <p>Unidade: <span className="text-t3">{u.unit_name}</span></p>
                   )}
                   {u.seller_names && u.seller_names.length > 0 && (
                     <p>
                       Sellers:{' '}
-                      <span className="text-white/60">
+                      <span className="text-t3">
                         {u.seller_names.join(', ')}
                       </span>
                     </p>
                   )}
                   {u.seller_name && (!u.seller_names || u.seller_names.length === 0) && (
-                    <p>Seller: <span className="text-white/60">{u.seller_name}</span></p>
+                    <p>Seller: <span className="text-t3">{u.seller_name}</span></p>
                   )}
                   <p>
                     Cadastro:{' '}
-                    <span className="text-white/60">
+                    <span className="text-t3">
                       {u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—'}
                     </span>
                   </p>
                   {u.active === false && (
-                    <p className="text-red-400/80 font-medium">Inativo</p>
+                    <p className="text-bad/80 font-medium">Inativo</p>
                   )}
                   {u.force_password_change && (
-                    <p className="text-amber-400/90 font-medium flex items-center gap-1">
+                    <p className="text-warn/90 font-medium flex items-center gap-1">
                       <KeyRound size={11} /> Senha temporária ativa
                     </p>
                   )}
@@ -369,14 +369,14 @@ export default function UsersPage() {
                     <>
                       <button
                         onClick={() => openEdit(u)}
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition"
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition"
                       >
                         <Pencil size={12} /> Editar
                       </button>
                       {isAdmin && (
                         <button
                           onClick={() => handleTempPassword(u.id, u.name)}
-                          className="flex items-center justify-center px-3 py-1.5 text-xs text-amber-400 border border-amber-900/40 rounded-lg hover:bg-amber-900/20 transition"
+                          className="flex items-center justify-center px-3 py-1.5 text-xs text-warn border border-warn/40 rounded-lg hover:bg-warn-soft transition"
                           title="Definir senha temporária (123456)"
                         >
                           <KeyRound size={12} />
@@ -384,7 +384,7 @@ export default function UsersPage() {
                       )}
                       <button
                         onClick={() => handleDeactivate(u.id, u.name)}
-                        className="flex items-center justify-center px-3 py-1.5 text-xs text-red-400 border border-red-900/40 rounded-lg hover:bg-red-900/20 transition"
+                        className="flex items-center justify-center px-3 py-1.5 text-xs text-bad border border-bad/40 rounded-lg hover:bg-bad-soft transition"
                         title="Inativar usuário"
                       >
                         <UserX size={12} />
@@ -393,7 +393,7 @@ export default function UsersPage() {
                   ) : (
                     <button
                       onClick={() => handleReactivate(u.id, u.name)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs text-emerald-400 border border-emerald-900/40 rounded-lg hover:bg-emerald-900/20 transition"
+                      className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs text-ok border border-ok/40 rounded-lg hover:bg-ok-soft transition"
                       title="Reativar usuário"
                     >
                       <UserCheck size={12} /> Reativar
@@ -405,9 +405,9 @@ export default function UsersPage() {
           })}
 
           {users.length === 0 && (
-            <div className="col-span-3 bg-gray-900 border border-dashed border-white/12 rounded-xl p-10 text-center">
-              <Shield size={32} className="text-white/25 mx-auto mb-2" />
-              <p className="text-sm text-white/35">Nenhum usuário cadastrado</p>
+            <div className="col-span-3 bg-surface border border-dashed border-line rounded-xl p-10 text-center">
+              <Shield size={32} className="text-t5 mx-auto mb-2" />
+              <p className="text-sm text-t4">Nenhum usuário cadastrado</p>
             </div>
           )}
         </div>
@@ -418,12 +418,12 @@ export default function UsersPage() {
       {/* ------------------------------------------------------------------ */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 rounded-2xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-white">
+              <h3 className="font-semibold text-t1">
                 {editId ? 'Editar Usuário' : 'Novo Usuário'}
               </h3>
-              <button onClick={() => setShowModal(false)} className="text-white/35 hover:text-white/60">
+              <button onClick={() => setShowModal(false)} className="text-t4 hover:text-t3">
                 <X size={18} />
               </button>
             </div>
@@ -431,31 +431,31 @@ export default function UsersPage() {
             <div className="space-y-3">
               {/* Nome */}
               <div>
-                <label className="block text-xs text-white/50 mb-1">Nome *</label>
+                <label className="block text-xs text-t3 mb-1">Nome *</label>
                 <input
                   type="text"
                   value={form.name}
                   onChange={e => f('name', e.target.value)}
                   placeholder="Nome completo"
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500"
                 />
               </div>
 
               {/* E-mail */}
               <div>
-                <label className="block text-xs text-white/50 mb-1">E-mail *</label>
+                <label className="block text-xs text-t3 mb-1">E-mail *</label>
                 <input
                   type="email"
                   value={form.email}
                   onChange={e => f('email', e.target.value)}
                   placeholder="usuario@email.com"
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500"
                 />
               </div>
 
               {/* Senha */}
               <div>
-                <label className="block text-xs text-white/50 mb-1">
+                <label className="block text-xs text-t3 mb-1">
                   {editId ? 'Nova Senha (em branco = manter)' : 'Senha *'}
                 </label>
                 <input
@@ -463,28 +463,28 @@ export default function UsersPage() {
                   value={form.password}
                   onChange={e => f('password', e.target.value)}
                   placeholder={editId ? 'Deixe em branco para não alterar' : 'Mínimo 6 caracteres'}
-                  className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500"
                 />
               </div>
 
               {/* Perfil */}
               <div>
-                <label className="block text-xs text-white/50 mb-1">Perfil *</label>
+                <label className="block text-xs text-t3 mb-1">Perfil *</label>
                 <div className="relative">
                   <select
                     value={form.role}
                     onChange={e => f('role', e.target.value)}
-                    className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
+                    className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
                   >
                     <option value="operator">Operador</option>
                     <option value="manager">Gerente</option>
                     <option value="admin">Administrador</option>
                     <option value="client">Cliente (portal)</option>
                   </select>
-                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-t4 pointer-events-none" />
                 </div>
                 {form.role && ROLE_CONFIG[form.role] && (
-                  <p className="text-xs text-white/30 mt-1 ml-1">
+                  <p className="text-xs text-t4 mt-1 ml-1">
                     {ROLE_CONFIG[form.role].desc}
                   </p>
                 )}
@@ -493,9 +493,9 @@ export default function UsersPage() {
               {/* Unidade — admin / manager / operator */}
               {showUnit && (
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">Unidade</label>
+                  <label className="block text-xs text-t3 mb-1">Unidade</label>
                   {form.role === 'admin' ? (
-                    <div className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white/60">
+                    <div className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t3">
                       Todas as unidades
                     </div>
                   ) : (
@@ -503,14 +503,14 @@ export default function UsersPage() {
                       <select
                         value={form.unit_id}
                         onChange={e => f('unit_id', e.target.value ? Number(e.target.value) : '')}
-                        className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
+                        className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
                       >
                         <option value="">Selecione uma unidade...</option>
                         {units.map((u: any) => (
                           <option key={u.id} value={u.id}>{u.name}</option>
                         ))}
                       </select>
-                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-t4 pointer-events-none" />
                     </div>
                   )}
                 </div>
@@ -519,7 +519,7 @@ export default function UsersPage() {
               {/* Sellers — multi-select para manager e operator */}
               {showSellerMulti && (
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">
+                  <label className="block text-xs text-t3 mb-1">
                     Sellers que este usuário atende
                     {form.seller_ids.length > 0 && (
                       <span className="ml-2 text-violet-400">
@@ -534,7 +534,7 @@ export default function UsersPage() {
                     unitId={form.unit_id}
                   />
                   {form.seller_ids.length === 0 && (
-                    <p className="text-xs text-amber-400/70 mt-1 ml-1">
+                    <p className="text-xs text-warn/70 mt-1 ml-1">
                       ⚠ Sem seller associado, o usuário não verá dados de nenhum seller.
                     </p>
                   )}
@@ -544,21 +544,21 @@ export default function UsersPage() {
               {/* Seller único — client */}
               {showSellerSingle && (
                 <div>
-                  <label className="block text-xs text-white/50 mb-1">
+                  <label className="block text-xs text-t3 mb-1">
                     Seller do portal *
                   </label>
                   <div className="relative">
                     <select
                       value={form.seller_id}
                       onChange={e => f('seller_id', e.target.value ? Number(e.target.value) : '')}
-                      className="w-full bg-gray-800 border border-white/12 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
+                      className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500 appearance-none"
                     >
                       <option value="">Selecione o seller...</option>
                       {sellers.map((s: any) => (
                         <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>
                       ))}
                     </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-t4 pointer-events-none" />
                   </div>
                 </div>
               )}
@@ -568,14 +568,14 @@ export default function UsersPage() {
             <div className="flex gap-2 mt-6">
               <button
                 onClick={() => setShowModal(false)}
-                className="flex-1 py-2 text-sm text-white/60 border border-white/12 rounded-lg hover:bg-white/4 transition"
+                className="flex-1 py-2 text-sm text-t3 border border-line rounded-lg hover:bg-surface-2 transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-50 transition flex items-center justify-center gap-1.5"
+                className="flex-1 py-2 text-sm text-t1 bg-violet-600 rounded-lg hover:bg-violet-500 disabled:opacity-50 transition flex items-center justify-center gap-1.5"
               >
                 <Check size={14} />
                 {saving ? 'Salvando...' : 'Salvar'}

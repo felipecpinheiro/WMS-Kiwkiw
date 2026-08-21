@@ -374,42 +374,6 @@ def open_order_by_nfe(
                 "Confirme antes de continuar para não bipar a mesma caixa duas vezes."
             )
 
-    # ── Lock por (sessão + seller): só 1 NF com atividade real por seller por sessão.
-    # Um pedido só bloqueia se estiver em "scanning" E tiver ao menos 1 scan log
-    # registrado (bipagem real). Isso evita locks fantasma de aberturas sem atividade.
-    if order.seller_id is not None:
-        scanning_orders_same_seller = db.query(models.Order).filter(
-            models.Order.session_id == session_id,
-            models.Order.seller_id == order.seller_id,
-            models.Order.status == models.OrderStatus.SCANNING,
-            models.Order.id != order.id,
-        ).all()
-
-        for conflicting in scanning_orders_same_seller:
-            has_real_activity = db.query(models.ScanningLog).filter(
-                *_active_scan_filters(conflicting)
-            ).first() is not None
-
-            if has_real_activity:
-                seller_name = (order.seller.name
-                               if order.seller else f"Seller {order.seller_id}")
-                if not request.force_seller_lock:
-                    return {
-                        "success": False,
-                        "blocked_reason": "seller_locked",
-                        "message": (
-                            f"Outro operador está bipando {seller_name}. "
-                            "Continuar mesmo assim?"
-                        ),
-                    }
-                # force_seller_lock=True: operador confirmou que quer abrir
-                # mesmo com outro pedido do mesmo seller em bipagem. Segue o
-                # fluxo normal de abertura abaixo, sem travar.
-            else:
-                # Lock fantasma: sem atividade real → libera o pedido travado
-                conflicting.status = models.OrderStatus.PENDING
-                db.commit()
-
     return {
         "success": True,
         "order_id": order.id,

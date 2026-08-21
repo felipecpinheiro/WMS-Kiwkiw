@@ -218,7 +218,6 @@ export default function ScannerPage() {
   const [showExitDialog, setShowExitDialog] = useState(false); // 1b: confirmar saída
   const [exitReason, setExitReason] = useState('');
   // Lock por seller: outro operador já bipando NF do mesmo seller — confirmação
-  const [sellerLockConfirm, setSellerLockConfirm] = useState<{ nfeKey: string; message: string } | null>(null);
   // ── Caixa sugerida ────────────────────────────────────────
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
   const [boxUsed, setBoxUsed]             = useState<string | null>(null);
@@ -506,8 +505,6 @@ export default function ScannerPage() {
         setFeedback({ state: 'error', title: '✗ NF inativada', message: data.message });
         toast.error(data.message, { duration: 6000 });
         setTimeout(() => navigate('/manuseios'), 2500);
-      } else if (data.blocked_reason === 'seller_locked') {
-        setSellerLockConfirm({ nfeKey: nfeKey.trim(), message: data.message });
       } else {
         setFeedback({ state: 'error', title: '✗ NFe não encontrada', message: data.message || 'Verifique a etiqueta' });
       }
@@ -1485,39 +1482,6 @@ export default function ScannerPage() {
                 className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition"
               >
                 Interromper e Sair
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Confirmação: outro operador bipando o mesmo seller ── */}
-      {sellerLockConfirm && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-yellow-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <AlertTriangle size={20} className="text-warn" />
-              </div>
-              <h3 className="text-base font-bold text-t1">Seller em bipagem</h3>
-            </div>
-            <p className="text-sm text-t3 mb-4">{sellerLockConfirm.message}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setSellerLockConfirm(null); setBarcodeInput(''); inputRef.current?.focus(); }}
-                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  const nfeKey = sellerLockConfirm.nfeKey;
-                  setSellerLockConfirm(null);
-                  handleNfeScan(nfeKey, true);
-                }}
-                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-yellow-500/10 transition"
-              >
-                Continuar mesmo assim
               </button>
             </div>
           </div>

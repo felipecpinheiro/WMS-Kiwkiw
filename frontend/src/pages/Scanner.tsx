@@ -222,7 +222,6 @@ export default function ScannerPage() {
   // ── Caixa sugerida ────────────────────────────────────────
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
   const [boxUsed, setBoxUsed]             = useState<string | null>(null);
-  const [boxEditing, setBoxEditing]       = useState(false);
   const [boxEditVal, setBoxEditVal]       = useState('');
   const [boxSaving, setBoxSaving]         = useState(false);
   const [contextMenu, setContextMenu] = useState<{
@@ -339,7 +338,8 @@ export default function ScannerPage() {
 
   // ── Busca caixa sugerida quando muda o pedido ───────────────
   useEffect(() => {
-    if (!activeOrderId) { setBoxSuggested(null); setBoxUsed(null); setBoxEditing(false); return; }
+    setBoxEditVal('');
+    if (!activeOrderId) { setBoxSuggested(null); setBoxUsed(null); return; }
     scanningApi.suggestedBox(activeOrderId).then(r => {
       setBoxSuggested(r.data.suggested);
       setBoxUsed(r.data.box_used);
@@ -354,7 +354,7 @@ export default function ScannerPage() {
       const v = val.trim() || null;
       const res = await scanningApi.saveOrderBox(orderId, v);
       setBoxUsed(v);
-      setBoxEditing(false);
+      setBoxEditVal('');
       if (res.data.order_completed) {
         // Caixa era a última pendência (todos os itens já bipados) — conclui
         // igual ao fim de bipagem normal. Mudar o status aqui já recalcula
@@ -362,6 +362,9 @@ export default function ScannerPage() {
         setLocalOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status: 'completed' } : o)));
         setFeedback({ state: 'success', title: '🎉 Pedido concluído!', message: 'NF finalizada. Escaneie a próxima NFe.' });
         setTimeout(() => setFeedback({ state: 'idle', title: '', message: '' }), 3000);
+        // Devolve o foco pro leitor — sem isso o operador precisa clicar
+        // manualmente pra abrir a próxima NF (mesmo padrão do else abaixo).
+        setTimeout(() => inputRef.current?.focus(), 50);
       } else {
         // Ainda falta bipar item — devolve o foco pro código de barras, mesmo
         // padrão já usado no campo de quantidade (handleQtyKeyDown).
@@ -1053,47 +1056,62 @@ export default function ScannerPage() {
                         🚚 {displayOrder.carrier}
                       </span>
                     )}
-                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge). Não existe em modo consulta. */}
-                    {!isAuditView && showBoxBadge && (boxEditing ? (
-                      <span className="inline-flex items-center gap-1">
+                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge). Não existe em modo consulta.
+                        Campo de texto sempre editável (sem precisar clicar num botão antes),
+                        mais atalhos 1–11 e "própria" (seller usa caixa própria). */}
+                    {!isAuditView && showBoxBadge && (
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold'
+                            + (awaitingBox ? ' animate-pulse' : '')
+                          }
+                          style={
+                            awaitingBox
+                              ? { background: 'rgba(239,68,68,0.22)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.55)' }
+                              : (boxUsed || boxSuggested)
+                                ? { background: 'rgba(123,99,232,0.18)', color: 'rgb(var(--brand))', border: '1px solid rgba(123,99,232,0.35)' }
+                                : { background: 'rgba(239,68,68,0.15)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.35)' }
+                          }
+                          title={awaitingBox
+                            ? 'Caixa obrigatória — todos os itens já foram bipados, falta cadastrar a caixa para concluir a NF'
+                            : 'Caixa sugerida pelo algoritmo — ajuste no campo ao lado'}
+                        >
+                          📦 {boxUsed || boxSuggested || 'N.A'}
+                        </span>
                         <input
-                          autoFocus
                           value={boxEditVal}
                           onChange={e => setBoxEditVal(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') handleBoxSave(boxEditVal);
-                            if (e.key === 'Escape') setBoxEditing(false);
-                          }}
+                          onFocus={() => { if (!boxEditVal) setBoxEditVal(boxUsed || boxSuggested || ''); }}
+                          onKeyDown={e => { if (e.key === 'Enter') handleBoxSave(boxEditVal); }}
                           placeholder="Ex: c1"
+                          disabled={boxSaving}
                           className="w-20 bg-surface-2 border border-violet-400/50 rounded px-2 py-0.5 text-xs text-t1 outline-none"
                         />
                         <button onClick={() => handleBoxSave(boxEditVal)} disabled={boxSaving}
                           className="text-[10px] text-violet-300 hover:text-violet-100 px-1">
                           {boxSaving ? '…' : '✓'}
                         </button>
-                        <button onClick={() => setBoxEditing(false)} className="text-[10px] text-t4 hover:text-t3 px-1">✕</button>
+                        {Array.from({ length: 11 }, (_, i) => String(i + 1)).map(n => (
+                          <button
+                            key={n}
+                            onClick={() => { setBoxEditVal(n); handleBoxSave(n); }}
+                            disabled={boxSaving}
+                            className="w-6 h-6 flex items-center justify-center text-[11px] font-bold rounded border border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300 transition"
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => { setBoxEditVal('Própria'); handleBoxSave('Própria'); }}
+                          disabled={boxSaving}
+                          title="Seller usa caixa própria"
+                          className="px-2 h-6 flex items-center justify-center text-[11px] font-bold rounded border border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300 transition"
+                        >
+                          Própria
+                        </button>
                       </span>
-                    ) : (
-                      <button
-                        onClick={() => { setBoxEditVal(boxUsed || boxSuggested || ''); setBoxEditing(true); }}
-                        title={awaitingBox
-                          ? 'Caixa obrigatória — todos os itens já foram bipados, falta cadastrar a caixa para concluir a NF'
-                          : 'Caixa sugerida pelo algoritmo — clique para ajustar'}
-                        className={
-                          'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold transition hover:opacity-80'
-                          + (awaitingBox ? ' animate-pulse' : '')
-                        }
-                        style={
-                          awaitingBox
-                            ? { background: 'rgba(239,68,68,0.22)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.55)' }
-                            : (boxUsed || boxSuggested)
-                              ? { background: 'rgba(123,99,232,0.18)', color: 'rgb(var(--brand))', border: '1px solid rgba(123,99,232,0.35)' }
-                              : { background: 'rgba(239,68,68,0.15)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.35)' }
-                        }
-                      >
-                        📦 {boxUsed ? `${boxUsed} ✏` : boxSuggested ? boxSuggested : 'N.A'}
-                      </button>
-                    ))}
+                    )}
                   </div>
                   {displayOrder.seller && (
                     <p className="text-sm font-semibold mb-0.5" style={{ color: 'rgb(var(--brand))' }}>{displayOrder.seller}</p>

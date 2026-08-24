@@ -13,6 +13,7 @@ import {
   Ban, RotateCcw,
 } from 'lucide-react';
 import { scanningApi, cadastrosApi } from '../api';
+import type { EntryConference } from '../api';
 import toast from 'react-hot-toast';
 import ThemeToggle from '../components/ThemeToggle';
 
@@ -46,6 +47,8 @@ interface SessionOrder {
   items: SessionOrderItem[];
   /** 'entrada' | 'saida' — só a entrada aceita bipagem por quantidade */
   file_type: string;
+  /** Conferência de entrada pausada — continua EM ABERTO, só sinaliza a parada. */
+  is_paused?: boolean;
 }
 
 interface ScanLog {
@@ -217,6 +220,11 @@ export default function ScannerPage() {
   const [interruptReason, setInterruptReason] = useState('');
   const [showExitDialog, setShowExitDialog] = useState(false); // 1b: confirmar saída
   const [exitReason, setExitReason] = useState('');
+  // ── Finalizar conferência de ENTRADA (24/08/2026) ─────────
+  // `entryConference` guarda o preview vindo do backend; enquanto ele existe, o
+  // modal de conferência está aberto. Nada foi gravado ainda nesse ponto.
+  const [entryConference, setEntryConference] = useState<EntryConference | null>(null);
+  const [finalizingEntry, setFinalizingEntry] = useState(false);
   // Lock por seller: outro operador já bipando NF do mesmo seller — confirmação
   // ── Caixa sugerida ────────────────────────────────────────
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
@@ -656,6 +664,16 @@ export default function ScannerPage() {
             title: '📦 Falta a caixa',
             message: `Todos os itens bipados — cadastre a caixa pra concluir a NF ${activeOrder.nf_number}.`,
           });
+        } else if (isEntradaOrder && (data.items_remaining ?? 1) === 0) {
+          // Entrada não conclui sozinha de propósito (pode chegar mais peça na
+          // caixa seguinte). Aqui a contagem já cobre a NF inteira, então o
+          // operador precisa saber que o Finalizar está pronto pra ser usado.
+          setFeedback({
+            state: over > 0 ? 'warning' : 'success',
+            title: over > 0 ? '⚠️ Contado acima da NF' : '✓ Contagem completa',
+            message: `${data.product_name ?? data.sku} — tudo da NF foi contado. Continue se ainda tiver caixa, ou clique em Finalizar.`,
+            photoUrl: data.photo_url ?? undefined,
+          });
         } else {
           setFeedback({
             state: over > 0 ? 'warning' : 'success',
@@ -752,40 +770,99 @@ export default function ScannerPage() {
     }
   };
 
-  // ── Interrupt ────────────────────────────────────────────
+  // ── Interromper (saída) / Pausar (entrada) ───────────────
+  //
+  // São coisas diferentes de propósito: interromper é carimbo DEFINITIVO (a NF
+  // não reabre e conta como feita), enquanto pausar deixa tudo em aberto para
+  // continuar depois — uma conferência de entrada pode levar dias. O backend
+  // recusa interrupt em NF de entrada, então a escolha aqui não é cosmética.
 
   const handleInterrupt = async () => {
     if (!activeOrder) return;
     try {
-      await scanningApi.interrupt({
-        session_id: Number(sessionId),
-        order_id: activeOrder.id,
-        operator_id: user.id,
-        reason: interruptReason || 'Sem motivo informado',
-      });
-      toast.success('Pedido interrompido');
+      if (isEntradaOrder) {
+        await scanningApi.pauseEntry(activeOrder.id, interruptReason || undefined);
+        toast.success('Conferência pausada — a NF continua em aberto');
+      } else {
+        await scanningApi.interrupt({
+          session_id: Number(sessionId),
+          order_id: activeOrder.id,
+          operator_id: user.id,
+          reason: interruptReason || 'Sem motivo informado',
+        });
+        toast.success('Pedido interrompido');
+      }
       setActiveOrderId(null);
       setShowInterruptDialog(false);
       setInterruptReason('');
       setFeedback({ state: 'idle', title: '', message: '' });
       setLastScannedSku(undefined);
       qc.invalidateQueries(['session-orders', sessionId, sellerId]);
-    } catch { toast.error('Erro ao interromper'); }
+    } catch {
+      toast.error(isEntradaOrder ? 'Erro ao pausar' : 'Erro ao interromper');
+    }
   };
 
-  // ── Confirmar saída (com interrupção automática se NF aberta) ──
+  // ── Finalizar conferência de ENTRADA ─────────────────────
+  //
+  // Passo 1: pede o comparativo ao backend (nada é gravado) e abre o modal.
+  // Passo 2 (handleConfirmEntryFinalize): confirma, e só então o estoque entra
+  // pela quantidade CONTADA. Fechar o modal sem confirmar volta a bipar de onde
+  // parou, sem perder nada.
+  const handleOpenEntryConference = async () => {
+    if (!activeOrder) return;
+    setFinalizingEntry(true);
+    try {
+      // .data: o cliente devolve a resposta do axios, não o corpo (mesmo
+      // padrão de res.data.order_completed em handleBoxSave).
+      const res = await scanningApi.finalizeEntry(activeOrder.id, false);
+      setEntryConference(res.data);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao montar a conferência');
+    } finally {
+      setFinalizingEntry(false);
+    }
+  };
+
+  const handleConfirmEntryFinalize = async () => {
+    if (!activeOrder) return;
+    setFinalizingEntry(true);
+    try {
+      const res = await scanningApi.finalizeEntry(activeOrder.id, true);
+      toast.success(res.data?.message || 'Conferência finalizada');
+      setEntryConference(null);
+      setActiveOrderId(null);
+      setFeedback({ state: 'idle', title: '', message: '' });
+      setLastScannedSku(undefined);
+      qc.invalidateQueries(['session-orders', sessionId, sellerId]);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao finalizar a conferência');
+    } finally {
+      setFinalizingEntry(false);
+    }
+  };
+
+  // ── Confirmar saída (pausa/interrompe automaticamente se NF aberta) ──
   const handleConfirmExit = async () => {
     if (activeOrder && scanPhase === 'product') {
       try {
-        await scanningApi.interrupt({
-          session_id: Number(sessionId),
-          order_id: activeOrder.id,
-          operator_id: user.id,
-          reason: exitReason.trim() || 'Saída da bipagem pelo operador',
-        });
-        toast('Pedido interrompido. Saindo...', { icon: '⚠️' });
+        if (isEntradaOrder) {
+          await scanningApi.pauseEntry(
+            activeOrder.id,
+            exitReason.trim() || 'Saída da bipagem pelo operador',
+          );
+          toast('Conferência pausada. Saindo...', { icon: '⏸' });
+        } else {
+          await scanningApi.interrupt({
+            session_id: Number(sessionId),
+            order_id: activeOrder.id,
+            operator_id: user.id,
+            reason: exitReason.trim() || 'Saída da bipagem pelo operador',
+          });
+          toast('Pedido interrompido. Saindo...', { icon: '⚠️' });
+        }
       } catch {
-        toast.error('Erro ao interromper o pedido');
+        toast.error(isEntradaOrder ? 'Erro ao pausar a conferência' : 'Erro ao interromper o pedido');
       }
     }
     // Limpa sessionStorage e navega para fora
@@ -999,8 +1076,14 @@ export default function ScannerPage() {
                   <p className="text-[9px] font-medium pl-4 truncate" style={{ color: 'rgb(var(--brand))' }}>{order.seller}</p>
                 )}
                 <p className="text-xs text-t2 truncate pl-4">{order.customer_name}</p>
-                {!order.carrier && order.status !== 'completed' && (
+                {/* Só na SAÍDA: na entrada a transportadora deixou de bloquear
+                    (24/08/2026), então o aviso apontaria um impedimento que não
+                    existe — e o operador iria atrás de resolver algo à toa. */}
+                {!order.carrier && order.status !== 'completed' && order.file_type !== 'entrada' && (
                   <p className="text-[9px] font-semibold text-warn pl-4 mt-0.5">🚚 sem transportadora</p>
+                )}
+                {order.is_paused && (
+                  <p className="text-[9px] font-semibold text-info pl-4 mt-0.5">⏸ conferência pausada</p>
                 )}
                 <div className="w-full bg-surface-2 rounded-full h-0.5 mt-1.5 ml-4">
                   <div className={`h-0.5 rounded-full ${order.status === 'completed' ? 'bg-green-400' : 'bg-blue-400'}`}
@@ -1135,10 +1218,26 @@ export default function ScannerPage() {
                       <X size={12} /> Fechar consulta
                     </button>
                   ) : (
-                    <button onClick={() => setShowInterruptDialog(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
-                      <Pause size={12} /> Interromper
-                    </button>
+                    <>
+                      {/* Finalizar só existe na ENTRADA: é ele que dispara a
+                          conferência e faz o estoque entrar pela contagem.
+                          Fica sempre habilitado — a carga pode ter vindo
+                          faltando muito e o operador precisa poder encerrar. */}
+                      {isEntradaOrder && scanPhase === 'product' && (
+                        <button
+                          onClick={handleOpenEntryConference}
+                          disabled={finalizingEntry}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-ok border border-ok/40 hover:border-ok bg-ok-soft rounded-lg transition disabled:opacity-50"
+                          title="Conferir o que foi contado e lançar no estoque"
+                        >
+                          <CheckCircle size={12} /> {finalizingEntry ? 'Conferindo...' : 'Finalizar'}
+                        </button>
+                      )}
+                      <button onClick={() => setShowInterruptDialog(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
+                        <Pause size={12} /> {isEntradaOrder ? 'Pausar' : 'Interromper'}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1370,15 +1469,23 @@ export default function ScannerPage() {
                 <Pause size={20} className="text-warn" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-t1">Interromper Pedido</h3>
+                <h3 className="text-base font-bold text-t1">
+                  {isEntradaOrder ? 'Pausar Conferência' : 'Interromper Pedido'}
+                </h3>
                 <p className="text-xs text-t4">NF {activeOrder.nf_number} · {activeOrder.customer_name}</p>
               </div>
             </div>
-            <p className="text-sm text-t3 mb-3">O pedido ficará como "interrompido". Informe o motivo:</p>
+            <p className="text-sm text-t3 mb-3">
+              {isEntradaOrder
+                ? 'A contagem fica salva e a NF continua EM ABERTO — é só bipar a chave dela de novo para continuar de onde parou. O estoque só entra quando você Finalizar. Informe o motivo (opcional):'
+                : 'O pedido ficará como "interrompido". Informe o motivo:'}
+            </p>
             <textarea
               value={interruptReason}
               onChange={e => setInterruptReason(e.target.value)}
-              placeholder="Ex: produto danificado, falta de estoque, cliente solicitou..."
+              placeholder={isEntradaOrder
+                ? 'Ex: continua amanhã, faltou espaço na bancada...'
+                : 'Ex: produto danificado, falta de estoque, cliente solicitou...'}
               rows={3}
               className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-orange-500 resize-none"
             />
@@ -1393,7 +1500,99 @@ export default function ScannerPage() {
                 onClick={handleInterrupt}
                 className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition"
               >
-                Interromper
+                {isEntradaOrder ? 'Pausar' : 'Interromper'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Conferência final da ENTRADA (24/08/2026) ─────────
+          Passo 1 de 2: nada foi gravado ainda. Fechar aqui devolve o operador
+          à bipagem exatamente de onde parou. Só o botão de confirmar lança o
+          estoque — pela quantidade CONTADA, não pela da NF. */}
+      {entryConference && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+            <div className="p-6 pb-4 border-b border-line">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-ok-soft rounded-full flex items-center justify-center flex-shrink-0">
+                  <ClipboardList size={20} className="text-ok" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-t1">Conferência de Entrada</h3>
+                  <p className="text-xs text-t4">
+                    NF {entryConference.nf_number} · {entryConference.total_counted} contados de {entryConference.total_expected} previstos
+                  </p>
+                </div>
+              </div>
+              {entryConference.divergent_count > 0 ? (
+                <p className="mt-3 text-sm text-warn bg-orange-500/10 border border-warn/25 rounded-xl px-3 py-2">
+                  ⚠️ {entryConference.divergent_count} SKU com quantidade diferente da NF.
+                  Ao confirmar, o estoque entra pelo que foi <strong>contado</strong> e cada
+                  divergência fica registrada com observação no relatório de Estoque.
+                </p>
+              ) : (
+                <p className="mt-3 text-sm text-ok bg-ok-soft border border-ok/25 rounded-xl px-3 py-2">
+                  ✅ Tudo bateu com a NF. Ao confirmar, o estoque entra e a NF é concluída.
+                </p>
+              )}
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-3">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-surface">
+                  <tr className="text-t4 text-xs border-b border-line">
+                    <th className="text-left font-medium py-2">SKU / Produto</th>
+                    <th className="text-right font-medium py-2 w-24">NF</th>
+                    <th className="text-right font-medium py-2 w-24">Contado</th>
+                    <th className="text-right font-medium py-2 w-28">Diferença</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(entryConference.lines ?? []).map(ln => {
+                    const ok = ln.status === 'ok';
+                    return (
+                      <tr
+                        key={ln.sku}
+                        className={`border-b border-line/50 ${ok ? '' : 'bg-orange-500/10'}`}
+                      >
+                        <td className="py-2 pr-2">
+                          <div className={`font-mono text-xs ${ok ? 'text-t2' : 'text-warn font-semibold'}`}>{ln.sku}</div>
+                          <div className="text-xs text-t4 truncate max-w-md">{ln.product_name}</div>
+                        </td>
+                        <td className="text-right py-2 text-t3">{ln.expected}</td>
+                        <td className={`text-right py-2 font-semibold ${ok ? 'text-t2' : 'text-warn'}`}>{ln.counted}</td>
+                        <td className="text-right py-2">
+                          {ok ? (
+                            <span className="text-ok text-xs">OK</span>
+                          ) : (
+                            <span className="text-warn font-semibold">
+                              {ln.diff > 0 ? `+${ln.diff}` : ln.diff}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-6 pt-4 border-t border-line flex gap-2">
+              <button
+                onClick={() => { setEntryConference(null); setTimeout(() => inputRef.current?.focus(), 50); }}
+                disabled={finalizingEntry}
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition disabled:opacity-50"
+              >
+                Voltar e continuar contando
+              </button>
+              <button
+                onClick={handleConfirmEntryFinalize}
+                disabled={finalizingEntry}
+                className="flex-1 py-2.5 text-sm font-semibold text-ok border border-ok/40 bg-ok-soft rounded-xl hover:bg-green-500/15 transition disabled:opacity-50"
+              >
+                {finalizingEntry ? 'Lançando...' : 'Confirmar e lançar no estoque'}
               </button>
             </div>
           </div>
@@ -1460,7 +1659,11 @@ export default function ScannerPage() {
               </div>
             </div>
             <p className="text-sm text-t3 mb-3">
-              Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-warn font-semibold">interrompido</span>. Informe o motivo:
+              {isEntradaOrder ? (
+                <>Há uma conferência em andamento. Ao sair, ela será <span className="text-warn font-semibold">pausada</span> — a contagem fica salva e a NF continua em aberto. Informe o motivo:</>
+              ) : (
+                <>Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-warn font-semibold">interrompido</span>. Informe o motivo:</>
+              )}
             </p>
             <textarea
               value={exitReason}
@@ -1481,7 +1684,7 @@ export default function ScannerPage() {
                 onClick={handleConfirmExit}
                 className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition"
               >
-                Interromper e Sair
+                {isEntradaOrder ? 'Pausar e Sair' : 'Interromper e Sair'}
               </button>
             </div>
           </div>

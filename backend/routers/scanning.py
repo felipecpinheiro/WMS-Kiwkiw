@@ -21,11 +21,12 @@ from ..timezone_utils import now_brasilia, today_brasilia, end_of_day
 from ..services.stock_manager import (
     update_stock_position,
     apply_stock_for_order,
+    apply_stock_for_entry,
     reverse_stock_for_order,
     order_has_stock_applied,
     orders_missing_product_skus,
-    apply_scan_overage,
     orders_with_scan_overage,
+    is_entrada_order,
 )
 from .. import models, schemas
 
@@ -40,18 +41,27 @@ AUDIT_DIR = os.path.join(BASE_DIR, "data", "audit")
 MAX_SCAN_QUANTITY = 9999
 
 
+# Marcadores gravados como ScanningLog para carimbar eventos que não são bipagem.
+# Ambos usam quantity=0 e is_error=False, então não contaminam contagem nenhuma.
+PAUSE_SKU = "PAUSE"
+RESUME_SKU = "RESUME"
+
+# ⚠️ Marcadores NUNCA são bipagem: precisam ficar fora de toda contagem. Eles
+# passariam nos filtros de "bipagem real" (is_error=False, is_interrupted=False),
+# então a exclusão é explícita em _active_scan_filters e na produtividade —
+# senão pausar uma NF inflaria o número de bipes do operador.
+MARKER_SKUS = (PAUSE_SKU, RESUME_SKU)
+
+
 def _is_entrada(order) -> bool:
     """
-    Esta NF é de ENTRADA? Decide pelo file_type do PEDIDO (não o da sessão):
-    os dois normalmente andam juntos, mas divergem na NF órfã que o
-    PATCH /sessions/{id}/config deixa de fora da troca de tipo.
+    Esta NF é de ENTRADA? Delega para a fonte de verdade em stock_manager, que é
+    quem decide a regra de estoque a partir do mesmo teste.
 
-    Só a Entrada aceita bipagem por quantidade e admite receber mais do que a NF
-    previa. Ver o cabeçalho de services/stock_manager.py.
+    Só a Entrada aceita bipagem por quantidade, admite receber quantidade
+    diferente da NF e tem o botão Finalizar (24/08/2026).
     """
-    raw = getattr(order, "file_type", None)
-    raw = raw.value if hasattr(raw, "value") else raw
-    return str(raw or "").strip().lower() in ("entrada", "import", "in")
+    return is_entrada_order(order)
 
 
 @router.get("/sessions", response_model=List[schemas.PickingSessionResponse])
@@ -207,6 +217,7 @@ def get_session_orders(
             models.ScanningLog.order_id.in_(order_ids),
             models.ScanningLog.is_interrupted == False,
             models.ScanningLog.is_error == False,
+            models.ScanningLog.sku.notin_(MARKER_SKUS),
             or_(
                 models.Order.reactivated_at.is_(None),
                 models.ScanningLog.timestamp > models.Order.reactivated_at,
@@ -224,12 +235,16 @@ def get_session_orders(
             models.ScanningLog.order_id.in_(order_ids),
             models.ScanningLog.is_error == False,
             models.ScanningLog.is_interrupted == False,
+            models.ScanningLog.sku.notin_(MARKER_SKUS),
             or_(
                 models.Order.reactivated_at.is_(None),
                 models.ScanningLog.timestamp > models.Order.reactivated_at,
             ),
         ).group_by(models.ScanningLog.order_id, models.ScanningLog.sku).all()
         item_scan_counts = {(order_id, sku): total or 0 for order_id, sku, total in item_totals}
+
+    # Quais NFs estão pausadas — em lote, nunca 1 consulta por pedido.
+    paused_ids = _paused_order_ids(db, order_ids)
 
     result = []
     for order in orders:
@@ -251,6 +266,9 @@ def get_session_orders(
             # sessão: divergem na NF órfã deixada de fora pelo config de sessão.
             # Formato igual ao de /session-cards ("entrada"/"saida").
             "file_type": "entrada" if _is_entrada(order) else "saida",
+            # Conferência de entrada pausada — continua EM ABERTO, só sinaliza
+            # que alguém parou no meio (contagem que leva dias). Ver /pause.
+            "is_paused": order.id in paused_ids,
             "total_items": total_items,
             "scanned_items": scanned,
             "remaining": max(0, total_items - scanned),
@@ -333,9 +351,16 @@ def open_order_by_nfe(
         admin_name = _get_deactivation_admin_name(order.id, db)
         return {"success": False, "blocked_reason": "inactive", "message": f"Esta NF foi inativada por {admin_name}."}
 
+    is_entrada = _is_entrada(order)
+
     # Pedido sem transportadora não pode ser bipado — ver CLAUDE.md.
     # Preencher em Dashboard → aviso fixo no topo (ou na hora do import).
-    if not order.carrier:
+    #
+    # ⚠️ NÃO se aplica à ENTRADA (24/08/2026): como o produto está chegando, não
+    # interessa por qual transportadora ele veio — interessa que chegou. A
+    # transportadora também deixou de destravar estoque de entrada, que agora
+    # entra pela contagem na finalização.
+    if not order.carrier and not is_entrada:
         return {"success": False, "message": f"Pedido NF {order.nf_number} está sem transportadora. Preencha a transportadora no Dashboard antes de biper."}
 
     # NF com SKU sem produto cadastrado é impossível de bipar (sem produto não
@@ -374,13 +399,34 @@ def open_order_by_nfe(
                 "Confirme antes de continuar para não bipar a mesma caixa duas vezes."
             )
 
+    # NF de entrada pausada volta a ficar ativa ao ser reaberta: grava o
+    # marcador de retomada para o card parar de mostrar "pausada". O status
+    # nunca mudou (continua SCANNING), então não há nada a restaurar além disso.
+    was_paused = False
+    if is_entrada and _is_paused(order, db):
+        was_paused = True
+        db.add(models.ScanningLog(
+            session_id=session_id,
+            order_id=order.id,
+            sku=RESUME_SKU,
+            barcode_scanned=RESUME_SKU,
+            quantity=0,
+            operator_id=current_user.id,
+            is_error=False,
+            error_message="Conferência retomada",
+        ))
+        db.commit()
+
     return {
         "success": True,
         "order_id": order.id,
         "nf_number": order.nf_number,
         "customer_name": order.customer_name,
         "status": order_status,
-        "message": f"Pedido NF {order.nf_number} aberto com sucesso",
+        "message": (
+            f"Conferência da NF {order.nf_number} retomada de onde parou"
+            if was_paused else f"Pedido NF {order.nf_number} aberto com sucesso"
+        ),
         "warning": duplicate_warning,
     }
 
@@ -692,9 +738,15 @@ def process_scan(
             items_remaining=0,
         )
 
+    is_entrada = _is_entrada(order)
+
     # Pedido sem transportadora não pode ser bipado — mesma trava de
     # open_order_by_nfe, aqui como segunda camada de defesa. Ver CLAUDE.md.
-    if not order.carrier:
+    #
+    # ⚠️ NÃO se aplica à ENTRADA (24/08/2026): na entrada o que importa é que a
+    # mercadoria chegou, não por qual transportadora — e a transportadora deixou
+    # de ter qualquer efeito no estoque dela, que agora entra pela contagem.
+    if not order.carrier and not is_entrada:
         return schemas.ScanResponse(
             success=False,
             message=f"Pedido {order.nf_number} está sem transportadora. Preencha antes de continuar a bipagem.",
@@ -706,7 +758,6 @@ def process_scan(
     # Numa entrada, uma caixa pode ter 1.000 peças iguais e bipar unidade a
     # unidade é inviável. Na saída cada peça bipada é uma conferência real de
     # separação, então lá continua 1 por bipe.
-    is_entrada = _is_entrada(order)
     qty = request.quantity
 
     if qty < 1 or qty > MAX_SCAN_QUANTITY:
@@ -800,8 +851,8 @@ def process_scan(
 
     # Excedente DESTE bipe — só a parte que passa do que a NF previa.
     # A conta é incremental de propósito: o operador pode chegar ao excedente em
-    # etapas (bipa 1000, depois mais 200), e usar o total a cada bipe lançaria o
-    # mesmo excedente várias vezes no estoque.
+    # etapas (bipa 1000, depois mais 200), e usar o total a cada bipe contaria o
+    # mesmo excedente várias vezes.
     over_qty = (
         max(0, already_scanned + qty - expected_sku_total)
         - max(0, already_scanned - expected_sku_total)
@@ -819,39 +870,19 @@ def process_scan(
     )
 
     if over_qty > 0:
-        # Excedente vai para o estoque como movimento próprio — única exceção à
-        # regra de que a bipagem não sensibiliza estoque (ver o cabeçalho de
-        # services/stock_manager.py antes de mexer).
+        # ⚠️ 24/08/2026: o excedente NÃO vai mais para o estoque na hora.
+        # A quantidade contada inteira (inclusive a sobra) entra de uma vez na
+        # FINALIZAÇÃO (POST /orders/{id}/finalize-entry). Lançar aqui e de novo
+        # lá duplicaria a sobra. apply_scan_overage() continua existindo em
+        # stock_manager só para os movimentos já gravados serem reconhecidos.
         #
-        # Guarda: se a NF ainda não baixou, não existe base para complementar e
-        # o movimento ficaria solto. Na prática não ocorre (sem transportadora o
-        # scan já parou lá em cima, e NF com SKU sem produto não entra no
-        # manuseio), mas custa uma consulta indexada e evita estoque fantasma.
-        if order_has_stock_applied(order, db):
-            apply_scan_overage(
-                order=order,
-                sku=matched_item.sku,
-                product_name=matched_item.product_name,
-                quantity=over_qty,
-                db=db,
-                operator_id=request.operator_id,
-                expected_qty=expected_sku_total,
-                operator_name=current_user.name if current_user else None,
-            )
-            over_note = (
-                f"EXCEDENTE — bipado {over_qty} além do previsto na NF "
-                f"({expected_sku_total}). Lançado no estoque."
-            )
-        else:
-            over_note = (
-                f"EXCEDENTE — bipado {over_qty} além do previsto na NF "
-                f"({expected_sku_total}). NF ainda sem baixa de estoque: NÃO lançado, "
-                f"exige conferência manual."
-            )
         # is_error continua False: não é erro do operador, é uma ocorrência.
         # O GET /scanning/audit-log devolve error_message sem filtrar is_error,
         # então isto aparece na Trilha de Auditoria e no CSV de bipagem.
-        log.error_message = over_note
+        log.error_message = (
+            f"EXCEDENTE — bipado {over_qty} além do previsto na NF "
+            f"({expected_sku_total}). Entra no estoque na finalização."
+        )
 
     db.add(log)
 
@@ -869,6 +900,29 @@ def process_scan(
         f" ⚠️ {over_qty} A MAIS do que a NF previa ({expected_sku_total}) — comunique a empresa."
         if over_qty > 0 else ""
     )
+
+    # ── ENTRADA NUNCA CONCLUI SOZINHA (24/08/2026) ──────────────────────────
+    # Bater a quantidade da NF não significa que a conferência acabou: a caixa
+    # seguinte pode trazer mais peças do mesmo SKU. Se a NF fechasse aqui, o
+    # operador perderia o direito de continuar bipando (pedido completed recusa
+    # scan) e a sobra ficaria fora do estoque. Só o botão Finalizar conclui —
+    # é ele que dispara a conferência e a entrada no estoque.
+    if is_entrada:
+        db.commit()
+        new_scanned = already_scanned + qty
+        scan_response = schemas.ScanResponse(
+            success=True,
+            message=f"✔ {matched_item.product_name} [{matched_item.sku}] — {new_scanned}/{expected_qty} contado(s){over_suffix}",
+            status="ok",
+            sku=matched_item.sku,
+            product_name=matched_item.product_name,
+            photo_url=matched_item.product.photo_url if matched_item.product else None,
+            items_remaining=remaining,
+            order_progress=_build_progress(order, db),
+            over_quantity=over_qty,
+        )
+        _save_audit_csv(log, order, current_user)
+        return scan_response
 
     if remaining == 0:
         # Caixa obrigatória na SAÍDA (17/08/2026): sem ela, o pedido fica
@@ -952,6 +1006,20 @@ def interrupt_order(
     if not order:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
+    # ⚠️ ENTRADA NÃO INTERROMPE (24/08/2026) — trava de servidor, não cosmética.
+    # INTERRUPTED é carimbo definitivo: a NF não reabre e conta como FEITA no
+    # kanban. Numa entrada isso deixaria a mercadoria fora do estoque para
+    # sempre, sem ninguém perceber, já que o estoque dela só entra no Finalizar.
+    # Quem quer sair no meio da contagem usa Pausar; quem acabou, Finalizar.
+    if _is_entrada(order):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "NF de entrada não pode ser interrompida. Use Pausar para "
+                "continuar depois, ou Finalizar para encerrar a conferência."
+            ),
+        )
+
     # Registra interrupção no log de bipagem
     log = models.ScanningLog(
         session_id=request.session_id,
@@ -1008,6 +1076,238 @@ def interrupt_order(
         "success": True,
         "message": f"Pedido {order.nf_number} interrompido e registrado.",
         "stock_updated": stock_updated,
+    }
+
+
+def _build_entry_conference(order: models.Order, db: Session) -> dict:
+    """
+    Conferência final de uma NF de ENTRADA: esperado (NF) x contado (bipagem),
+    SKU a SKU. É o que a tela mostra antes de o operador confirmar.
+
+    Consolida SKU repetido em dois OrderItem (componente de kit + linha avulsa),
+    porque o que entra no estoque é por SKU, não por linha da NF.
+    """
+    expected = _expected_by_sku(order)
+    counted = _scanned_by_sku(order, db)
+    names = {it.sku: it.product_name for it in order.items}
+
+    lines = []
+    for sku in sorted(set(expected) | set(counted)):
+        exp = int(expected.get(sku, 0) or 0)
+        cnt = int(counted.get(sku, 0) or 0)
+        if exp == 0 and cnt == 0:
+            continue
+        if cnt == exp:
+            status = "ok"
+        elif cnt == 0:
+            status = "missing"
+        elif cnt > exp:
+            status = "over"
+        else:
+            status = "short"
+        lines.append({
+            "sku": sku,
+            "product_name": names.get(sku) or sku,
+            "expected": exp,
+            "counted": cnt,
+            "diff": cnt - exp,
+            "status": status,
+        })
+
+    divergent = [ln for ln in lines if ln["status"] != "ok"]
+    return {
+        "lines": lines,
+        "divergent_count": len(divergent),
+        "total_expected": sum(ln["expected"] for ln in lines),
+        "total_counted": sum(ln["counted"] for ln in lines),
+    }
+
+
+@router.post("/orders/{order_id}/finalize-entry")
+def finalize_entry_order(
+    order_id: int,
+    body: dict,
+    current_user: models.User = Depends(require_internal),
+    db: Session = Depends(get_db),
+):
+    """
+    FINALIZA a conferência de uma NF de ENTRADA (24/08/2026).
+
+    É aqui — e só aqui — que o estoque de entrada entra, pela quantidade que o
+    operador CONTOU, não pela que a NF diz. Ver o cabeçalho de
+    services/stock_manager.py.
+
+    Fluxo em 2 passos, o mesmo padrão de cancel-duplicate-orders:
+      body {}                  -> devolve a conferência, não muda NADA no banco
+      body {"confirm": true}   -> lança o estoque e conclui a NF
+
+    Qualquer operador pode finalizar (decisão do dono do sistema, 24/08/2026).
+    """
+    order = db.query(models.Order).options(
+        joinedload(models.Order.items).joinedload(models.OrderItem.product),
+        joinedload(models.Order.seller),
+    ).filter(models.Order.id == order_id).first()
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    if not _is_entrada(order):
+        raise HTTPException(
+            status_code=400,
+            detail="Finalizar conferência só existe em NF de entrada.",
+        )
+
+    order_status = order.status.value if hasattr(order.status, "value") else order.status
+    if order_status in ("completed", "cancelled", "inactive"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"NF {order.nf_number} já está {order_status} — não pode ser finalizada.",
+        )
+
+    conference = _build_entry_conference(order, db)
+
+    if not body.get("confirm"):
+        # Preview: nada é gravado. O operador ainda pode voltar e continuar
+        # contando de onde parou.
+        return {
+            "success": True,
+            "confirmed": False,
+            "order_id": order.id,
+            "nf_number": order.nf_number,
+            **conference,
+        }
+
+    # ── Confirmado: estoque entra pela contagem ─────────────────────────────
+    expected = _expected_by_sku(order)
+    counted = _scanned_by_sku(order, db)
+
+    result = apply_stock_for_entry(
+        order=order,
+        db=db,
+        counted=counted,
+        expected=expected,
+        operator_id=current_user.id,
+        operator_name=current_user.name if current_user else None,
+    )
+
+    _finalize_order(order, order.session_id, db)
+
+    # Auditoria: uma linha com o resumo da conferência. As observações por SKU
+    # divergente ficam no próprio movimento de estoque, que é onde o time olha.
+    if result["divergences"]:
+        resumo = "; ".join(
+            f"{d['sku']}: contado {d['counted']} x NF {d['expected']}"
+            for d in result["divergences"][:20]
+        )
+        if len(result["divergences"]) > 20:
+            resumo += f" (+{len(result['divergences']) - 20} SKU)"
+    else:
+        resumo = "sem divergência"
+
+    db.add(models.AuditLog(
+        entity_type="Order",
+        entity_id=order.id,
+        action="FINALIZE_ENTRY",
+        detail=(
+            f"Conferência de entrada da NF {order.nf_number} finalizada por "
+            f"{current_user.name}. Estoque "
+            f"{'lançado pela contagem' if result['applied'] else 'NÃO lançado (' + str(result['skipped']) + ')'}. "
+            f"Divergências: {resumo}."
+        ),
+        user_id=current_user.id,
+    ))
+
+    db.commit()
+
+    if result["applied"]:
+        msg = f"✅ NF {order.nf_number} finalizada. Estoque atualizado pela contagem."
+    elif result["skipped"] == "already_applied":
+        # NF importada ANTES de 24/08/2026: o estoque dela já entrou no import
+        # pela quantidade da NF. Concluir sem lançar de novo é o correto.
+        msg = (
+            f"✅ NF {order.nf_number} finalizada. O estoque desta NF já havia "
+            f"entrado na importação (regra anterior) — nada foi lançado de novo."
+        )
+    else:
+        msg = f"✅ NF {order.nf_number} finalizada. Estoque não alterado ({result['skipped']})."
+
+    return {
+        "success": True,
+        "confirmed": True,
+        "order_id": order.id,
+        "nf_number": order.nf_number,
+        "message": msg,
+        "stock_applied": result["applied"],
+        "stock_skipped_reason": result["skipped"],
+        "divergences": result["divergences"],
+        **conference,
+    }
+
+
+@router.post("/orders/{order_id}/pause")
+def pause_entry_order(
+    order_id: int,
+    body: dict,
+    current_user: models.User = Depends(require_internal),
+    db: Session = Depends(get_db),
+):
+    """
+    PAUSA a conferência de uma NF de ENTRADA (24/08/2026).
+
+    Diferente de INTERROMPER, que é carimbo definitivo (a NF não reabre e conta
+    como feita): pausar deixa tudo como está — status SCANNING, bipes salvos —
+    e a NF continua CONTANDO COMO EM ABERTO no kanban. Existe porque marca com
+    muitos SKUs leva DIAS para ser conferida.
+
+    Não é status: grava um marcador PAUSE como ScanningLog (quantity=0,
+    is_error=False, não entra em contagem nenhuma). Reabrir pela chave da NF
+    grava o RESUME correspondente. Escolhido assim para não alterar o enum
+    OrderStatus no Postgres de produção.
+    """
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    if not _is_entrada(order):
+        raise HTTPException(
+            status_code=400,
+            detail="Pausar só existe em NF de entrada. Na saída, use Interromper.",
+        )
+
+    order_status = order.status.value if hasattr(order.status, "value") else order.status
+    if order_status in ("completed", "cancelled", "inactive"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"NF {order.nf_number} está {order_status} — não há conferência para pausar.",
+        )
+
+    db.add(models.ScanningLog(
+        session_id=order.session_id,
+        order_id=order.id,
+        sku=PAUSE_SKU,
+        barcode_scanned=PAUSE_SKU,
+        quantity=0,
+        operator_id=current_user.id,
+        is_error=False,
+        error_message=(body.get("reason") or "Conferência pausada pelo operador"),
+    ))
+
+    db.add(models.AuditLog(
+        entity_type="Order",
+        entity_id=order.id,
+        action="PAUSE_ENTRY",
+        detail=(
+            f"Conferência de entrada da NF {order.nf_number} pausada por "
+            f"{current_user.name}. Motivo: {body.get('reason') or 'não informado'}."
+        ),
+        user_id=current_user.id,
+    ))
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Conferência da NF {order.nf_number} pausada. Ela continua em aberto para retomar depois.",
+        "order_id": order.id,
     }
 
 
@@ -2075,6 +2375,8 @@ def operator_productivity(
     ).filter(
         models.ScanningLog.is_error == False,
         models.ScanningLog.is_interrupted == False,
+        # Pausar/retomar não é bipagem — ver MARKER_SKUS.
+        models.ScanningLog.sku.notin_(MARKER_SKUS),
     ).group_by(models.User.id, models.User.name)
 
     # Manager enxerga só os operadores da própria unidade; admin vê todas.
@@ -2171,6 +2473,8 @@ def _active_scan_filters(order: models.Order) -> list:
         models.ScanningLog.order_id == order.id,
         models.ScanningLog.is_error == False,
         models.ScanningLog.is_interrupted == False,
+        # Marcadores de pausa/retomada não são bipagem — ver MARKER_SKUS.
+        models.ScanningLog.sku.notin_(MARKER_SKUS),
     ]
     if order.reactivated_at:
         filters.append(models.ScanningLog.timestamp > order.reactivated_at)
@@ -2190,6 +2494,42 @@ def _get_deactivation_admin_name(order_id: int, db: Session) -> str:
         if user:
             return user.name
     return "um administrador"
+
+
+def _paused_order_ids(db: Session, order_ids: List[int]) -> set:
+    """
+    Quais destes pedidos estão PAUSADOS agora — em 2 consultas, nunca 1 por
+    pedido (ver CLAUDE.md sobre N+1 nas telas de manuseio).
+
+    Pausa não é status: é o último marcador PAUSE/RESUME gravado como
+    ScanningLog. Foi a forma escolhida em 24/08/2026 para não precisar alterar
+    o enum OrderStatus no Postgres de produção. Se o último marcador é PAUSE,
+    está pausado; se é RESUME (ou não há marcador), não está.
+    """
+    if not order_ids:
+        return set()
+
+    # id do último marcador de cada pedido
+    last_ids = [
+        row[0] for row in db.query(func.max(models.ScanningLog.id)).filter(
+            models.ScanningLog.order_id.in_(order_ids),
+            models.ScanningLog.sku.in_([PAUSE_SKU, RESUME_SKU]),
+        ).group_by(models.ScanningLog.order_id).all()
+    ]
+    if not last_ids:
+        return set()
+
+    return {
+        row[0] for row in db.query(models.ScanningLog.order_id).filter(
+            models.ScanningLog.id.in_(last_ids),
+            models.ScanningLog.sku == PAUSE_SKU,
+        ).all()
+    }
+
+
+def _is_paused(order: models.Order, db: Session) -> bool:
+    """Versão de UM pedido — usar _paused_order_ids em lista/card."""
+    return order.id in _paused_order_ids(db, [order.id])
 
 
 def _expected_by_sku(order: models.Order) -> dict:
@@ -2367,9 +2707,13 @@ def session_cards(
 
     # NFs seguradas por falta de produto cadastrado — ficam fora do manuseio.
     # UMA consulta para todas as sessões da tela (não uma por card/pedido).
-    held_ids = set(orders_missing_product_skus(
-        db, [o.id for s in sessions for o in s.orders]
-    ).keys())
+    all_order_ids = [o.id for s in sessions for o in s.orders]
+    held_ids = set(orders_missing_product_skus(db, all_order_ids).keys())
+
+    # Conferências de entrada pausadas — UMA consulta para a tela inteira, pelo
+    # mesmo motivo de held_ids (nunca uma por card/pedido). NF pausada continua
+    # contando como EM ABERTO; isto aqui só alimenta o aviso do card.
+    paused_ids = _paused_order_ids(db, all_order_ids)
 
     cards = []
     for session in sessions:
@@ -2458,10 +2802,18 @@ def session_cards(
 
             pending = total - completed - in_prog
 
+            # Conferências de entrada pausadas neste card.
+            paused = sum(1 for o in orders if o.id in paused_ids)
+
             # Pedidos sem transportadora — bloqueados pra bipagem (ver
             # open_order_by_nfe/process_scan). Reaproveita o loop de `orders`
             # já em memória, sem query nova.
-            pending_carrier = sum(1 for o in orders if not o.carrier)
+            #
+            # ⚠️ Na ENTRADA a transportadora deixou de bloquear (24/08/2026),
+            # então contar aqui mostraria um impedimento que não existe mais.
+            pending_carrier = sum(
+                1 for o in orders if not o.carrier and not _is_entrada(o)
+            )
 
             # Derive unit from seller relationship
             unit_id_val = None
@@ -2492,6 +2844,9 @@ def session_cards(
                 "in_progress_orders": in_prog,
                 "pending_orders": pending,
                 "pending_carrier_orders": pending_carrier,
+                # Conferências de entrada pausadas — já contadas em
+                # pending_orders (continuam em aberto); serve só para o badge.
+                "paused_orders": paused,
                 # NFs fora do manuseio por falta de produto cadastrado.
                 # Não entram em total_orders nem no progresso.
                 "held_orders": len(held_here),

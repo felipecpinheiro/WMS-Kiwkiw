@@ -304,6 +304,19 @@ function HandlingCard({
               🔒 {card.held_orders} sem produto cadastrado
             </span>
           )}
+          {/* Conferência de entrada pausada: a NF continua EM ABERTO e já está
+              contada em pending_orders — este badge só avisa que alguém parou
+              no meio (contagem de marca grande leva dias). É só bipar a chave
+              da NF de novo para continuar de onde parou. */}
+          {!!card.paused_orders && (
+            <span
+              title="Conferência de entrada pausada. A NF continua em aberto: bipe a chave dela de novo para continuar de onde parou."
+              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+              text-info bg-info-soft border border-info/20"
+            >
+              ⏸ {card.paused_orders} conferência(s) pausada(s)
+            </span>
+          )}
         </div>
         <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold
           border flex-shrink-0 ${info.color} ${info.bg} ${info.border}`}>

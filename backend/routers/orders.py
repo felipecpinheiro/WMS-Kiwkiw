@@ -40,11 +40,29 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "data", "uploads")
 EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports")
 
 
+def _session_is_entrada(session) -> bool:
+    """
+    Sessão de ENTRADA? Decide pelo file_type da SESSÃO (e não do pedido, como
+    faz scanning.py) porque tudo que depende disto aqui é de nível de sessão:
+    os PDFs de Separação e Expedição descrevem o upload inteiro.
+
+    Desde 24/08/2026 sessão de entrada não gera esses PDFs — eles são
+    documentos de saída (picking list e romaneio por transportadora) e não
+    descrevem nada numa entrada.
+    """
+    raw = getattr(session, "file_type", None)
+    raw = raw.value if hasattr(raw, "value") else raw
+    return str(raw or "").strip().lower() in ("entrada", "import", "in")
+
+
 def _missing_carrier_orders(db: Session, session_id: int) -> list:
     """
     Pedidos da sessão sem transportadora — bloqueiam bipagem (ver open_order_by_nfe
     e process_scan em scanning.py) e geração de PDF de separação/expedição até
     serem preenchidos (PATCH /orders/{id}/carrier). Ver CLAUDE.md.
+
+    ⚠️ NF de ENTRADA não entra nessa regra desde 24/08/2026 — quem chama é que
+    filtra (ver _session_is_entrada nos pontos de uso).
     """
     return db.query(models.Order).options(
         joinedload(models.Order.seller)
@@ -175,7 +193,12 @@ def import_orders(
             # (ver CLAUDE.md). A pessoa completa pelo modal do Dashboard — na
             # hora (abre sozinho com missing_carrier_orders) ou depois, pelo
             # aviso fixo alimentado por GET /dashboard/master.
-            missing = _missing_carrier_orders(db, session.id)
+            #
+            # ⚠️ SESSÃO DE ENTRADA PULA TUDO ISSO (24/08/2026): Separação e
+            # Expedição são documentos de saída (picking list e romaneio) e não
+            # descrevem nada numa entrada, e a transportadora deixou de
+            # bloquear entrada. Ver _session_is_entrada.
+            missing = [] if _session_is_entrada(session) else _missing_carrier_orders(db, session.id)
             if missing:
                 result.warnings.append(
                     f"{len(missing)} pedido(s) sem transportadora — bipagem e PDFs ficam bloqueados até completar"
@@ -190,6 +213,10 @@ def import_orders(
                     )
                     for o in missing
                 ]
+            elif _session_is_entrada(session):
+                # Entrada não gera Separação/Expedição — nem automaticamente,
+                # nem sob demanda (os endpoints abaixo recusam).
+                pass
             else:
                 # Modo local (SQLite) → salva PDFs em disco e registra caminho na sessão.
                 # Modo produção (PostgreSQL) → PDFs gerados sob demanda via endpoint.
@@ -254,6 +281,12 @@ def download_separation_pdf(
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
+    if _session_is_entrada(session):
+        raise HTTPException(
+            status_code=400,
+            detail="Sessão de entrada não tem PDF de Separação — esse documento é da saída.",
+        )
+
     missing = _missing_carrier_orders(db, session_id)
     if missing:
         raise HTTPException(
@@ -287,6 +320,12 @@ def download_expedition_pdf(
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    if _session_is_entrada(session):
+        raise HTTPException(
+            status_code=400,
+            detail="Sessão de entrada não tem PDF de Expedição — esse documento é da saída.",
+        )
 
     missing = _missing_carrier_orders(db, session_id)
     if missing:
@@ -445,6 +484,19 @@ def _pending_stock_base_query(db: Session):
             models.OrderStatus.CANCELLED,
             models.OrderStatus.INACTIVE,
         ]),
+        # ⚠️ ENTRADA FORA DAQUI (24/08/2026): o estoque dela entra na
+        # finalização da bipagem, não no import — então stock_applied_at vazio
+        # é o estado NORMAL de uma entrada esperando conferência, não uma
+        # pendência. Sem este filtro, toda NF de entrada apareceria no aviso do
+        # Dashboard, e o botão "reprocessar" a baixaria pela quantidade da NF,
+        # justamente o que a mudança removeu.
+        # ⚠️ Order.file_type é NULLABLE (models.py): um `!=` puro devolveria
+        # NULL para essas linhas e as sumiria do aviso em silêncio. NULL é
+        # tratado como saída, que é o default da coluna.
+        or_(
+            models.Order.file_type.is_(None),
+            models.Order.file_type != models.FileType.IMPORT,
+        ),
         models.Seller.active == True,  # noqa: E712
     )
 

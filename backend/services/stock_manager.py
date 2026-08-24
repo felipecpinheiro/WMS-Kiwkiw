@@ -84,6 +84,33 @@ def calculate_stock_level(current_stock: int) -> str:
 #
 # ⚠️ NÃO reintroduzir baixa de estoque em process_scan além disso — nem para a
 # quantidade da NF, nem em interrupt/force-complete. Ver routers/scanning.py.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# ⚠️ REVOGADO PARA A ENTRADA EM 24/08/2026 — LEIA ANTES DE MEXER
+# ══════════════════════════════════════════════════════════════════════════
+# Tudo acima continua valendo para a SAÍDA. A ENTRADA passou a funcionar ao
+# contrário: o estoque NÃO entra mais na importação, e sim quando o operador
+# aperta FINALIZAR no Scanner, pela quantidade que ele CONTOU FISICAMENTE.
+#
+# Motivo: vinha quantidade a menos de um SKU e, como o estoque já tinha entrado
+# pela quantidade da NF, alguém precisava chamar o gerente para acertar na mão
+# na tela de Estoque. Agora o que entra é o que chegou, sem etapa manual.
+#
+# Consequências que NÃO são acidentais:
+#   - o EXCEDENTE em tempo real (apply_scan_overage, 17/08/2026) deixou de ser
+#     chamado: a sobra agora entra junto do resto, na finalização. As funções
+#     continuam aqui porque os movimentos já gravados precisam ser reconhecidos
+#     (bloqueio de troca de file_type) — ver apply_scan_overage abaixo;
+#   - NF de entrada NÃO auto-conclui na última bipagem: só o botão Finalizar
+#     conclui, senão ela fecharia antes de o operador achar a sobra;
+#   - apply_stock_for_orders() PULA entrada — no import e nos destravamentos.
+#
+# Como a virada é decidida (não há corte por data, de propósito):
+#   stock_applied_at vazio  -> nunca entrou -> Finalizar lança pela contagem
+#   stock_applied_at cheio  -> já entrou no import (antes de 24/08) -> Finalizar
+#                              só conclui a NF, sem tocar em estoque
+# Um corte por data dependeria do horário exato do deploy: errar para trás faria
+# a NF importada na manhã do deploy entrar DUAS vezes. Ver apply_stock_for_entry.
 
 # Status em que a NF não deve baixar estoque de jeito nenhum.
 STOCK_BLOCKED_STATUSES = (
@@ -129,16 +156,28 @@ def is_pre_stock_era(order) -> bool:
     return imported is not None and imported < STOCK_ERA_CUTOFF
 
 
+def is_entrada_order(order) -> bool:
+    """
+    Esta NF é de ENTRADA? Fonte de verdade única desse teste.
+
+    Decide pelo file_type do PEDIDO (não o da sessão): os dois normalmente andam
+    juntos, mas divergem na NF órfã que o PATCH /sessions/{id}/config deixa de
+    fora da troca de tipo. Tolerante a valor legado gravado como texto.
+
+    A entrada tem regra de estoque própria desde 24/08/2026 (entra na
+    finalização da bipagem, não no import) — ver o cabeçalho deste arquivo.
+    """
+    raw = getattr(order, "file_type", None)
+    raw = raw.value if hasattr(raw, "value") else raw
+    return str(raw or "").strip().lower() in ("entrada", "import", "in")
+
+
 def order_stock_sign(order) -> models.MovementType:
     """
     Sinal do movimento a partir do file_type do pedido.
     Tolerante a valor legado gravado como texto ('entrada'/'Entrada').
     """
-    raw = getattr(order, "file_type", None)
-    raw = raw.value if hasattr(raw, "value") else raw
-    if str(raw or "").strip().lower() in ("entrada", "import", "in"):
-        return models.MovementType.IN
-    return models.MovementType.OUT
+    return models.MovementType.IN if is_entrada_order(order) else models.MovementType.OUT
 
 
 def order_has_stock_applied(order, db: Session) -> bool:
@@ -273,11 +312,18 @@ def apply_stock_for_orders(
     # não é cosmética. A coluna sozinha não basta: NF anterior a 06/08/2026 tem
     # a coluna vazia e o estoque já baixado. Sem isso, preencher a transportadora
     # de uma nota velha subtraía o mesmo item de novo.
+    # ⚠️ ENTRADA NÃO BAIXA AQUI desde 24/08/2026 — o estoque dela entra na
+    # finalização da bipagem, pela quantidade contada (apply_stock_for_entry).
+    # O filtro vale para o import E para os destravamentos que chamam esta
+    # função (PATCH /orders/{id}/carrier, cadastro de produto): sem ele, um
+    # destravamento faria a entrada baixar pela quantidade da NF pelas costas
+    # do operador, que é exatamente o que a mudança removeu.
     candidates = [
         o for o in orders
         if o.status not in STOCK_BLOCKED_STATUSES
         and not getattr(o, "stock_applied_at", None)
         and not is_pre_stock_era(o)
+        and not is_entrada_order(o)
     ]
 
     applied: List[int] = []
@@ -382,6 +428,151 @@ def apply_stock_for_order(order, db: Session, operator_id: Optional[int] = None)
     preenchida, produto cadastrado). Mesmo relatório do lote.
     """
     return apply_stock_for_orders([order], db, operator_id=operator_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ENTRADA — ESTOQUE ENTRA NA FINALIZAÇÃO DA BIPAGEM (24/08/2026)
+# ══════════════════════════════════════════════════════════════════════════
+
+def entry_divergence_note(
+    sku: str,
+    counted: int,
+    expected: int,
+    nf_number: Optional[str],
+    operator_name: Optional[str] = None,
+) -> str:
+    """
+    Texto gravado em StockMovement.observation quando o contado difere da NF.
+
+    Serve tanto para sobra quanto para falta — é o mesmo formato, aprovado pelo
+    dono do sistema em 24/08/2026, e é o que aparece no relatório de Estoque.
+    """
+    quem = f" Conferido por {operator_name}" if operator_name else " Conferido"
+    return (
+        f"SKU {sku} — recebemos {counted} unidades e não {expected} "
+        f"conforme NF {nf_number or '(sem número)'}."
+        f"{quem} em {today_brasilia().strftime('%d/%m/%Y')}."
+    )
+
+
+def apply_stock_for_entry(
+    order,
+    db: Session,
+    counted: Dict[str, int],
+    expected: Dict[str, int],
+    operator_id: Optional[int] = None,
+    operator_name: Optional[str] = None,
+) -> Dict:
+    """
+    Lança no estoque o que foi CONTADO numa NF de entrada, na finalização.
+
+    `counted` e `expected` vêm por SKU já consolidados (o mesmo SKU pode estar
+    em dois OrderItem — componente de kit + linha avulsa). Quem monta é
+    routers/scanning.py, que é dono das contagens de bipagem.
+
+    Diferente de _write_stock_for_order(), que usa item.quantity: aqui a
+    quantidade é a CONTAGEM FÍSICA do operador. É essa a mudança de 24/08/2026.
+
+    ⚠️ NÃO baixa se a NF já tem stock_applied_at — é assim (e não por corte de
+    data) que a NF importada ANTES da mudança, que já entrou pela quantidade da
+    NF, não entra uma segunda vez. Ver o cabeçalho deste arquivo.
+
+    Não commita — quem chama decide.
+
+    Devolve:
+      applied      -> True se gravou movimentos agora
+      skipped      -> motivo, quando applied=False
+      divergences  -> [{sku, product_name, counted, expected, diff, note}]
+      movements    -> quantos movimentos foram gravados
+    """
+    divergences: List[Dict] = []
+
+    if order.status in STOCK_BLOCKED_STATUSES:
+        return {"applied": False, "skipped": "order_blocked",
+                "divergences": divergences, "movements": 0}
+
+    # Já entrou (import da era anterior a 24/08/2026, ou finalização repetida).
+    if getattr(order, "stock_applied_at", None):
+        return {"applied": False, "skipped": "already_applied",
+                "divergences": divergences, "movements": 0}
+
+    # Era anterior a 06/08/2026: estoque tratado pela regra antiga, ninguém mexe.
+    if is_pre_stock_era(order):
+        return {"applied": False, "skipped": "pre_stock_era",
+                "divergences": divergences, "movements": 0}
+
+    movement_type = order_stock_sign(order)
+    names = {it.sku: it.product_name for it in order.items}
+
+    # Todo SKU da NF entra na conta, mesmo o que não foi bipado: ele é uma
+    # divergência de 100% e precisa ficar registrada no relatório de Estoque.
+    skus = sorted(set(expected) | {s for s, q in counted.items() if q})
+    movements = 0
+
+    for sku in skus:
+        qty = int(counted.get(sku, 0) or 0)
+        exp = int(expected.get(sku, 0) or 0)
+        product_name = names.get(sku) or sku
+
+        note = None
+        if qty != exp:
+            note = entry_divergence_note(
+                sku=sku, counted=qty, expected=exp,
+                nf_number=order.nf_number, operator_name=operator_name,
+            )
+            divergences.append({
+                "sku": sku,
+                "product_name": product_name,
+                "counted": qty,
+                "expected": exp,
+                "diff": qty - exp,
+                "note": note,
+            })
+
+        # SKU que não chegou (qty=0) grava um movimento de quantidade ZERO só
+        # para carregar a observação: numericamente é inócuo (não mexe na
+        # posição) e é o que faz a falta aparecer no relatório de Estoque, que
+        # é onde o time procura. Sem isso, "não veio nada deste SKU" sumiria.
+        if qty == 0 and exp == 0:
+            continue
+
+        # ORM e não SQL puro: o SQLAlchemy grava o NOME do enum ('IN'), único
+        # rótulo válido no Postgres de produção. Ver CLAUDE.md.
+        db.add(models.StockMovement(
+            seller_id=order.seller_id,
+            sku=sku,
+            product_name=product_name,
+            movement_date=today_brasilia(),
+            movement_type=movement_type,
+            quantity=qty,
+            adjusted_quantity=qty,
+            nf_number=order.nf_number,
+            nature=order.nature,
+            order_id=order.id,
+            session_id=order.session_id,
+            operator_id=operator_id,
+            observation=note,
+        ))
+        movements += 1
+
+        if qty > 0:
+            update_stock_position(
+                seller_id=order.seller_id,
+                sku=sku,
+                product_name=product_name,
+                movement_type=movement_type,
+                quantity=qty,
+                db=db,
+            )
+
+    order.stock_applied_at = now_brasilia()
+
+    return {
+        "applied": True,
+        "skipped": None,
+        "divergences": divergences,
+        "movements": movements,
+    }
 
 
 # Marca gravada em StockMovement.observation para todo excedente de conferência.

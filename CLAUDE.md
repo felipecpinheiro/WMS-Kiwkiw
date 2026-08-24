@@ -39,6 +39,38 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 24/08/2026
+
+### ENTRADA: estoque entra na FINALIZAÇÃO da bipagem, pela contagem física
+
+**A regra de 06/08/2026 (baixa na importação) foi REVOGADA PARA A ENTRADA.** A saída continua
+exatamente como estava. Ver a seção própria em "Regras de Negócio Críticas" antes de mexer em
+qualquer coisa de estoque de entrada.
+
+**Motivo:** vinha quantidade a menos de um SKU e, como o estoque já tinha entrado pela quantidade da
+NF, alguém precisava chamar o gerente para acertar na mão na tela de Estoque. Agora entra o que
+chegou, sem etapa manual.
+
+**O que mudou:**
+- NF de entrada **não baixa mais no import** nem nos destravamentos
+- **Não auto-conclui** na última bipagem — só o botão **Finalizar** conclui
+- Finalizar abre uma **conferência** (esperado x contado, SKU a SKU, divergentes destacados); ao
+  confirmar, o estoque entra pela **contagem** e cada SKU divergente ganha observação
+- **Pausar** substitui Interromper na entrada (contagem de marca grande leva dias)
+- O **excedente em tempo real** (17/08/2026) deixou de lançar estoque — a sobra entra junto no
+  Finalizar
+- **Transportadora não bloqueia mais** entrada (SKU sem produto continua bloqueando)
+- Entrada saiu do **Dashboard** e não gera **PDF de Separação/Expedição**
+
+**Arquivos:** `stock_manager.py`, `scanning.py`, `orders.py`, `dashboard.py`, `Scanner.tsx`,
+`Dashboard.tsx`, `Handling.tsx`, `api.ts`.
+
+**Testes:** 97 verificações E2E, 100% verde em SQLite **e** PostgreSQL, mais conferência visual da
+tela contra banco descartável — que pegou 3 bugs invisíveis para o teste de API (ver a tabela de
+erros comuns: resposta do axios, KPI montado em Python, marcador vazando em painel).
+
+---
+
 ## Mudanças Recentes — 06/08/2026
 
 **Dois commits implementados e testados:**
@@ -96,7 +128,7 @@ Agora ela **fica fora do manuseio** e **volta sozinha** quando o produto for cad
 
 ---
 
-## Resultado de Hoje
+## Resultado de 06/08/2026
 
 | Métrica | Antes | Depois |
 |---------|-------|--------|
@@ -105,7 +137,24 @@ Agora ela **fica fora do manuseio** e **volta sozinha** quando o produto for cad
 | Testes automáticos | — | 106 verificações, 100% verde |
 | Commits | — | 2 em produção |
 
+> ⚠️ A linha "atualiza no import" acima vale só para a **saída**. Desde 24/08/2026 a entrada atualiza
+> na **finalização da conferência**, que é quando a mercadoria de fato foi contada.
+
 **Deploy:** Automático no Railway. Migração idempotente não causa downtime.
+
+---
+
+## Resultado de 24/08/2026 — entrada
+
+| Métrica | Antes | Depois |
+|---------|-------|--------|
+| Divergência de quantidade na entrada | Gerente acertava na mão pela tela de Estoque | Entra o que foi contado, sem etapa manual |
+| Conferência de vários dias | Interromper carimbava a NF como feita | **Pausar** mantém em aberto e retoma de onde parou |
+| Documentos gerados à toa | PDF de picking/romaneio em NF de entrada | Não gera nem oferece |
+| Testes automáticos | — | 97 verificações, 100% verde (SQLite + PostgreSQL) + conferência visual |
+
+**Sem migração de banco** — a feature reaproveita `Order.stock_applied_at` e grava a pausa como
+`ScanningLog`, justamente para não alterar enum no Postgres de produção.
 
 ---
 
@@ -313,7 +362,7 @@ client (0) < operator (1) < manager (2) < admin (3)
 
 ## Fluxo Principal de Operação
 
-### Fluxo de um dia de trabalho (visão geral)
+### Fluxo de um dia de trabalho — SAÍDA
 1. **Admin importa Excel** → `POST /orders/import` → cria `PickingSession` + `Orders` + `OrderItems`
    - **O estoque é baixado AQUI, NF a NF** (06/08/2026 — ver seção própria abaixo)
    - PDFs de separação e expedição gerados automaticamente após import
@@ -323,6 +372,16 @@ client (0) < operator (1) < manager (2) < admin (3)
 4. **Operador bipa cada produto** → `POST /scanning/scan` → valida `barcode_seller`
 5. **Pedido completo** → status vira `completed` → **estoque NÃO é tocado** (já baixou no passo 1)
 6. **Admin acompanha** → Dashboard Master → checagens P6/P8/P10/P12
+
+### Fluxo de um dia de trabalho — ENTRADA (é o INVERSO, desde 24/08/2026)
+1. **Admin importa Excel** marcando "Entrada" → **NÃO baixa estoque**, **não gera PDF**, **não aparece
+   nos números do Dashboard** (só em "Uploads do Dia")
+2. **Operador abre a NF** — transportadora não bloqueia; SKU sem produto cadastrado ainda bloqueia
+3. **Operador conta** usando o campo QTD, **inclusive além da NF**. Pode **Pausar** e voltar dias
+   depois. A NF **nunca conclui sozinha**
+4. **Operador aperta Finalizar** → conferência esperado x contado, SKU a SKU
+5. **Confirma** → **o estoque entra AQUI, pela contagem física**, com observação nos divergentes, e a
+   NF vira `completed`
 
 ### Importação de Excel (ordem de operações interna)
 1. Detecta o layout do arquivo (importador original 16 cols vs Tiny "Notas Pendentes" 15 cols)
@@ -339,15 +398,19 @@ client (0) < operator (1) < manager (2) < admin (3)
 
 ### ⚠️ Baixa de estoque na IMPORTAÇÃO (mudança de 06/08/2026)
 
+> ### 🚨 ESTA SEÇÃO VALE SÓ PARA A **SAÍDA** DESDE 24/08/2026
+> A **ENTRADA** funciona ao contrário: não baixa no import, e o estoque entra na **finalização da
+> bipagem, pela quantidade contada**. Ver "ENTRADA: estoque entra na finalização" logo abaixo.
+> Tudo o que este bloco diz sobre transportadora, `pending-stock` e destravamento **não se aplica a
+> NF de entrada**.
+
 **Até 06/08/2026** o estoque era sensibilizado quando o pedido era **concluído na bipagem**. O seller
 vendia segunda 20h, a Kiwkiw manuseava terça 17h, e o estoque dele ficava ~24h defasado — inviável de
 acompanhar em escala. **Agora a baixa acontece no fim da IMPORTAÇÃO, NF a NF.**
 
-**A bipagem não mexe mais em estoque** — com **uma exceção, criada em 17/08/2026**: o *excedente* de
-conferência na ENTRADA (ver a seção própria abaixo). Fora disso continua valendo: as chamadas em
-`process_scan`, `interrupt_order` e `force_complete_session` foram removidas e **não devem ser
-reintroduzidas**. A quantidade da NF baixa exclusivamente no import; a bipagem só lança o que veio
-**além** dela, e só na entrada.
+**A bipagem não mexe mais em estoque na SAÍDA.** As chamadas em `process_scan`, `interrupt_order` e
+`force_complete_session` foram removidas e **não devem ser reintroduzidas**. (Na entrada é o oposto:
+a bipagem é a *única* coisa que mexe em estoque — ver a seção própria.)
 
 **Uma NF só baixa se estiver liberada.** Dois bloqueios, ambos por NF (não pela sessão):
 1. **transportadora preenchida**
@@ -364,8 +427,10 @@ automático.
 
 | Função | Papel |
 |---|---|
-| `apply_stock_for_orders(orders, db)` | baixa em lote (usada no import). Devolve `applied` / `pending` / `negatives` / `missing_skus` |
+| `apply_stock_for_orders(orders, db)` | baixa em lote (usada no import). **Pula NF de entrada.** Devolve `applied` / `pending` / `negatives` / `missing_skus` |
 | `apply_stock_for_order(order, db)` | uma NF (destravamento) |
+| `apply_stock_for_entry(order, db, counted, expected, ...)` | **só ENTRADA** — lança pela contagem física na finalização |
+| `is_entrada_order(order)` | fonte de verdade única do teste "é entrada?" |
 | `reverse_stock_for_order(order, db, observation)` | estorno |
 | `evaluate_orders_for_stock(orders, db)` | por que a NF não pode baixar |
 | `order_has_stock_applied(order, db)` | "esta NF está baixada agora?" |
@@ -474,23 +539,27 @@ forjada lançaria estoque errado na saída — por isso `process_scan` recusa, i
 
 **A entrada aceita receber MAIS do que a NF diz.** Acontece de o seller mandar a mais, e o que vale
 para o estoque é o que chegou fisicamente. Então, **só na entrada**, o bloqueio de "item já completo"
-não se aplica (na saída ele continua exatamente como sempre foi) e:
+não se aplica (na saída ele continua exatamente como sempre foi).
 
-- o excedente vira um **movimento de estoque próprio**, via `apply_scan_overage()` — **só a diferença**,
-  nunca o total bipado;
-- o operador recebe aviso na hora (toast + painel + badge `+N` no card) para comunicar a empresa;
-- fica registrado na **Trilha de Auditoria**: `ScanningLog.error_message` recebe a nota com
-  `is_error=False` (não é erro, é ocorrência) e o `GET /scanning/audit-log` já devolve esse campo sem
-  filtrar `is_error`.
+> ⚠️ **REVOGADO EM 24/08/2026 — o excedente NÃO lança mais estoque na hora do bipe.**
+> `apply_scan_overage()` **deixou de ser chamada** por `process_scan`. A quantidade contada inteira
+> (inclusive a sobra) entra de uma vez na **finalização** — lançar nos dois lugares duplicaria a
+> sobra. O que **continua valendo** do parágrafo original: o operador recebe o aviso na hora (toast +
+> badge `+N` no card) e a ocorrência fica na Trilha de Auditoria via `ScanningLog.error_message` com
+> `is_error=False`.
+>
+> `apply_scan_overage()`, `OVERAGE_TAG`, `order_has_scan_overage()` e `orders_with_scan_overage()`
+> **continuam existindo e NÃO devem ser removidas**: os movimentos gravados entre 17/08 e 24/08
+> precisam continuar sendo reconhecidos pelo bloqueio de troca de `file_type` descrito abaixo.
 
-**O excedente é incremental:** `max(0, já+qtd−esperado) − max(0, já−esperado)`. O operador pode chegar
-ao excedente em etapas (bipa 1000, depois mais 200) e usar o total a cada bipe lançaria estoque
-repetido.
+**O excedente é incremental:** `max(0, já+qtd−esperado) − max(0, já−esperado)`. Hoje serve só para
+avisar o operador; até 24/08/2026 essa era a quantidade lançada no estoque, e usar o total a cada
+bipe lançaria estoque repetido.
 
 **O movimento nasce com o `order_id` da NF de propósito** — é isso que faz `reverse_stock_for_order()`
 (que trabalha por **saldo líquido por SKU** do `order_id`) recolher o excedente junto, sem código
-novo. Cancelar duplicata, `cancel-handling` e inativar NF já estornam tudo. **Não escrever tratamento
-especial nesses fluxos.**
+novo. Vale igual para o movimento que o **Finalizar** cria hoje. Cancelar duplicata,
+`cancel-handling` e inativar NF já estornam tudo. **Não escrever tratamento especial nesses fluxos.**
 
 ⚠️ **Trocar o `file_type` de NF com excedente é BLOQUEADO (409)** em `PATCH /orders/{id}/config` e
 `PATCH /scanning/sessions/{id}/config`. Motivo: eles estornam tudo e re-lançam **só a quantidade da
@@ -516,11 +585,81 @@ manual na tela de Estoque.
 **Testes:** 57 verificações em 16 cenários, 100% verde em SQLite **e** PostgreSQL, mais conferência
 visual da tela contra banco descartável.
 
+### ⚠️ ENTRADA: estoque entra na FINALIZAÇÃO da bipagem (24/08/2026)
+
+**Esta seção REVOGA, só para a entrada, a regra de baixa na importação.** A saída não mudou em nada.
+
+**Motivo:** vinha quantidade a menos de um SKU e, como o estoque já tinha entrado pela quantidade da
+NF, alguém tinha que chamar o gerente para acertar na mão na tela de Estoque. Agora entra o que
+chegou fisicamente, sem etapa manual.
+
+**O fluxo:**
+1. Import cria a NF e **não toca em estoque** (`apply_stock_for_orders()` pula entrada)
+2. Operador bipa, com o campo QTD, quantas vezes precisar — **inclusive além da NF**
+3. A NF **nunca conclui sozinha**, mesmo batendo 100%
+4. Operador aperta **Finalizar** → conferência esperado x contado, SKU a SKU
+5. Confirmando: estoque entra pela **contagem**, com observação nos divergentes, e a NF vira `COMPLETED`
+
+| Endpoint | O quê |
+|---|---|
+| `POST /scanning/orders/{id}/finalize-entry` | 2 passos: body `{}` devolve a conferência **sem gravar nada**; `{"confirm": true}` lança e conclui |
+| `POST /scanning/orders/{id}/pause` | pausa (a NF continua EM ABERTO) |
+
+**Qualquer operador finaliza** — decisão do dono do sistema. **Não dá para reabrir** NF finalizada.
+
+⚠️ **A ENTRADA NÃO AUTO-CONCLUI, e isso não é detalhe.** Bater a quantidade da NF não quer dizer que a
+conferência acabou — a caixa seguinte pode trazer mais peças do mesmo SKU. Se ela fechasse no último
+bipe, o operador perderia o direito de continuar (pedido `completed` recusa scan) e a sobra ficaria
+fora do estoque. Reintroduzir a auto-conclusão na entrada quebra a feature inteira.
+
+⚠️ **A virada NÃO usa corte por data, de propósito.** Quem decide é o `stock_applied_at`:
+
+| Estado | Finalizar faz |
+|---|---|
+| `stock_applied_at` **vazio** | lança pela contagem |
+| `stock_applied_at` **preenchido** (NF importada antes de 24/08, já baixada) | só conclui, **não lança** |
+
+Um corte por data dependeria do horário exato do deploy: errar para trás faria a NF importada na
+manhã do deploy entrar **duas vezes**. O `stock_applied_at` acerta sozinho, e ainda cobre a NF antiga
+que ficou pendente e nunca baixou (que um corte por data deixaria sem estoque para sempre).
+
+**SKU que não veio nada gera um movimento de quantidade ZERO** só para carregar a observação.
+Numericamente é inócuo (não mexe na posição) e é o que faz a falta aparecer no relatório de Estoque,
+que é onde o time procura. Sem isso, "não veio nada deste SKU" sumiria.
+
+**Texto da observação** (mesmo formato para falta e sobra, aprovado pelo dono do sistema):
+`SKU CAM-PRETA-M — recebemos 130 unidades e não 120 conforme NF 123456. Conferido por Fulano em 24/08/2026.`
+
+**PAUSAR ≠ INTERROMPER.** Interromper é carimbo definitivo (não reabre, conta como feito); pausar
+deixa tudo em aberto para continuar depois — marca com muitos SKUs leva **dias** para ser conferida.
+- ⚠️ **`interrupt_order` RECUSA (400) NF de entrada.** Não é cosmético: carimbar `INTERRUPTED` numa
+  entrada deixaria a mercadoria fora do estoque para sempre, sem ninguém perceber, já que o estoque
+  dela só entra no Finalizar.
+- Pausa **não é status** — é um `ScanningLog` marcador (`sku='PAUSE'`/`'RESUME'`, `quantity=0`,
+  `is_error=False`). Escolhido assim para não alterar o enum `OrderStatus` no Postgres de produção.
+  `_paused_order_ids()` resolve em 2 consultas, nunca 1 por pedido.
+- ⚠️ **Marcador NUNCA é bipagem.** Passa nos filtros de "bipagem real", então a exclusão é explícita
+  (`MARKER_SKUS`) em `_active_scan_filters`, na produtividade e nos scans recentes do Dashboard.
+  Esquecer isso infla o número de bipes do operador e polui painel.
+
+**Transportadora deixou de bloquear entrada** (`open_order_by_nfe`, `process_scan`, card do kanban,
+badge do Scanner): o que importa é que a mercadoria chegou, não por qual transportadora. **SKU sem
+produto cadastrado continua bloqueando** — sem produto não existe barcode para casar.
+
+**Entrada saiu do Dashboard** (KPIs, checagens, sellers com pedidos, produtividade, por unidade) e
+**não gera PDF de Separação/Expedição** — são documentos de saída. **Continua em "Uploads do Dia"**,
+de propósito: senão o admin subiria um arquivo e ele sumiria da tela sem deixar rastro.
+
+**Testes:** 97 verificações E2E, 100% verde em SQLite **e** PostgreSQL, mais conferência visual.
+
 ### Bipagem
 - **Só `barcode_seller` é aceito** — o `barcode_kiwkiw` existe no modelo mas não é usado na bipagem
 - **Lock por (sessão+seller):** só 1 pedido com atividade real por seller por sessão. Pedido em `SCANNING` sem nenhum `ScanningLog` real = "lock fantasma" → liberado automaticamente
 - **INTERRUPTED = COMPLETED** para o kanban: pedido interrompido conta como "feito" no progresso. **Para estoque, nenhum dos dois faz nada** — a baixa acontece na importação desde 06/08/2026, e interromper não devolve estoque (divergência física se acerta na mão pela tela de Estoque)
 - **Não volta de INTERRUPTED:** pedido interrompido não pode ser reaberto via bipagem normal
+- ⚠️ **Os dois pontos acima valem só para a SAÍDA desde 24/08/2026.** Na entrada, `interrupt` é
+  recusado com 400 (usa-se **Pausar**), a NF pausada continua contando como **EM ABERTO**, e a
+  conclusão só vem pelo **Finalizar** — que é onde o estoque entra
 
 ### Cancelamento de pedidos duplicados (upload repetido)
 - Cenário: cliente sobe o mesmo Excel duas vezes → NFs duplicadas na mesma sessão. Correção pelo Dashboard: card da sessão em "Uploads do Dia" → botão **"Excluir sellers"** → escolhe quais sellers daquela sessão cancelar (os demais não são afetados).
@@ -688,6 +827,25 @@ Endpoints: `POST /inventory/import-history/{seller_id}/analyze` e `/execute`.
 - Suportam SQLite (usa `PRAGMA table_info`) e PostgreSQL (usa `information_schema`)
 - Nunca remover ou alterar esse mecanismo sem entender o impacto em produção
 
+### Dashboard Master — só mede SAÍDA (24/08/2026)
+
+O Dashboard é uma ferramenta de **expedição**: KPIs, checagens P6/P8/P10/P12, sellers com pedidos,
+produtividade e resumo por unidade descrevem o fluxo de saída. **NF de entrada foi tirada de todos
+esses números** (decisão do dono do sistema).
+
+- O recorte central é `_saida_only()`, aplicado no `base_filter`. ⚠️ **`Order.file_type` é NULLABLE**:
+  um `!= IMPORT` puro devolveria NULL e sumiria com essas linhas em silêncio — por isso o helper
+  trata NULL como saída (o default da coluna).
+- ⚠️ **Blocos que montam o próprio filtro precisam repetir o recorte à mão**: `units_summary` e o KPI
+  **"Em Bipagem"**, que é somado em Python fora do `base_filter`. O segundo já contou conferência de
+  entrada num painel cujo "Total de Pedidos" estava zerado (bug pego na conferência visual).
+- As checagens de **PDF Separação/Expedição** escolhem a última sessão do dia **ignorando sessões de
+  entrada** — senão ficariam vermelhas para sempre num dia que terminou com upload de entrada.
+- **"Uploads do Dia" NÃO filtra entrada**, de propósito. E o estado vazio da tela também olha
+  `sessions_today`: num dia só com entrada, `total_orders_today` é 0 e sem isso a página inteira
+  cairia no "Nenhum pedido importado hoje", escondendo o upload.
+- **"Scans Recentes"** exclui os marcadores `PAUSE`/`RESUME`/`INTERRUPT` — não são bipagem.
+
 ### Dashboard Master — card "Por Unidade"
 - Endpoint `GET /dashboard/master` (`routers/dashboard.py`), bloco `units_summary`
 - Quando o usuário filtra por uma unidade específica no seletor do topo, todos os outros blocos do dashboard (KPIs, checagens, sellers com pedidos, etc.) respeitam esse filtro normalmente
@@ -701,8 +859,8 @@ Endpoints: `POST /inventory/import-history/{seller_id}/analyze` e `/execute`.
 | Prefixo | Arquivo | Responsabilidade |
 |---------|---------|-----------------|
 | `/auth` | `routers/auth.py` | Login (`POST /auth/login`), perfil (`GET /auth/me`) |
-| `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs que não baixaram) |
-| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt, force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **A única baixa de estoque daqui é o EXCEDENTE de conferência na entrada (17/08/2026); o resto só estorna/re-lança** |
+| `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque, só SAÍDA**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs de saída que não baixaram — **entrada fica fora**), PDFs (**recusam sessão de entrada**) |
+| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | Config de cobrança, relatório, export Excel |
@@ -802,6 +960,12 @@ Os PDFs são gerados com **ReportLab** seguindo identidade visual da Kiwkiw:
 - **Roxo principal:** `#7B63E8`
 - **Verde-água:** `#3DD9A4`
 - **Fundo escuro:** `#14122A`
+
+⚠️ **Sessão de ENTRADA não tem esses PDFs (24/08/2026).** Separação é picking list e Expedição é
+romaneio por transportadora — nenhum dos dois descreve uma entrada. Os dois endpoints recusam com
+400, o import não gera, o modal de upload esconde os checkboxes e o histórico esconde os botões.
+Detecção por `_session_is_entrada()` em `orders.py`, que olha o `file_type` da **sessão** (e não do
+pedido, como faz `scanning.py`) porque o documento descreve o upload inteiro.
 
 **Geração híbrida (local vs. produção):**
 
@@ -1309,8 +1473,16 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | ⚠️ **Pré-existente, não corrigido:** SKU repetido vira 2 itens no pedido | A soma de SKUs repetidos ocorre **antes** da expansão, sobre os SKUs crus. Um componente de kit que coincide com uma linha avulsa do mesmo SKU gera dois `order_items` (ex.: 4 do kit + 5 avulso, não 9) | Comportamento antigo e conhecido; o operador vê o mesmo SKU duas vezes na bipagem |
 | Endpoint pesado declarado `async def` | O FastAPI roda `async def` **no event loop**, não em threadpool. Com 1 worker Uvicorn, qualquer trabalho síncrono longo (Excel, laço de queries) **trava o sistema inteiro** — bipagem, dashboard e login param | Endpoint que faz I/O de banco/arquivo de forma síncrona deve ser `def` (sem `async`). Só use `async def` se realmente houver `await` de I/O assíncrono |
 | Query nova em `stock_movements` ou `scanning_logs` | `stock_movements` tem 630k+ linhas. Desde 30/07/2026 existem índices para `order_id` e `(seller_id, sku)` — **qualquer filtro fora desses volta a ser Seq Scan da tabela toda** | Conferir com `EXPLAIN ANALYZE` antes de subir; se faltar índice, acrescentar em `PERF_INDEXES` (`main.py`), que já é idempotente nos dois bancos |
-| Deduzir "esta NF baixou estoque?" pelo status | Desde 06/08/2026 a baixa é na importação: NF `PENDING` já pode estar baixada, e NF `COMPLETED` pode nunca ter baixado | Usar `order_has_stock_applied(order, db)` / `Order.stock_applied_at` — **nunca** `status in (COMPLETED, INTERRUPTED)` |
-| Reintroduzir baixa de estoque na bipagem | `process_scan`/`interrupt`/`force-complete` já baixaram até 06/08/2026; recolocar a chamada dobra a baixa | A baixa da quantidade da NF é no import. A **única** exceção é o excedente da entrada (`apply_scan_overage`, 17/08/2026), que lança **só a diferença** — ver `services/stock_manager.py` |
+| Deduzir "esta NF baixou estoque?" pelo status | Desde 06/08/2026 a baixa é na importação: NF `PENDING` já pode estar baixada, e NF `COMPLETED` pode nunca ter baixado. Na entrada (24/08/2026) é ainda mais solto: `SCANNING` com contagem cheia continua sem estoque até o Finalizar | Usar `order_has_stock_applied(order, db)` / `Order.stock_applied_at` — **nunca** `status in (COMPLETED, INTERRUPTED)` |
+| Reintroduzir baixa de estoque na bipagem da **saída** | `process_scan`/`interrupt`/`force-complete` já baixaram até 06/08/2026; recolocar a chamada dobra a baixa | Na SAÍDA a baixa é no import e ponto. Na ENTRADA é o contrário: só o `finalize-entry` lança — ver `services/stock_manager.py` |
+| Fazer NF de **entrada** auto-concluir no último bipe | Fechar no 100% tira do operador o direito de continuar contando (pedido `completed` recusa scan) e a sobra da caixa seguinte fica fora do estoque | Entrada conclui **só** pelo botão Finalizar. A guarda está em `process_scan` (`if is_entrada: return` antes do bloco de `remaining == 0`) |
+| Chamar `apply_scan_overage()` de novo no `process_scan` | Desde 24/08/2026 a contagem inteira (com a sobra) entra no Finalizar — lançar nos dois lugares **duplica a sobra** | A função existe só para os movimentos gravados entre 17/08 e 24/08 continuarem reconhecidos pelo bloqueio de troca de `file_type` |
+| Usar corte por DATA para separar a era da entrada | Errar a data para trás faz a NF importada na manhã do deploy entrar **duas vezes** | Quem decide é `stock_applied_at`: vazio = lança; preenchido = só conclui. Não depende do horário do deploy |
+| Deixar `interrupt` funcionar em NF de entrada | `INTERRUPTED` não reabre e conta como feito → a mercadoria fica fora do estoque para sempre, em silêncio | `interrupt_order` recusa entrada com 400. Usar **Pausar** (`POST /orders/{id}/pause`) |
+| Marcador `PAUSE`/`RESUME` entrando em contagem | Eles passam nos filtros de "bipagem real" (`is_error=False`, `is_interrupted=False`) e inflam produtividade e painéis | Excluir por `MARKER_SKUS` — já feito em `_active_scan_filters`, produtividade e scans recentes do Dashboard |
+| Filtrar entrada com `Order.file_type != IMPORT` puro | A coluna é **NULLABLE**: o `!=` devolve NULL nessas linhas e elas somem do resultado em silêncio | `or_(file_type.is_(None), file_type != IMPORT)` — ver `_saida_only()` em `dashboard.py` |
+| KPI/bloco que monta o próprio filtro em Python | Não passa pelo `base_filter`, então o recorte de saída **não é aplicado** — foi assim que "Em Bipagem" contou conferência de entrada num painel zerado | Repetir o recorte à mão (`units_summary`, laço do "Em Bipagem") |
+| Guardar a resposta do axios direto no estado | O cliente de `api.ts` devolve a **resposta**, não o corpo — `res.lines` fica `undefined` e o `.map` quebra a tela inteira do operador | Usar `res.data`. Bug real, pego só na conferência visual: os 97 testes de API passavam |
 | Contar progresso do pedido pelo total (soma esperada − soma bipada) | Desde que a entrada aceita excedente, sobra de um SKU compensa falta de outro e a NF fecha com item nunca conferido | Contar **SKU a SKU** (`_count_remaining`/`_count_remaining_after_scan`), consolidando SKU repetido em dois `OrderItem` |
 | Calcular excedente com `matched_item.quantity` | Em NF com o mesmo SKU em dois itens (kit + linha avulsa), o esperado real é a soma — usar o item casado lança estoque fantasma | Usar `expected_sku_total` (soma dos itens daquele SKU) |
 | Tratar excedente nos fluxos de estorno | `reverse_stock_for_order()` trabalha por saldo líquido do `order_id` e o movimento de excedente nasce com esse mesmo `order_id` — já é recolhido | Não escrever tratamento especial em cancel-duplicate/cancel-handling/deactivate |

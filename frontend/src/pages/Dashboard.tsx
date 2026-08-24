@@ -891,8 +891,10 @@ export default function DashboardPage() {
       // completar, handleCarrierSave dispara o download sozinho.
       if (missingCarrierOrders.length > 0) {
         setCarrierModalOrders(missingCarrierOrders);
-      } else if (session_id) {
-        // Downloads automáticos em sequência
+      } else if (session_id && fileType !== 'Entrada') {
+        // Downloads automáticos em sequência.
+        // Entrada não tem Separação/Expedição (o backend recusa) — sem esta
+        // guarda o admin levaria dois toasts de erro a cada upload de entrada.
         if (generateSepPdf) {
           try {
             await ordersApi.downloadSessionPdf(session_id, 'separation');
@@ -1442,8 +1444,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Conteúdo principal: vazio se não houver dados ── */}
-      {(!stats || stats.total_orders_today === 0) ? (
+      {/* ── Conteúdo principal: vazio se não houver dados ──
+          O Dashboard conta só NF de SAÍDA (24/08/2026), então um dia em que só
+          houve upload de ENTRADA tem total_orders_today = 0. Sem checar as
+          sessões aqui, esse upload sumiria da tela inteira — e "Uploads do Dia"
+          é justamente onde ele deve continuar aparecendo. */}
+      {(!stats || (stats.total_orders_today === 0 && !stats.sessions_today?.length)) ? (
         <div className="bg-surface rounded-xl border border-dashed border-line p-12 text-center">
           <Package size={44} className="text-t5 mx-auto mb-3" />
           <p className="text-t3 text-sm font-medium">
@@ -1457,6 +1463,17 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* Dia só com upload de ENTRADA: os números abaixo ficam todos em
+              zero porque o Dashboard mede expedição. Sem esta linha o admin
+              acharia que o upload não entrou. */}
+          {stats.total_orders_today === 0 && (
+            <div className="bg-info-soft border border-info/25 rounded-xl px-4 py-3 text-sm text-info">
+              Nenhum pedido de <strong>saída</strong> {isToday ? 'hoje' : 'nessa data'} — os números
+              abaixo medem expedição. Os uploads de <strong>entrada</strong> aparecem em "Uploads do Dia"
+              e são conferidos em Manuseios.
+            </div>
+          )}
+
           {/* KPI Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
@@ -1804,7 +1821,13 @@ export default function DashboardPage() {
                 Uploads do Dia
               </h2>
               <div className="space-y-2">
-                {stats.sessions_today.map((sess: any) => (
+                {stats.sessions_today.map((sess: any) => {
+                  // A API manda o VALOR do enum, minúsculo ('entrada'/'saida').
+                  // A comparação antiga era com 'Entrada' e nunca casava — o
+                  // badge saía sempre com a cor de saída. Agora esse teste
+                  // também decide se os PDFs aparecem, então tem que estar certo.
+                  const isEntradaSession = String(sess.file_type || '').toLowerCase() === 'entrada';
+                  return (
                   <div key={sess.session_id}
                     className="flex flex-col sm:flex-row items-start gap-3 p-3 bg-surface-2 rounded-lg border border-line-soft">
                     <div className="flex-1 min-w-0">
@@ -1812,8 +1835,8 @@ export default function DashboardPage() {
                         <span className="text-xs font-semibold text-t2">
                           Sessão #{sess.session_id}
                         </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sess.file_type === 'Entrada' ? 'bg-info-soft text-info' : 'bg-violet-900/40 text-violet-300'}`}>
-                          {sess.file_type}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isEntradaSession ? 'bg-info-soft text-info' : 'bg-violet-900/40 text-violet-300'}`}>
+                          {isEntradaSession ? 'Entrada' : 'Saída'}
                         </span>
                         <span className="text-[10px] text-t4">{sess.created_at}</span>
                       </div>
@@ -1831,26 +1854,33 @@ export default function DashboardPage() {
                         )}
                       </div>
                     </div>
-                    {/* PDFs — geração sob demanda; indicador se já salvo em disco */}
+                    {/* PDFs — geração sob demanda; indicador se já salvo em disco.
+                        Sessão de ENTRADA não tem esses documentos (Separação é
+                        picking list e Expedição é romaneio — ambos de saída), e
+                        o backend recusa a geração. Ver orders.py. */}
                     <div className="flex flex-row sm:flex-col flex-wrap gap-1.5 flex-shrink-0 w-full sm:w-auto">
-                      <button
-                        onClick={() =>
-                          ordersApi.downloadSessionPdf(sess.session_id, 'separation')
-                            .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Separação'))
-                        }
-                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-ok bg-ok-soft border border-ok/20 hover:bg-ok-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
-                      >
-                        <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
-                      </button>
-                      <button
-                        onClick={() =>
-                          ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
-                            .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Expedição'))
-                        }
-                        className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-info bg-info-soft border border-info/20 hover:bg-info-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
-                      >
-                        <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
-                      </button>
+                      {!isEntradaSession && (
+                        <>
+                          <button
+                            onClick={() =>
+                              ordersApi.downloadSessionPdf(sess.session_id, 'separation')
+                                .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Separação'))
+                            }
+                            className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_separation ? 'text-ok bg-ok-soft border border-ok/20 hover:bg-ok-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
+                          >
+                            <FileText size={11} /> Separação{sess.separation_pdf ? ' ✓' : ''}
+                          </button>
+                          <button
+                            onClick={() =>
+                              ordersApi.downloadSessionPdf(sess.session_id, 'expedition')
+                                .catch((err: any) => toast.error(err?.response?.data?.detail || 'Erro ao baixar PDF de Expedição'))
+                            }
+                            className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-lg transition ${sess.check_planning ? 'text-info bg-info-soft border border-info/20 hover:bg-info-soft' : 'text-t4 bg-surface-2 border border-line hover:bg-surface-2'}`}
+                          >
+                            <FileText size={11} /> Expedição{sess.expedition_pdf ? ' ✓' : ''}
+                          </button>
+                        </>
+                      )}
                       {sess.sellers_in_session?.length > 0 && (
                         <button
                           onClick={() => openCancelDupModal(sess.session_id, sess.sellers_in_session)}
@@ -1861,7 +1891,8 @@ export default function DashboardPage() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1885,22 +1916,26 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Gerar PDFs */}
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-t2 mb-2">Gerar relatórios PDF</label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={generateSepPdf} onChange={e => setGenerateSepPdf(e.target.checked)}
-                    className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
-                  <span className="text-sm text-t2">PDF de Separação</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={generateExpPdf} onChange={e => setGenerateExpPdf(e.target.checked)}
-                    className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
-                  <span className="text-sm text-t2">PDF de Expedição</span>
-                </label>
+            {/* Gerar PDFs — só na SAÍDA. Separação é picking list e Expedição é
+                romaneio por transportadora: nenhum dos dois descreve uma
+                entrada, e o backend recusa gerá-los (ver orders.py). */}
+            {fileType !== 'Entrada' && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-t2 mb-2">Gerar relatórios PDF</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={generateSepPdf} onChange={e => setGenerateSepPdf(e.target.checked)}
+                      className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
+                    <span className="text-sm text-t2">PDF de Separação</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={generateExpPdf} onChange={e => setGenerateExpPdf(e.target.checked)}
+                      className="h-4 w-4 rounded bg-surface-2 border-line-strong text-violet-500 focus:ring-violet-500" />
+                    <span className="text-sm text-t2">PDF de Expedição</span>
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Tipo de arquivo (nível da sessão) */}
             <div className="mb-4">

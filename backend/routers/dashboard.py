@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 
 from ..database import get_db
 from ..auth import get_current_user
@@ -37,6 +37,30 @@ def _imported_on(target: date):
 def _session_created_on(target: date):
     """Expressão SQL para sessões criadas na data alvo."""
     return func.date(models.PickingSession.created_at) == target
+
+
+def _saida_only():
+    """
+    Expressão SQL: só NF de SAÍDA.
+
+    O Dashboard Master é uma ferramenta de EXPEDIÇÃO — KPIs, checagens (P6/P8/
+    P10/P12), sellers com pedidos, produtividade e resumo por unidade descrevem
+    o fluxo de saída. NF de entrada nunca teve nada a ver com isso e, desde
+    24/08/2026, tem regra de estoque própria, então foi tirada dos números
+    (decisão do dono do sistema).
+
+    ⚠️ `Order.file_type` é NULLABLE (models.py): `!= IMPORT` sozinho devolveria
+    NULL para essas linhas e as sumiria dos totais em silêncio. NULL conta como
+    saída, que é o default da coluna.
+
+    ⚠️ NÃO se aplica a "Uploads do Dia", que lista PickingSession e continua
+    mostrando os uploads de entrada de propósito — senão o admin subiria um
+    arquivo de entrada e ele desapareceria da tela sem deixar rastro.
+    """
+    return or_(
+        models.Order.file_type.is_(None),
+        models.Order.file_type != models.FileType.IMPORT,
+    )
 
 
 @router.get("/available-dates", response_model=list[date])
@@ -153,6 +177,7 @@ def master_dashboard(
         models.Order.status != models.OrderStatus.CANCELLED,
         models.Order.status != models.OrderStatus.INACTIVE,
         models.Order.seller_id.in_(active_sellers),
+        _saida_only(),
     ]
     if unit_id:
         sellers_in_unit = db.query(models.Seller.id).filter(
@@ -201,6 +226,12 @@ def master_dashboard(
             if order.seller is not None and not order.seller.active:
                 continue
             if order.status in (models.OrderStatus.CANCELLED, models.OrderStatus.INACTIVE):
+                continue
+            # Este laço monta o KPI em Python, então não passa por base_filter:
+            # o recorte de saída precisa ser repetido à mão. Sem isso o cartão
+            # "Em Bipagem" contava conferência de entrada num painel cujo
+            # "Total de Pedidos" ficava em zero.
+            if order.file_type == models.FileType.IMPORT:
                 continue
             seller_orders.setdefault(order.seller_id, []).append(order)
         for sid, sorders in seller_orders.items():
@@ -256,6 +287,7 @@ def master_dashboard(
             models.Order.status != models.OrderStatus.CANCELLED,
             models.Order.status != models.OrderStatus.INACTIVE,
             models.Order.seller_id.in_(sellers_of_unit),
+            _saida_only(),
         ]
         if manager_seller_ids:
             unit_filter.append(models.Order.seller_id.in_(manager_seller_ids))
@@ -307,6 +339,9 @@ def master_dashboard(
     recent_logs = db.query(models.ScanningLog).filter(
         models.ScanningLog.timestamp >= two_hours_ago,
         models.ScanningLog.is_error == False,
+        # Marcadores de pausa/retomada e de interrupção não são bipagem — o
+        # painel mostra o que foi conferido, não eventos de controle.
+        models.ScanningLog.sku.notin_(["PAUSE", "RESUME", "INTERRUPT"]),
     ).order_by(models.ScanningLog.timestamp.desc()).limit(10).all()
 
     recent_scans = [
@@ -358,11 +393,18 @@ def master_dashboard(
     # PickingSession.unit_id (denormalizado — grava a unidade de quem fez o upload,
     # não a dos sellers de dentro do arquivo). Em vez disso, achar a sessão mais
     # recente que tenha pedido de algum seller REAL daquela unidade.
+    #
+    # ⚠️ Sessão de ENTRADA fica de fora (24/08/2026): ela não gera Separação nem
+    # Expedição, então se a última sessão do dia fosse uma entrada, essas duas
+    # checagens ficariam vermelhas para sempre, sem nada a fazer para resolver.
+    saida_session_only = models.PickingSession.file_type != models.FileType.IMPORT
+
     if unit_id:
         last_session_id = db.query(models.Order.session_id).join(
             models.PickingSession, models.PickingSession.id == models.Order.session_id
         ).filter(
             _session_created_on(target),
+            saida_session_only,
             models.Order.status != models.OrderStatus.CANCELLED,
             models.Order.status != models.OrderStatus.INACTIVE,
             models.Order.seller_id.in_(sellers_in_unit),
@@ -374,6 +416,7 @@ def master_dashboard(
     else:
         last_session = db.query(models.PickingSession).filter(
             _session_created_on(target),
+            saida_session_only,
         ).order_by(models.PickingSession.id.desc()).first()
 
     if last_session:

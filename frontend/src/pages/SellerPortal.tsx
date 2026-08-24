@@ -208,6 +208,7 @@ export default function SellerPortalPage() {
 
   const [tab, setTab] = useState<Tab>('orders');
   const [search, setSearch] = useState('');
+  const [exportingStock, setExportingStock] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo]     = useState(today);
@@ -642,11 +643,23 @@ export default function SellerPortalPage() {
                 </div>
                 {sellerId && (
                   <button
-                    onClick={() => { inventoryApi.exportStockXlsx(sellerId); toast.success('Export iniciado'); }}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-line text-t3 hover:text-t1 hover:bg-surface-2 hover:border-line-strong"
+                    disabled={exportingStock}
+                    onClick={async () => {
+                      setExportingStock(true);
+                      try {
+                        await inventoryApi.exportStockXlsx(sellerId);
+                        toast.success('Download concluído');
+                      } catch {
+                        toast.error('Falha ao gerar o Excel. Tente novamente.');
+                      } finally {
+                        setExportingStock(false);
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-line text-t3 hover:text-t1 hover:bg-surface-2 hover:border-line-strong disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <Download size={14} />
-                    Exportar Excel
+                    {exportingStock
+                      ? <><span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> Baixando...</>
+                      : <><Download size={14} /> Exportar Excel</>}
                   </button>
                 )}
               </div>

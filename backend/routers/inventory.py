@@ -752,6 +752,108 @@ def export_stock_csv(
     )
 
 
+@router.get("/stock/{seller_id}/export/xlsx")
+def export_stock_xlsx(
+    seller_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Exporta posição de estoque em Excel (.xlsx) para download.
+    """
+    user_role = (
+        current_user.role.value
+        if hasattr(current_user.role, "value")
+        else current_user.role
+    )
+    if user_role == "client" and current_user.seller_id != seller_id:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    if user_role == "operator":
+        raise HTTPException(status_code=403, detail="Operador não tem permissão para exportar estoque")
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(500, "openpyxl não instalado. Execute: pip install openpyxl")
+
+    positions = db.query(models.StockPosition).filter(
+        models.StockPosition.seller_id == seller_id
+    ).order_by(models.StockPosition.sku).all()
+
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    seller_name = seller.name if seller else str(seller_id)
+
+    PURPLE = "7B63E8"
+    DARK   = "14122A"
+    LIGHT  = "F0EEFF"
+    WHITE  = "FFFFFF"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Estoque"
+
+    header_font  = Font(name="Calibri", bold=True, color=WHITE, size=10)
+    header_fill  = PatternFill("solid", fgColor=PURPLE)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    data_font    = Font(name="Calibri", size=9)
+    thin_border  = Border(
+        left=Side(style="thin", color="D0CCEE"),
+        right=Side(style="thin", color="D0CCEE"),
+        top=Side(style="thin", color="D0CCEE"),
+        bottom=Side(style="thin", color="D0CCEE"),
+    )
+
+    ws.merge_cells("A1:F1")
+    title_cell = ws["A1"]
+    title_cell.value = f"Posição de Estoque  |  {seller_name}  |  {today_brasilia().strftime('%d/%m/%Y')}"
+    title_cell.font  = Font(name="Calibri", bold=True, color=WHITE, size=12)
+    title_cell.fill  = PatternFill("solid", fgColor=DARK)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    headers    = ["SKU", "Nome do Produto", "Estoque Inicial", "Entrada", "Saída", "Estoque Final"]
+    col_widths = [16, 40, 14, 12, 12, 14]
+    for col, (h, w) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=2, column=col, value=h)
+        cell.font      = header_font
+        cell.fill      = header_fill
+        cell.alignment = header_align
+        cell.border    = thin_border
+        ws.column_dimensions[get_column_letter(col)].width = w
+    ws.row_dimensions[2].height = 18
+
+    row_num = 3
+    for p in positions:
+        fill = PatternFill("solid", fgColor=LIGHT) if row_num % 2 == 0 else PatternFill("solid", fgColor=WHITE)
+        row = [p.sku, p.product_name or "", p.initial_stock, p.total_in, p.total_out, p.current_stock]
+        for col, val in enumerate(row, 1):
+            cell = ws.cell(row=row_num, column=col, value=val)
+            cell.font      = data_font
+            cell.border    = thin_border
+            cell.fill      = fill
+            cell.alignment = Alignment(horizontal="center" if col != 2 else "left", vertical="center")
+        row_num += 1
+
+    ws.freeze_panes = "A3"
+
+    ws.cell(row=row_num, column=1, value=f"Total: {len(positions)} SKUs").font = \
+        Font(name="Calibri", bold=True, size=9, color=PURPLE)
+    ws.row_dimensions[row_num].height = 16
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"estoque_{seller_name}_{today_brasilia().isoformat()}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/movements/{seller_id}/export/csv")
 def export_movements_csv(
     seller_id: int,

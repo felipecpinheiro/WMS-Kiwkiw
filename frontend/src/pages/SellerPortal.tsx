@@ -633,11 +633,22 @@ export default function SellerPortalPage() {
           {/* ── ESTOQUE (tabela com sort + click p/ gráfico) ──────────────── */}
           {tab === 'stock' && (
             <>
-              <div className="relative max-w-sm">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
-                <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Buscar SKU ou produto..."
-                  className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
+              <div className="flex gap-3 items-center flex-wrap">
+                <div className="relative max-w-sm flex-1 min-w-[160px]">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
+                  <input value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar SKU ou produto..."
+                    className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+                {sellerId && (
+                  <button
+                    onClick={() => { inventoryApi.exportStockXlsx(sellerId); toast.success('Export iniciado'); }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-line text-t3 hover:text-t1 hover:bg-surface-2 hover:border-line-strong"
+                  >
+                    <Download size={14} />
+                    Exportar Excel
+                  </button>
+                )}
               </div>
 
               {isMobile ? (

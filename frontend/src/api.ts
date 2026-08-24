@@ -182,6 +182,33 @@ export interface OrderItem {
   scanned_qty: number;
 }
 
+/** Uma linha da conferência final de entrada: o que a NF diz x o que foi contado. */
+export interface EntryConferenceLine {
+  sku: string;
+  product_name: string;
+  expected: number;
+  counted: number;
+  /** contado - esperado. Negativo = faltou, positivo = veio a mais. */
+  diff: number;
+  status: 'ok' | 'over' | 'short' | 'missing';
+}
+
+/** Resposta de POST /scanning/orders/{id}/finalize-entry (preview e confirmação). */
+export interface EntryConference {
+  success: boolean;
+  confirmed: boolean;
+  order_id: number;
+  nf_number: string;
+  lines: EntryConferenceLine[];
+  divergent_count: number;
+  total_expected: number;
+  total_counted: number;
+  /** Só na confirmação: */
+  message?: string;
+  stock_applied?: boolean;
+  stock_skipped_reason?: string | null;
+}
+
 export interface PickingSession {
   id: number;
   session_date: string;
@@ -222,6 +249,11 @@ export interface SessionCard {
   // bipar (sem produto não há barcode). Não entram em total_orders.
   held_orders?: number;
   held_only?: boolean;
+  /**
+   * Conferências de ENTRADA pausadas neste card. Já contadas em
+   * pending_orders — a NF pausada continua EM ABERTO; isto é só o badge.
+   */
+  paused_orders?: number;
 }
 
 export interface DuplicateOrderInfo {
@@ -565,6 +597,16 @@ export const scanningApi = {
     operator_id: number;
     reason?: string;
   }) => api.post('/scanning/interrupt', data),
+  /**
+   * Conferência final de uma NF de ENTRADA (24/08/2026).
+   * Sem `confirm` devolve o comparativo esperado x contado sem gravar nada;
+   * com `confirm: true` lança o estoque pela contagem e conclui a NF.
+   */
+  finalizeEntry: (orderId: number, confirm = false) =>
+    api.post<EntryConference>(`/scanning/orders/${orderId}/finalize-entry`, { confirm }),
+  /** Pausa a conferência de entrada — a NF continua EM ABERTO para retomar depois. */
+  pauseEntry: (orderId: number, reason?: string) =>
+    api.post(`/scanning/orders/${orderId}/pause`, { reason }),
   auditLog: (params?: Record<string, any>) =>
     api.get('/scanning/audit-log', { params }),
   /** Log de auditoria do sistema: todas as ações (cadastros, uploads, estoque, etc.). */
@@ -674,6 +716,11 @@ export const inventoryApi = {
     downloadAuthenticatedFile(
       `/inventory/stock/${sellerId}/export/csv`,
       `estoque_${sellerId}.csv`,
+    ),
+  exportStockXlsx: (sellerId: number) =>
+    downloadAuthenticatedFile(
+      `/inventory/stock/${sellerId}/export/xlsx`,
+      `estoque_${sellerId}.xlsx`,
     ),
   exportMovementsCsv: (sellerId: number, dateFrom?: string, dateTo?: string) => {
     const params = new URLSearchParams();

@@ -16,6 +16,7 @@ import { scanningApi, cadastrosApi } from '../api';
 import type { EntryConference } from '../api';
 import toast from 'react-hot-toast';
 import ThemeToggle from '../components/ThemeToggle';
+import Logo from '../components/Logo';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const photoSrc = (url: string | null | undefined) =>
@@ -956,7 +957,7 @@ export default function ScannerPage() {
         {/* Header */}
         <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2 mb-1">
-            <img src="/logo.svg" alt="Kiwkiw" className="w-7 h-7 flex-shrink-0" />
+            <Logo size={32} />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold text-t1">Sessão #{sessionId}</p>
               <p className="text-[10px] text-t4">Bipagem</p>

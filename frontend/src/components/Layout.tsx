@@ -13,6 +13,7 @@ import {
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
 import ThemeToggle from './ThemeToggle';
+import Logo from './Logo';
 
 const navItems = [
   { group: 'Principal', items: [
@@ -91,11 +92,7 @@ export default function Layout() {
         <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2.5">
             {/* Logo da marca */}
-            <img
-              src="/logo.svg"
-              alt="Kiwkiw"
-              className="w-10 h-10 flex-shrink-0 drop-shadow-lg"
-            />
+            <Logo size={40} className="drop-shadow-lg" />
             <div>
               <div className="text-sm font-bold text-t1 leading-tight">Kiwkiw</div>
               <div className="text-[10px] font-medium text-t4">

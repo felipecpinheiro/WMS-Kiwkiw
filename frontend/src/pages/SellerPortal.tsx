@@ -26,6 +26,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
 import ThemeToggle from '../components/ThemeToggle';
+import Logo from '../components/Logo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -359,9 +360,7 @@ export default function SellerPortalPage() {
         {/* Logo + seller */}
         <div className="p-4 border-b border-line-soft">
           <div className="flex items-center gap-2.5 mb-3">
-            <div className="w-8 h-8 flex-shrink-0 bg-violet-600 rounded-lg flex items-center justify-center">
-              <span className="text-t1 font-black text-xs">K</span>
-            </div>
+            <Logo size={32} />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-t1 leading-tight">Kiwkiw WMS</div>
               <div className="text-[9px] font-medium text-t4">

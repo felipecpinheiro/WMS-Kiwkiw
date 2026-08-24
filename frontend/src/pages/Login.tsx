@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import { Eye, EyeOff } from 'lucide-react';
 import { authApi } from '../api';
 import ThemeToggle from '../components/ThemeToggle';
+import Logo from '../components/Logo';
 
 interface LoginForm {
   email: string;
@@ -76,10 +77,9 @@ export default function LoginPage() {
         {/* Logo area */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center mb-4">
-            <img
-              src="/logo.svg"
-              alt="Kiwkiw"
-              className="w-20 h-20 drop-shadow-2xl"
+            <Logo
+              size={80}
+              className="drop-shadow-2xl"
               style={{ filter: 'drop-shadow(0 8px 24px rgba(123,99,232,0.40))' }}
             />
           </div>

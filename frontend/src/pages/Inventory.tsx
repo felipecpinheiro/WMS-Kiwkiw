@@ -583,6 +583,10 @@ function EditMovementModal({
             </p>
             <input
               type="password"
+              name="supervision-passphrase"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={password}
               onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !verifying && checkPassword()}
@@ -1865,6 +1869,11 @@ export default function InventoryPage() {
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Buscar SKU ou produto..."
+                  type="search"
+                  name="stock-search"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore
                   className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-line text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500/50"
                   style={{ background: 'rgb(var(--surface-2))' }}
                 />
@@ -2082,6 +2091,11 @@ export default function InventoryPage() {
                   value={movSearch}
                   onChange={e => setMovSearch(e.target.value)}
                   placeholder="Buscar SKU, produto ou NF..."
+                  type="search"
+                  name="mov-search"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore
                   className="pl-7 pr-3 py-1.5 text-xs rounded-lg border border-line text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500/40"
                   style={{ background: 'rgb(var(--surface-2))', minWidth: 200 }}
                 />

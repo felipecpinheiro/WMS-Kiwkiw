@@ -460,6 +460,10 @@ export default function UsersPage() {
                 </label>
                 <input
                   type="password"
+                  name="user-new-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore
                   value={form.password}
                   onChange={e => f('password', e.target.value)}
                   placeholder={editId ? 'Deixe em branco para não alterar' : 'Mínimo 6 caracteres'}

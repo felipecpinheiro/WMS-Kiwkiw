@@ -134,6 +134,10 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
             <div className="relative">
               <input
                 type={showNew ? 'text' : 'password'}
+                name="new-password"
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore
                 value={newPwd}
                 onChange={e => setNewPwd(e.target.value)}
                 placeholder="Mínimo 6 caracteres"
@@ -151,6 +155,10 @@ function ForcePasswordChangeModal({ onDone }: { onDone: () => void }) {
             <div className="relative">
               <input
                 type={showConfirm ? 'text' : 'password'}
+                name="confirm-new-password"
+                autoComplete="new-password"
+                data-lpignore="true"
+                data-1p-ignore
                 value={confirmPwd}
                 onChange={e => setConfirmPwd(e.target.value)}
                 placeholder="Repita a senha"

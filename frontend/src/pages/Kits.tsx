@@ -277,6 +277,11 @@ export default function KitsPage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar por SKU ou nome do kit..."
+            type="search"
+            name="kit-search"
+            autoComplete="off"
+            data-lpignore="true"
+            data-1p-ignore
             className="w-full border border-line rounded-lg pl-9 pr-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-violet-500"
           />
         </div>

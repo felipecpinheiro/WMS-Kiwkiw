@@ -1064,7 +1064,11 @@ export default function OrdersPage() {
           <div className={`relative ${isMobile ? 'flex-1 min-w-0' : ''}`}>
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
             <input
-              type="text"
+              type="search"
+              name="order-search"
+              autoComplete="off"
+              data-lpignore="true"
+              data-1p-ignore
               placeholder="Buscar NF, cliente, seller..."
               value={search}
               onChange={e => setSearch(e.target.value)}

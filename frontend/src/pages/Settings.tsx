@@ -483,6 +483,10 @@ export default function SettingsPage() {
             <label className="block text-xs text-t3 mb-1">Senha atual *</label>
             <input
               type="password"
+              name="current-password"
+              autoComplete="current-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={pwdForm.current}
               onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
               placeholder="Sua senha atual"
@@ -494,6 +498,10 @@ export default function SettingsPage() {
             <label className="block text-xs text-t3 mb-1">Nova senha *</label>
             <input
               type="password"
+              name="new-password"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={pwdForm.next}
               onChange={e => setPwdForm(p => ({ ...p, next: e.target.value }))}
               placeholder="Mínimo 6 caracteres"
@@ -505,6 +513,10 @@ export default function SettingsPage() {
             <label className="block text-xs text-t3 mb-1">Confirmar nova senha *</label>
             <input
               type="password"
+              name="confirm-new-password"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={pwdForm.confirm}
               onChange={e => setPwdForm(p => ({ ...p, confirm: e.target.value }))}
               placeholder="Repita a nova senha"

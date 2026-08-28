@@ -422,6 +422,11 @@ export default function ProductsPage() {
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
           <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Buscar SKU ou nome..."
+            type="search"
+            name="product-search"
+            autoComplete="off"
+            data-lpignore="true"
+            data-1p-ignore
             className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500" />
         </div>
         <select value={sellerFilter} onChange={e => { setSellerFilter(e.target.value); setPage(1); }}

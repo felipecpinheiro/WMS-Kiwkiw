@@ -360,6 +360,11 @@ export default function SellersPage() {
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-t4" />
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Buscar seller..."
+          type="search"
+          name="seller-search"
+          autoComplete="off"
+          data-lpignore="true"
+          data-1p-ignore
           className="w-full pl-8 pr-3 py-2 border border-line rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500"
           style={clsStyle} />
       </div>

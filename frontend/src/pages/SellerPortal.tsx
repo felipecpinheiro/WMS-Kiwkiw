@@ -474,17 +474,29 @@ export default function SellerPortalPage() {
               <div>
                 <label className="block text-xs text-t3 mb-1">Senha atual *</label>
                 <input type="password" value={pwdForm.current} onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
+                  name="current-password"
+                  autoComplete="current-password"
+                  data-lpignore="true"
+                  data-1p-ignore
                   className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div>
                 <label className="block text-xs text-t3 mb-1">Nova senha *</label>
                 <input type="password" value={pwdForm.next} onChange={e => setPwdForm(p => ({ ...p, next: e.target.value }))}
+                  name="new-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore
                   placeholder="Mínimo 6 caracteres"
                   className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div>
                 <label className="block text-xs text-t3 mb-1">Confirmar *</label>
                 <input type="password" value={pwdForm.confirm} onChange={e => setPwdForm(p => ({ ...p, confirm: e.target.value }))}
+                  name="confirm-new-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore
                   className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
               </div>
               <div className="flex gap-2 pt-1">
@@ -578,6 +590,11 @@ export default function SellerPortalPage() {
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar NF ou cliente..."
+                    type="search"
+                    name="portal-order-search"
+                    autoComplete="off"
+                    data-lpignore="true"
+                    data-1p-ignore
                     className="w-full pl-7 pr-3 py-1.5 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
 
@@ -638,6 +655,11 @@ export default function SellerPortalPage() {
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar SKU ou produto..."
+                    type="search"
+                    name="portal-stock-search"
+                    autoComplete="off"
+                    data-lpignore="true"
+                    data-1p-ignore
                     className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
                 {sellerId && (
@@ -793,6 +815,11 @@ export default function SellerPortalPage() {
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="Buscar SKU, produto ou NF..."
+                    type="search"
+                    name="portal-mov-search"
+                    autoComplete="off"
+                    data-lpignore="true"
+                    data-1p-ignore
                     className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
                 {isMobile ? (

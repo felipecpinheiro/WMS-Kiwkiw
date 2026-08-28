@@ -1041,7 +1041,7 @@ Acesse: http://localhost:5173
 ### Backend
 | Variável | Usado para |
 |----------|-----------|
-| `DATABASE_URL` | URL do banco (padrão: SQLite local). Railway injeta PostgreSQL automaticamente. Prefixo `postgres://` é corrigido para `postgresql://` no código. |
+| `DATABASE_URL` | URL do banco (padrão: SQLite local). Prefixo `postgres://` é corrigido para `postgresql://` no código. ⚠️ **Em produção TEM que usar a rede interna do Railway** (`...railway.internal:5432`). Apontar para o proxy público (`*.proxy.rlwy.net`, porta alta) custa ~150ms POR CONSULTA e foi a causa da lentidão crônica até 27/08/2026 — ver a seção "A lentidão crônica NÃO era código". |
 | `ALLOWED_ORIGINS` | CORS (separados por vírgula; `*` = todos) |
 | `WMS_EDIT_PASSPHRASE` | Senha para edição de movimentações de estoque (admin only) |
 
@@ -1150,6 +1150,104 @@ psycopg2-binary>=2.9.9             ← PostgreSQL
 - Sellers selecionados de outras unidades são **mantidos no array** mas ficam ocultos ao trocar de unidade
 - O botão "Selecionar todos desta unidade" marca/desmarca apenas os sellers visíveis (da unidade atual), sem afetar os de outras unidades
 - Ao trocar de unidade no form, `seller_ids` **não é limpo** — sellers antigos permanecem selecionados invisíveis
+
+---
+
+## 🌐 A lentidão crônica NÃO era código — era a rota até o banco (27/08/2026)
+
+**Leia esta seção ANTES de abrir qualquer investigação de performance.** Meses de trabalho
+(índices, fim de N+1, `/perf`) atacaram o código, que já estava rápido. O gargalo real sempre
+esteve na **configuração de rede entre a aplicação e o banco**.
+
+**O que estava errado:** a variável `DATABASE_URL` do serviço `web` no Railway apontava para o
+**proxy público** (`<host>.proxy.rlwy.net:<porta>`) em vez da **rede interna**. Cada consulta saía
+para a internet e voltava, custando **~150ms por ida-e-volta** — contra ~0,1ms com o banco na
+mesma rede.
+
+**A fórmula que explicava tudo:** `tempo da tela ≈ (nº de consultas) × 150ms`
+
+| Tela | consultas | produção (antes) | por consulta |
+|---|---:|---:|---:|
+| bipagem (`scan-logs`) | 2 | rápido, ninguém reclamava | — |
+| `sessions/{id}/orders` | 7 | 3.217 – 29.105ms | — |
+| `GET /cadastros/users` | 33 | 4.624 – 5.578ms | **140–169ms** |
+| `GET /dashboard/master` | 38 | 5.490 – 7.618ms | **144–200ms** |
+
+Dois endpoints sem nenhuma relação entre si davam a **mesma** latência por consulta. Foi essa
+constante que denunciou rede, não código.
+
+**Como foi provado (reprodução, não hipótese):** dump de produção restaurado em Postgres local +
+backend real com 1 worker. Isolados, os mesmos endpoints levavam **26ms, 30ms e 266ms**.
+Injetando artificialmente 150ms por consulta no ambiente local, os números de produção foram
+**reproduzidos exatamente** (users 5.056ms, dashboard 6.029ms).
+
+**A correção:** no serviço `web` -> *Variables* -> `DATABASE_URL`, montada por referências:
+
+```
+postgresql://${{Postgres.PGUSER}}:${{Postgres.POSTGRES_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.PGDATABASE}}
+```
+
+Nomes reais no Railway: aplicação = **`web`**, banco = **`Postgres`**, projeto
+`pretty-rejoicing`, ambiente `production`. **Nenhuma linha de código mudou.**
+
+⚠️ **O `DATABASE_URL` do serviço `Postgres` está VAZIO** (`<empty string>`) — foi por isso que a
+configuração original recorreu ao endereço público. Por isso a URL é **montada peça a peça** em vez
+de referenciar `${{Postgres.DATABASE_URL}}`. Não preencher a variável do serviço do banco.
+
+⚠️ **Usar `5432` fixo, NUNCA `PGPORT`** — em alguns projetos ele guarda a porta do proxy público
+(`18963`), que é exatamente o que se quer evitar.
+
+⚠️ **O backup diário NÃO pode ser alterado** — roda da máquina do usuário, de FORA do Railway, e
+precisa continuar usando o endereço público. `D:\KiwKiw\backups_bd\backup_config.ps1` guarda essa
+mesma URL pública, o que serve de cópia do valor de rollback.
+
+**Testado localmente ANTES de aplicar:** se o endereço interno não resolver no arranque, o app
+**não trava** — falha em 15s com `could not translate host name` + `Application startup failed.
+Exiting.` (código 3), e o Railway reinicia (`restartPolicyMaxRetries=3`). O deploy real subiu em
+**2 segundos**, com `Backfill kit_items.product_id` e `Application startup complete.` — prova de
+conexão, já que a migração do arranque exige banco.
+
+**RESULTADO CONFIRMADO EM PRODUÇÃO** (log de 24h cruzando o deploy das 12:06 BRT de 27/08/2026):
+
+| | antes (18,7h) | depois (5,3h) |
+|---|---:|---:|
+| `GET /dashboard/master` lentas | **14** de 96 chamadas (todas 5.888–6.803ms) | **0** de 397 chamadas |
+| `POST /orders/import` lentas | **6** de 17 (até **37.178ms**) | **0** de 2 |
+| `POST /scanning/scan` lentas | 2 de 801 | 1 de 704 (6.942ms, caso isolado) |
+| tráfego total | 5.354 req (286/h) | 4.940 req (**932/h**) |
+
+O sistema passou a aguentar **3,3× mais tráfego por hora** e parou de ficar lento. O Dashboard
+saltou de 5,1 para 74,9 chamadas/hora — sinal de que as pessoas voltaram a usar a tela.
+
+⚠️ **Ficou 1 caso isolado** de `POST /scanning/scan` em 6.942ms, 7 min após o deploy, sem reinício
+de container por perto. 1 em 704 — não é padrão, mas se virar recorrência, investigar.
+
+### Hipótese que estava ERRADA — não repetir
+
+Cheguei a suspeitar de `_saida_only()` em `dashboard.py` (adicionada em 24/08/2026) por causa do
+`OR ... IS NULL`. **Medido: o Dashboard leva 266ms local com dado real, sempre 38 consultas, e é
+plano de 328 a 1.068 pedidos/dia.** A otimização de 02/08/2026 continua intacta. Não perder tempo
+aí de novo.
+
+### Triagem para a próxima vez que alguém disser "está lento"
+
+1. O endpoint é lento **em produção** mas rápido **local**? -> suspeite de infraestrutura, não código
+2. Divida o tempo de produção pelo **número de consultas** do endpoint
+3. Se der um valor **constante entre endpoints diferentes** -> é latência de rede por consulta
+4. Confira se o `DATABASE_URL` usa a rede interna **antes** de abrir o código
+
+⚠️ **`/perf` é cego para esta classe de problema** — ele roda tudo local, onde o banco está na
+mesma máquina. Ver a nota em `.claude/commands/perf.md`.
+
+### Ficou sem explicação (não inventar causa)
+
+Dois pontos não foram reproduzidos e **continuam em aberto**: os picos de **11–29s** em
+`GET /scanning/sessions/{id}/orders` (o modelo prevê 1,1s) e um **padrão decrescente monotônico**
+ao longo de 77 min (29.105ms -> 15.593ms; a sessão 323 fez o mesmo em 39 min).
+
+⚠️ **Não dá para declarar resolvidos.** No log de 24h que validou a correção, esses picos
+**não apareceram nem antes nem depois** do deploy — ou seja, o período não exercitou o cenário.
+Se voltarem a aparecer, é sinal de que têm causa própria, independente da rede.
 
 ---
 
@@ -1492,3 +1590,8 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Ler `order.items` logo após criar os itens no import | Itens são criados com `order_id` (não pela relationship) e a sessão é `autoflush=False` → a lista vem **vazia** e nada baixa, em silêncio | `db.flush()` e recarregar com `joinedload(Order.items)` antes de usar |
 | Consultar produto/kit dentro de laço no import | Era N+1: 1 query de kit + 1 de produto **por item** do arquivo (2.410 queries num arquivo de 960 linhas) | Já resolvido pelos caches `_kits_of` / `_products_of` em `import_excel_orders`. Ao mexer no laço de persistência, **continuar passando `kits_by_sku`** para `process_order_items` — sem ele a função volta a consultar item a item (fallback mantido de propósito) |
 | Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado 3× nesta base: `scanning.py` e `dashboard.py` **já corrigidos**, `billing.py:193-213` (`_get_box`) **ainda em aberto** — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema (01-02/08/2026, ver seção "Performance — N+1 na bipagem") | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** (`WHERE (seller_id, sku) IN (...)` ou `GROUP BY`) fora do laço — mesmo padrão já usado em `get_session_orders`/`_build_progress` e agora em `master_dashboard` |
+| Investigar "o sistema está lento" abrindo o código direto | Até 27/08/2026 a lentidão crônica NÃO era código: o `DATABASE_URL` apontava para o proxy público do Railway e cada consulta custava ~150ms. Meses de otimização de código foram gastos num gargalo que estava na configuração de rede | **Primeiro** conferir se o endpoint é lento em produção mas rápido local, e dividir o tempo de produção pelo nº de consultas. Valor constante entre endpoints diferentes = latência de rede, não código |
+| Confiar no `/perf` para diagnosticar lentidão de produção | A bateria roda **tudo local**, com o banco na mesma máquina — é estruturalmente cega para latência de rede entre app e banco. Ela diria "está tudo ótimo" com o sistema travando em produção | `/perf` mede **código**. Para lentidão relatada em produção, checar infraestrutura primeiro (ver `.claude/commands/perf.md`) |
+| Montar a URL do banco com `PGPORT` | Em alguns projetos Railway o `PGPORT` guarda a porta do **proxy público** (ex: `18963`) — usar isso reintroduz exatamente o problema | Usar **`5432` fixo** com `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |
+| Alterar o `backup_config.ps1` para a rede interna | O backup roda da máquina do usuário, de **fora** do Railway — a rede interna não existe de lá e o backup pararia em silêncio | Backup **continua** com o endereço público. Só a variável do serviço `web` muda |
+| Apertar Deploy no Railway sem olhar o "Details" | As mudanças ficam em espera ("Apply N changes") e o Deploy aplica **tudo** da fila. Em 27/08/2026 havia um serviço `function-bun` (template Bun/Hono, nada a ver com o WMS) prestes a ser criado junto | Abrir *Details*, descartar individualmente o que não é seu, conferir que o rodapé lista só o serviço esperado |

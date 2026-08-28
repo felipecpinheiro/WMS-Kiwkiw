@@ -562,7 +562,8 @@ def update_movement(
     """
     Edita uma movimentação existente.
     Requer papel admin + senha especial.
-    A diferença de quantidade é refletida na posição de estoque.
+    Mudanças de TIPO e de QUANTIDADE são refletidas na posição de estoque:
+    o efeito antigo do registro é desfeito e o novo é aplicado.
     """
     passphrase = body.get("passphrase", "")
     if passphrase != EDIT_PASSPHRASE:
@@ -578,30 +579,88 @@ def update_movement(
     old_qty = movement.quantity
     old_type = movement.movement_type
 
-    if "quantity" in body and body["quantity"] is not None:
-        new_qty = int(body["quantity"])
+    def _norm_type(value) -> str:
+        """Normaliza enum/str para 'Entrada'/'Saída' (aceita legados 'IN'/'OUT')."""
+        raw = value.value if hasattr(value, "value") else str(value or "")
+        return _MT_NORMALIZE.get(raw.strip().upper(), raw)
+
+    old_type_str = _norm_type(old_type)
+
+    # ── Tipo (Entrada/Saída) ────────────────────────────────────────────────
+    # ⚠️ Até 28/08/2026 este campo era LIDO (para escolher o balde da posição) e
+    # NUNCA gravado: a tela mandava "Saída", o backend descartava em silêncio e
+    # devolvia o tipo antigo na resposta — com o toast de sucesso mentindo.
+    new_type_str = old_type_str
+    if "movement_type" in body and body["movement_type"] is not None:
+        candidate = _norm_type(body["movement_type"])
+        try:
+            new_type_str = models.MovementType(candidate).value
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "movement_type deve ser um de: "
+                    f"{[e.value for e in models.MovementType]}"
+                ),
+            )
+
+    # ── Quantidade ──────────────────────────────────────────────────────────
+    qty_informada = "quantity" in body and body["quantity"] is not None
+    new_qty = old_qty
+    if qty_informada:
+        # int() cru virava 500 com qualquer texto ("abc"): o ValueError subia sem
+        # tratamento. Pela tela e dificil chegar aqui (campo e type=number), mas
+        # uma chamada forjada estourava o endpoint.
+        try:
+            new_qty = int(body["quantity"])
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=422, detail="Quantidade deve ser um numero inteiro"
+            )
         if new_qty <= 0:
             raise HTTPException(status_code=422, detail="Quantidade deve ser > 0")
 
-        # Reverte o efeito antigo na posição e aplica o novo
+    tipo_mudou = new_type_str != old_type_str
+    qtd_mudou = new_qty != old_qty
+
+    # ── Posição de estoque: desfaz o efeito ANTIGO e aplica o NOVO ───────────
+    # ⚠️ Precisa rodar quando o TIPO muda, não só a quantidade. Inverter
+    # Entrada→Saída de N peças tira N de total_in E põe N em total_out: o saldo
+    # cai 2N. A conta anterior assumia tipo constante e, num swap com a mesma
+    # quantidade, não mexia em nada — a linha passaria a dizer "Saída" e a
+    # posição continuaria contando como entrada.
+    if tipo_mudou or qtd_mudou:
         position = db.query(models.StockPosition).filter(
             models.StockPosition.seller_id == movement.seller_id,
             models.StockPosition.sku == movement.sku,
         ).first()
 
         if position:
-            # Normaliza old_type para comparação (suporta valores legados 'IN'/'OUT')
-            _old_type_str = (old_type.value if hasattr(old_type, "value") else str(old_type or ""))
-            _old_type_str = _MT_NORMALIZE.get(_old_type_str.upper(), _old_type_str)
-            if _old_type_str == models.MovementType.IN.value:
-                position.total_in = max(0, position.total_in - old_qty + new_qty)
+            total_in = position.total_in or 0
+            total_out = position.total_out or 0
+
+            # Desfaz o registro como ele estava
+            if old_type_str == models.MovementType.IN.value:
+                total_in -= old_qty
             else:
-                position.total_out = max(0, position.total_out - old_qty + new_qty)
+                total_out -= old_qty
+
+            # Aplica o registro como ele fica
+            if new_type_str == models.MovementType.IN.value:
+                total_in += new_qty
+            else:
+                total_out += new_qty
+
+            position.total_in = max(0, total_in)
+            position.total_out = max(0, total_out)
             position.current_stock = position.initial_stock + position.total_in - position.total_out
             from ..services.stock_manager import calculate_stock_level
             position.level = calculate_stock_level(position.current_stock)
             position.updated_at = now_brasilia()
 
+    if tipo_mudou:
+        movement.movement_type = models.MovementType(new_type_str)
+    if qty_informada:
         movement.quantity = new_qty
         movement.adjusted_quantity = new_qty
 
@@ -616,15 +675,27 @@ def update_movement(
             pass
 
     # ── Trilha de auditoria: registra edição manual ──────────────────────────
+    detalhe = [
+        f"Edição de movimentação #{movement_id}",
+        f"SKU: {movement.sku}",
+        f"Seller: {movement.seller_id}",
+    ]
+    if tipo_mudou:
+        detalhe.append(f"Tipo: {old_type_str} -> {new_type_str}")
+    detalhe.append(
+        f"Qtd: {old_qty} -> {new_qty}" if qtd_mudou else f"Qtd: {movement.quantity}"
+    )
+    detalhe.append(f"Data: {movement.movement_date}")
+    if movement.order_id:
+        # Editar movimento de NF é permitido (decisão do dono do sistema), mas
+        # fica marcado: o sinal dele passa a divergir do da NF de origem.
+        detalhe.append(f"MOVIMENTO VINCULADO A NF (order_id={movement.order_id})")
+
     db.add(models.AuditLog(
         entity_type="StockMovement",
         entity_id=movement_id,
         action="EDIT_MOVEMENT",
-        detail=(
-            f"Edição de movimentação #{movement_id} | "
-            f"SKU: {movement.sku} | Seller: {movement.seller_id} | "
-            f"Nova Qtd: {movement.quantity} | Data: {movement.movement_date}"
-        ),
+        detail=" | ".join(detalhe),
         user_id=current_user.id,
     ))
 

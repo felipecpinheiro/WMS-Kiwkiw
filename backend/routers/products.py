@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 
@@ -152,12 +153,19 @@ def create_product(
 ):
     _assert_seller_exists(db, product.seller_id)
 
+    # ⚠️ SKU não diferencia maiúscula de minúscula (28/08/2026) — mesmo padrão do
+    # email de usuário. Sem isso, cadastrar 'MOSQ2' ao lado de 'mosq2' parte o
+    # estoque do produto em dois, que foi o que gerou a fusão de 34 grupos.
     existing = db.query(models.Product).filter(
         models.Product.seller_id == product.seller_id,
-        models.Product.sku == product.sku,
+        func.lower(models.Product.sku) == product.sku.lower(),
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail=f"SKU '{product.sku}' já cadastrado para este seller")
+        como = (f" como '{existing.sku}'" if existing.sku != product.sku else "")
+        raise HTTPException(
+            status_code=400,
+            detail=f"SKU '{product.sku}' já cadastrado para este seller{como}",
+        )
 
     p = models.Product(**product.model_dump())
     db.add(p)
@@ -1150,9 +1158,11 @@ def bulk_paste_products(
             results["skipped"] += 1
             continue
 
+        # SKU não diferencia caixa (28/08/2026) — colar 'MOSQ2' com 'mosq2' já
+        # cadastrado ATUALIZA o existente em vez de criar um segundo produto.
         existing = db.query(models.Product).filter(
             models.Product.seller_id == seller.id,
-            models.Product.sku == item.sku,
+            func.lower(models.Product.sku) == item.sku.lower(),
         ).first()
 
         if existing:
@@ -1323,10 +1333,18 @@ def bulk_upload_products(
         if s.code:
             sellers_cache[s.code.strip().lower()] = s
 
-    # ── Cache de produtos existentes: (seller_id, sku) → Product ─────────────
+    # ── Cache de produtos existentes: (seller_id, sku.lower()) → Product ─────
+    # ⚠️ Chave em MINÚSCULA: SKU não diferencia caixa (28/08/2026). Com a chave
+    # sensível, uma planilha trazendo 'MOSQ2' criava um segundo produto ao lado
+    # de 'mosq2' e o estoque se partia entre os dois.
     existing_products: dict = {}
-    for p in db.query(models.Product).all():
-        existing_products[(p.seller_id, p.sku)] = p
+    for p in db.query(models.Product).order_by(models.Product.id).all():
+        key = (p.seller_id, p.sku.lower())
+        atual = existing_products.get(key)
+        # desempate prefere o ATIVO — as grafias perdedoras da fusão de 28/08
+        # ficaram inativas e algumas com id menor que o canônico
+        if atual is None or (p.active and not atual.active):
+            existing_products[key] = p
 
     results = {"created": 0, "updated": 0, "skipped": 0, "errors": [], "sellers_not_found": set(), "inactive_sellers": set(), "stock_applied": 0}
     BATCH = 500
@@ -1386,7 +1404,7 @@ def bulk_upload_products(
             results["skipped"] += 1
             continue
 
-        key = (seller.id, sku)
+        key = (seller.id, sku.lower())   # SKU não diferencia caixa (28/08/2026)
         existing = existing_products.get(key)
 
         if existing:
@@ -1408,7 +1426,10 @@ def bulk_upload_products(
             )
             db.add(prod)
             existing_products[key] = prod   # evita duplicata na mesma planilha
-            created_pairs.add(key)
+            # ⚠️ o par vai com o SKU REAL, não com a chave minúscula: quem
+            # consome isso compara com OrderItem.sku, que guarda a grafia do
+            # cadastro. Mandar a versão minúscula não casaria com NF nenhuma.
+            created_pairs.add((seller.id, sku))
             results["created"] += 1
 
         pending += 1

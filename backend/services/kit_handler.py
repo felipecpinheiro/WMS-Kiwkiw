@@ -5,6 +5,7 @@ Reproduz a lógica da planilha de tratamento de kits.
 """
 
 from typing import Dict, List, Optional, Tuple
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .. import models
 
@@ -27,18 +28,23 @@ def expand_kit_items(
     pode ser None — componente sem vínculo continua valendo pelo SKU.
     Se não for kit, retorna o próprio item sem modificação.
 
-    kits_by_sku: mapa {kit_sku: Kit} dos kits ATIVOS daquele seller, já carregado
-    pelo chamador. Quando informado, evita uma consulta por item (o import chegava
-    a fazer uma query de kit para cada linha do arquivo). Quando None, mantém o
-    comportamento antigo de consultar o banco item a item.
+    kits_by_sku: mapa {kit_sku.lower(): Kit} dos kits ATIVOS daquele seller, já
+    carregado pelo chamador — a chave é MINÚSCULA. Quando informado, evita uma
+    consulta por item (o import chegava a fazer uma query de kit para cada linha
+    do arquivo). Quando None, mantém o comportamento antigo de consultar o banco
+    item a item, também sem diferenciar caixa.
     """
+    # ⚠️ O SKU não diferencia maiúscula de minúscula (28/08/2026). Sem isso, um
+    # kit cadastrado como KIT-A não explode quando o ERP manda kit-a: o SKU do
+    # kit entra cru no pedido e o operador não acha o produto na bancada.
     if kits_by_sku is not None:
-        kit = kits_by_sku.get(sku)
+        # o chamador monta o mapa já chaveado em minúscula
+        kit = kits_by_sku.get(sku.lower())
     else:
         # Busca o kit no banco de dados
         kit = db.query(models.Kit).filter(
             models.Kit.seller_id == seller_id,
-            models.Kit.kit_sku == sku,
+            func.lower(models.Kit.kit_sku) == sku.lower(),
             models.Kit.active == True,
         ).first()
 

@@ -741,9 +741,11 @@ def batch_resolve_sku(
                     status_code=400,
                     detail=f"SKU '{sku}': informe o nome do produto",
                 )
+            # SKU não diferencia caixa (28/08/2026): se o produto já existe com
+            # outra grafia, reaproveita em vez de criar um segundo.
             existing = db.query(models.Product).filter(
                 models.Product.seller_id == r.seller_id,
-                models.Product.sku == sku,
+                func.lower(models.Product.sku) == sku.lower(),
             ).first()
             if existing:
                 # Num lote, 400 aqui derrubaria as outras dezenas de linhas por

@@ -972,27 +972,42 @@ def import_excel_orders(
                     .filter(models.Kit.seller_id == sid, models.Kit.active == True)
                     .all()
                 )
-                # UniqueConstraint (seller_id, kit_sku) garante 1 kit por SKU
-                cached = {k.kit_sku: k for k in kits}
+                # UniqueConstraint (seller_id, kit_sku) garante 1 kit por SKU.
+                # Chave em minúscula: SKU não diferencia caixa (28/08/2026).
+                cached = {k.kit_sku.lower(): k for k in kits}
                 kits_cache[sid] = cached
             return cached
 
         def _products_of(sid: int) -> dict:
             """
-            {sku: product_id} do seller. SEM filtro de active — reproduz
-            exatamente o lookup item a item que existia aqui.
+            {sku.lower(): (product_id, sku_do_cadastro)} do seller.
+
+            ⚠️ A chave é MINÚSCULA porque o SKU do WMS não diferencia caixa
+            (28/08/2026): o ERP do seller manda 5MAGNESIO-1 e 5magnesio-1 para o
+            mesmo produto, e a planilha dele sempre somou os dois (o SOMASE do
+            Excel ignora caixa). O valor traz a grafia do CADASTRO para o item do
+            pedido ser gravado com ela, e não com a do arquivo.
+
+            SEM filtro de active — reproduz o lookup item a item que existia aqui.
+            Mas o desempate PREFERE O ATIVO: as grafias perdedoras da fusão de
+            28/08 ficaram como active=False e, em 2 grupos, com id MENOR que o
+            canônico. Desempatar pelo menor id devolveria a grafia inativa e
+            desfaria a fusão em silêncio no primeiro pedido.
             """
             cached = products_cache.get(sid)
             if cached is None:
                 cached = {}
                 rows = (
-                    db.query(models.Product.sku, models.Product.id)
+                    db.query(models.Product.sku, models.Product.id, models.Product.active)
                     .filter(models.Product.seller_id == sid)
                     .order_by(models.Product.id)
                     .all()
                 )
-                for _sku, _pid in rows:
-                    cached.setdefault(_sku, _pid)
+                for _sku, _pid, _active in rows:
+                    key = _sku.lower()
+                    atual = cached.get(key)
+                    if atual is None or (_active and not atual[2]):
+                        cached[key] = (_pid, _sku, bool(_active))
                 products_cache[sid] = cached
             return cached
 
@@ -1075,13 +1090,21 @@ def import_excel_orders(
                     # Componente de kit já vem com o product_id resolvido do cadastro.
                     # Para os demais (e para kit sem vínculo), busca pelo SKU.
                     product_id = item.get("product_id")
-                    if product_id is None:
-                        product_id = seller_products.get(item["sku"])
+                    # ⚠️ O SKU gravado é o do CADASTRO, não o do arquivo do ERP
+                    # (28/08/2026). Sem isso, o ERP mandando 5magnesio-1 cria um
+                    # item que não casa com o produto 5MAGNESIO-1 e o estoque
+                    # volta a se partir em duas grafias.
+                    sku_final = item["sku"]
+                    achado = seller_products.get(item["sku"].lower())
+                    if achado is not None:
+                        if product_id is None:
+                            product_id = achado[0]
+                        sku_final = achado[1]
 
                     order_item = models.OrderItem(
                         order_id=order.id,
                         product_id=product_id,
-                        sku=item["sku"],
+                        sku=sku_final,
                         product_name=item["product_name"],
                         quantity=item["quantity"],
                         is_kit_component=item["is_kit_component"],

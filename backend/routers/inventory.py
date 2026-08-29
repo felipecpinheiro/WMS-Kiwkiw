@@ -334,13 +334,16 @@ def create_manual_movement(
     except ValueError:
         mov_date = today_brasilia()
 
-    # Resolves product_name from DB if not provided
-    if not product_name or product_name == sku:
-        prod = db.query(models.Product).filter(
-            models.Product.seller_id == seller_id,
-            models.Product.sku == sku,
-        ).first()
-        if prod:
+    # ⚠️ SKU não diferencia caixa (28/08/2026): resolve contra o cadastro e passa
+    # a usar a GRAFIA DO CADASTRO daqui pra frente. Sem isso, lançar 'MOSQ2' à
+    # mão cria uma posição separada de 'mosq2' e parte o estoque do produto.
+    prod = db.query(models.Product).filter(
+        models.Product.seller_id == seller_id,
+        func.lower(models.Product.sku) == sku.lower(),
+    ).order_by(models.Product.active.desc(), models.Product.id).first()
+    if prod:
+        sku = prod.sku
+        if not product_name or product_name == sku:
             product_name = prod.name
 
     movement = models.StockMovement(
@@ -1158,17 +1161,20 @@ def analyze_history(
             sku_names[r["sku"]] = r["product_name_from_sheet"]
 
     # Quais SKUs já estão cadastrados?
+    # ⚠️ Comparação sem diferenciar caixa (28/08/2026): 'MOSQ2' na planilha e
+    # 'mosq2' no cadastro são o mesmo produto. Tratar como diferente faria a tela
+    # pedir para cadastrar um SKU que já existe, criando a duplicata.
     existing_skus = {
-        p.sku for p in db.query(models.Product.sku).filter(
+        p.sku.lower() for p in db.query(models.Product.sku).filter(
             models.Product.seller_id == seller_id,
-            models.Product.sku.in_(list(sku_names.keys())),
+            func.lower(models.Product.sku).in_([s.lower() for s in sku_names]),
         ).all()
     }
 
     unknown = [
         {"sku": sku, "suggested_name": name, "count": sum(1 for r in rows if r["sku"] == sku)}
         for sku, name in sku_names.items()
-        if sku not in existing_skus
+        if sku.lower() not in existing_skus
     ]
 
     return {
@@ -1211,15 +1217,17 @@ def execute_history_import(
     # ── Trava: nenhum SKU pode ficar sem produto cadastrado ──────────────────
     if not force:
         skus_arquivo = {r["sku"] for r in rows}
+        # comparação sem diferenciar caixa — ver comentário no /analyze
         cadastrados = {
-            p.sku for p in db.query(models.Product.sku).filter(
+            p.sku.lower() for p in db.query(models.Product.sku).filter(
                 models.Product.seller_id == seller_id,
-                models.Product.sku.in_(list(skus_arquivo)),
+                func.lower(models.Product.sku).in_([s.lower() for s in skus_arquivo]),
             ).all()
         }
         # SKUs que o usuário preencheu nome serão criados abaixo — não bloqueiam
-        a_criar = {sku for sku, nome in names_map.items() if nome and nome.strip()}
-        faltantes = sorted(skus_arquivo - cadastrados - a_criar)
+        a_criar = {sku.lower() for sku, nome in names_map.items() if nome and nome.strip()}
+        faltantes = sorted(s for s in skus_arquivo
+                           if s.lower() not in cadastrados and s.lower() not in a_criar)
         if faltantes:
             raise HTTPException(
                 status_code=422,
@@ -1237,9 +1245,10 @@ def execute_history_import(
     for sku, name in names_map.items():
         if not name or not name.strip():
             continue
+        # sem diferenciar caixa — não recria um produto que já existe com outra grafia
         existing = db.query(models.Product).filter(
             models.Product.seller_id == seller_id,
-            models.Product.sku == sku,
+            func.lower(models.Product.sku) == sku.lower(),
         ).first()
         if not existing:
             prod = models.Product(
@@ -1261,12 +1270,15 @@ def execute_history_import(
     skipped_dup = 0
     errors = []
 
-    nomes_por_sku = {
-        p.sku: p.name
-        for p in db.query(models.Product.sku, models.Product.name).filter(
-            models.Product.seller_id == seller_id,
-        ).all()
-    }
+    # ⚠️ Chaveado em MINÚSCULA e guardando a grafia do cadastro (28/08/2026):
+    # a movimentação é gravada com o SKU do CADASTRO, não com o da planilha.
+    # Sem isso, uma planilha escrevendo 'MOSQ2' cria uma posição paralela à do
+    # 'mosq2' cadastrado e o estoque do produto se parte em duas.
+    cadastro_por_sku: dict = {}
+    for p in db.query(models.Product.sku, models.Product.name, models.Product.active).filter(
+        models.Product.seller_id == seller_id,
+    ).order_by(models.Product.active.desc(), models.Product.sku).all():
+        cadastro_por_sku.setdefault(p.sku.lower(), (p.sku, p.name))
 
     now_ts = now_brasilia()
     pending: list[dict] = []
@@ -1289,10 +1301,13 @@ def execute_history_import(
         mt = models.MovementType.IN if is_in else models.MovementType.OUT
 
         sku = r["sku"]
+        cad = cadastro_por_sku.get(sku.lower())
+        if cad:
+            sku = cad[0]                     # grafia do cadastro, não a da planilha
         # Nome cadastrado tem prioridade; senão o informado no modal; senão o da planilha
         product_name = (
-            nomes_por_sku.get(sku)
-            or names_map.get(sku)
+            (cad[1] if cad else None)
+            or names_map.get(r["sku"])
             or r["product_name_from_sheet"]
         )
 

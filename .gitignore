@@ -26,6 +26,7 @@ frontend/dist/
 # Scripts/config locais de teste (não relacionados à operação real)
 backend/run_local_teste_hoje.py
 backend/run_local_teste_hoje.bat
+backend/run_local_teste_indices.py
 .claude/launch.json
 
 # Bateria de performance — protocolo, histórico e relatórios (uso local)

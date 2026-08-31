@@ -2703,7 +2703,18 @@ def session_cards(
     if date_to:
         q = q.filter(models.PickingSession.session_date <= date_to)
 
-    sessions = q.order_by(models.PickingSession.created_at.desc()).limit(100).all()
+    # ⚠️ O teto de 100 sessões só vale quando NÃO há filtro de data.
+    #
+    # Era um `limit(100)` fixo, aplicado DEPOIS do filtro de período: com ~15
+    # sessões por dia útil, qualquer intervalo acima de ~6 dias descartava as
+    # sessões mais antigas EM SILÊNCIO e a tela mostrava totais menores que a
+    # realidade (01/08→31/08 mostrava 3.210 de 14.303 pedidos, ~22%).
+    # Havendo `date_from`, o próprio período já limita o volume; sem ele o teto
+    # continua protegendo contra varrer o histórico inteiro.
+    q = q.order_by(models.PickingSession.created_at.desc())
+    if not date_from:
+        q = q.limit(100)
+    sessions = q.all()
 
     # NFs seguradas por falta de produto cadastrado — ficam fora do manuseio.
     # UMA consulta para todas as sessões da tela (não uma por card/pedido).
@@ -2788,9 +2799,13 @@ def session_cards(
                 1 for o in orders
                 if (o.status.value if hasattr(o.status, "value") else o.status) in ("completed", "interrupted")
             )
+            # ⚠️ O status é "scanning" — "in_progress" NÃO existe no OrderStatus.
+            # Comparando com o nome errado esta contagem era sempre 0, e a NF que
+            # estava aberta na bancada caía em `pending`: o card só saía de
+            # "A Iniciar" quando a PRIMEIRA NF fosse concluída.
             in_prog = sum(
                 1 for o in orders
-                if (o.status.value if hasattr(o.status, "value") else o.status) == "in_progress"
+                if (o.status.value if hasattr(o.status, "value") else o.status) == "scanning"
             )
 
             if completed == total and total > 0:

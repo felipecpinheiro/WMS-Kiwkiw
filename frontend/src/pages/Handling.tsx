@@ -463,7 +463,7 @@ export default function HandlingPage() {
 
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
-  const { data: serverCards = [], isLoading, refetch } = useQuery(
+  const { data: serverCards, isLoading, refetch } = useQuery<SessionCard[]>(
     ['session-cards', dateFrom, dateTo, activeUnitId],
     () => scanningApi.sessionCards({
       date_from: dateFrom,
@@ -474,7 +474,14 @@ export default function HandlingPage() {
   );
   // localCards permite atualizações optimistas (cancelar remove imediatamente, force-complete atualiza status)
   const [localCards, setLocalCards] = useState<SessionCard[]>([]);
-  useEffect(() => { setLocalCards(serverCards as SessionCard[]); }, [serverCards]);
+  // ⚠️ A dependência é o `data` cru do react-query, que é estável entre renders.
+  // Com um default `= []` na desestruturação, cada render criava um array NOVO,
+  // o efeito re-disparava e o setState re-renderizava — laço infinito enquanto a
+  // resposta não chegava ("Maximum update depth exceeded" no console, a cada
+  // carga da tela e a cada troca de filtro).
+  useEffect(() => {
+    if (serverCards) setLocalCards(serverCards);
+  }, [serverCards]);
   const cards = localCards;
 
   // Interruptor Entrada/Saída — nunca mostra os dois juntos

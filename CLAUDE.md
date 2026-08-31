@@ -87,6 +87,76 @@ contra backup de produção restaurado, entradas inválidas sem 500, `tsc --noEm
 conferência visual com os 800 cards renderizando. Os totais novos batem com a consulta SQL direta, e
 as 4 unidades somadas dão exatamente o total sem filtro.
 
+### Auditoria/Bipagens: filtros de Seller e Transportadora, paginação e CSV
+
+A aba **Bipagens** ganhou dois filtros (**Seller** e **Transportadora**) e **todos os filtros passaram
+a se combinar de verdade** — data, seller, transportadora, operador e busca ao mesmo tempo.
+
+**A mudança estrutural: o filtro virou de SERVIDOR.** Antes a tela recebia as 200 bipagens mais
+recentes e a "Busca" filtrava **dentro dessas 200, no navegador**. Filtrar um mês e escolher uma
+transportadora bipada de manhã devolvia **vazio**, dando a entender que ela não teve bipagem nenhuma.
+Numa tela de auditoria isso é pior do que não ter o filtro.
+
+| Antes | Depois |
+|---|---|
+| Lista pura, teto de 200, sem aviso | Objeto `{rows, total, total_ok, total_errors, page, total_pages}` |
+| Busca filtrava a amostra carregada | Busca vai ao servidor (com atraso de 500ms), varre o período |
+| KPIs contados na tela | Totais do **período**, vindos do banco |
+| Produtividade só por data | Respeita seller, transportadora, operador e busca |
+| — | **Exportar CSV sem teto** + paginação de 100 |
+
+⚠️ **Os KPIs TÊM que vir do servidor.** Contados na tela, exibiriam sempre o tamanho da página (100)
+em vez do total do período — o KPI "Total Registros" mentiria e ninguém perceberia.
+
+⚠️ **A troca de qualquer filtro reseta a página para 1.** Sem isso, quem estivesse na página 7 e
+filtrasse um seller com 2 páginas veria tela vazia e concluiria que ele não teve bipagem.
+
+⚠️ **`ORDER BY timestamp DESC, id DESC` — o desempate por `id` não é enfeite.** Bipagens no mesmo
+segundo trocariam de ordem entre uma página e outra, fazendo uma linha aparecer duas vezes e outra
+sumir.
+
+**Transportadora é texto livre em `Order.carrier`** — não existe cadastro. `GET /audit-log/carriers`
+monta o dropdown com as transportadoras do período, **agrupando por minúscula** (`motoboy` +
+`MOTOBOY` = uma opção, marcada com `*`) e exibindo como rótulo a **grafia mais frequente**. A lista
+respeita data e seller: escolhendo um seller, sobram só as transportadoras dele, o que evita montar
+uma combinação vazia. Há uma opção **"(sem transportadora)"** — NF de entrada quase nunca tem o campo
+preenchido e sem ela essas bipagens só apareceriam em "Todas".
+
+⚠️ **Grafias diferentes da mesma empresa continuam separadas de propósito** ("Correios" x "EMPRESA
+BRASILEIRA DE CORREIOS E TELEGRAFOS", "Loggi" x "LOGGI TECNOLOGIA LTDA" — o banco real tem 67
+grafias distintas). Juntá-las exigiria um de-para mantido à mão; ficou **deliberadamente fora**.
+
+⚠️ **A transportadora filtrada é a ATUAL da NF, não a do dia da bipagem.** Não existe histórico de
+transportadora; preencher o campo depois move as bipagens antigas para a transportadora nova.
+
+**O CSV sai SEM TETO, e isso é o oposto do CSV da aba "Status das NFs"** — lá tela e arquivo usam o
+mesmo teto de propósito (o arquivo vai para o cliente e precisa ser o que a pessoa viu). Aqui a tela
+é a amostra e o CSV é o todo, que é justamente como ver um mês sem travar o navegador. Por isso ele é
+escrito em blocos (`yield_per`), sem materializar dezenas de milhares de linhas na memória.
+
+**Índice novo `ix_scanning_logs_timestamp`** (`PERF_INDEXES`): a aba filtra e **ordena** por data e a
+paginação exige um `COUNT` a mais na mesma condição. Não havia índice nenhum nessa coluna — mesma
+armadilha que levou ao `ix_stock_movements_seller_date` em 14/08/2026.
+⚠️ **Criar o índice trava gravação em `scanning_logs` por alguns segundos no primeiro boot** —
+deployar fora do horário de operação.
+
+**Arquivos:** `scanning.py` (`_audit_base_query` centraliza os filtros — lista, KPIs, produtividade e
+CSV **precisam** enxergar o mesmo recorte), `main.py`, `api.ts`, `Audit.tsx` (só o `ScanAuditTab`; as
+outras 3 abas não foram tocadas).
+
+**Testes:** 144 verificações E2E (72 × SQLite e PostgreSQL), 100% verdes — filtros isolados e
+combinados, grafias/espaços, paginação sem perder nem repetir linha, permissões e regressão das 3
+outras abas. Mais **teste de volume com 25.000 bipagens em 30 dias**: o CSV saiu completo (2,21 MB,
+9,9s) sem corte no streaming, e a primeira página da tela responde em 0,09s com 250 páginas. Mais
+conferência visual, que confirmou o reset de página e a busca disparando **1 requisição para 9
+caracteres digitados**.
+
+⚠️ **Achado NÃO corrigido — contraste no modo claro.** Botão com fundo roxo sólido usa
+`bg-violet-600 ... text-t1`, e `--t1` no modo claro é quase preto (`33 30 60`): contraste **2,8:1**,
+abaixo do mínimo 4,5:1 (no modo escuro fica 5,7:1, correto). São **18 botões** em `pages/*.tsx`,
+todos pré-existentes. O botão novo seguiu o padrão para não nascer fora de padrão — corrigir os 18 de
+uma vez é uma decisão de design pendente.
+
 ---
 
 ## Mudanças Recentes — 24/08/2026
@@ -910,7 +980,7 @@ esses números** (decisão do dono do sistema).
 |---------|---------|-----------------|
 | `/auth` | `routers/auth.py` | Login (`POST /auth/login`), perfil (`GET /auth/me`) |
 | `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque, só SAÍDA**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs de saída que não baixaram — **entrada fica fora**), PDFs (**recusam sessão de entrada**) |
-| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, audit log (inclui `seller_name`), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
+| `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | Config de cobrança, relatório, export Excel |
@@ -1342,6 +1412,10 @@ em `stock_movements` no boot do deploy — preferir deployar fora do horário de
   **com `print` em texto puro**. Emoji em migração derruba o startup em console Windows cp1252.
 - Query nova em `stock_movements` que não use `order_id` nem o par `(seller_id, sku)` volta a ser
   Seq Scan de 630k linhas — conferir com `EXPLAIN ANALYZE` antes de subir.
+- ⚠️ **A lista `PERF_INDEXES` cresceu desde então** — os "4 índices" acima são o registro do que foi
+  feito em 30/07/2026, não o estado atual. Entraram depois `stock_movements(seller_id,movement_date)`
+  (14/08), `order_items(order_id)` (01/08) e `scanning_logs(timestamp)` (31/08). **Conferir a lista no
+  `main.py`, não esta seção.** Cada índice novo soma tempo de lock no primeiro boot do deploy.
 
 ### Ambiente de teste
 - PostgreSQL 18 **local** funcionando; senha do `postgres` foi **resetada em 30/07/2026**
@@ -1560,13 +1634,18 @@ constantes do módulo:
 Alimenta o painel "Produtividade por Operador" da tela de **Auditoria** (`Audit.tsx`). A tabela tem
 três colunas: Operador, Total Bipagens, Total Itens.
 
-- **Conta apenas bipagem real:** filtra `is_error == False` **e** `is_interrupted == False`. O
-  marcador de interrupção é um `ScanningLog` com `sku='INTERRUPT'` e `quantity=0` — não é bipagem.
-  Mesmo par de filtros usado pelo `process_scan` para contar progresso.
+- **Conta apenas bipagem real:** filtra `is_error == False` **e** `is_interrupted == False`, mais os
+  marcadores `PAUSE`/`RESUME` (`MARKER_SKUS`). O marcador de interrupção é um `ScanningLog` com
+  `sku='INTERRUPT'` e `quantity=0` — não é bipagem. Mesmo par de filtros do `process_scan`.
 - **`date_to` usa `end_of_day`** — a tela abre com `date_from = date_to = hoje`; sem isso a tabela
   viria vazia todo dia.
 - **Escopo:** `require_manager_or_above`. Manager vê só operadores da **própria unidade**
   (`User.unit_id`); admin vê todas. Todos os usuários ativos em produção têm `unit_id` preenchido.
+- **Desde 31/08/2026 respeita os MESMOS filtros da lista de bipagens** (`seller_id`, `carrier`,
+  `operator_id`, `search`), via `_audit_base_query`. **Antes ignorava até o filtro de Operador que já
+  existia na tela** — selecionar um operador listava todos assim mesmo.
+- ⚠️ **Não montar os filtros aqui à mão.** Lista, KPIs, produtividade e CSV têm que enxergar o mesmo
+  recorte; duplicar a montagem faz um deles divergir na primeira alteração. Usar `_audit_base_query`.
 - ⚠️ O parâmetro `unit_id` da query **é aceito e ignorado** — o frontend não envia. Decisão de
   30/07/2026 foi não mexer nisso ainda.
 
@@ -1647,4 +1726,14 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Confiar no `/perf` para diagnosticar lentidão de produção | A bateria roda **tudo local**, com o banco na mesma máquina — é estruturalmente cega para latência de rede entre app e banco. Ela diria "está tudo ótimo" com o sistema travando em produção | `/perf` mede **código**. Para lentidão relatada em produção, checar infraestrutura primeiro (ver `.claude/commands/perf.md`) |
 | Montar a URL do banco com `PGPORT` | Em alguns projetos Railway o `PGPORT` guarda a porta do **proxy público** (ex: `18963`) — usar isso reintroduz exatamente o problema | Usar **`5432` fixo** com `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |
 | Alterar o `backup_config.ps1` para a rede interna | O backup roda da máquina do usuário, de **fora** do Railway — a rede interna não existe de lá e o backup pararia em silêncio | Backup **continua** com o endereço público. Só a variável do serviço `web` muda |
+| Filtrar no navegador uma lista que é paginada/limitada pelo servidor | Só filtra a amostra já carregada: na Auditoria, escolher uma transportadora bipada de manhã devolvia **vazio** com o mês filtrado, dando a entender que ela não teve bipagem nenhuma | Filtro que precisa varrer o período vai para o **servidor**. Na trilha de bipagem, tudo passa por `_audit_base_query` — inclusive a busca |
+| KPI contado sobre as linhas da tela em lista paginada | Exibe o tamanho da página (100), não o total do período — e o número mente sem ninguém perceber | Totais vêm do banco na mesma query filtrada (`total`, `total_ok`, `total_errors`) |
+| Trocar filtro sem resetar a página | Quem está na página 7 e filtra algo com 2 páginas vê tela vazia e conclui que não há registro | `useEffect` que zera a página quando qualquer filtro muda (`ScanAuditTab`) |
+| `ORDER BY` paginado sem desempate estável | Registros com o mesmo `timestamp` trocam de ordem entre páginas: uma linha aparece 2× e outra some | Sempre acrescentar `id` como último critério (`timestamp DESC, id DESC`) |
+| Busca que vai ao servidor sem atraso | Uma requisição por tecla digitada | `useDebouncedValue(search, 500)` — 9 caracteres viram 1 requisição |
+| Repetir o join de `users` em cima de `_audit_base_query` | A função já faz `outerjoin(User)` para a produtividade poder agrupar — um segundo join estoura "users especificada duas vezes" | Usar `.with_entities(...)` + `group_by`, sem novo join |
+| Filtrar transportadora comparando a string crua | `Order.carrier` é texto livre: "motoboy" e "MOTOBOY" são a mesma empresa, e sobra espaço nas pontas | `func.lower(func.trim(...))` dos dois lados. Grafias distintas ("Correios" x o nome completo) continuam separadas de propósito |
+| Assumir que a transportadora da bipagem é a do dia | Não existe histórico de `carrier`: preencher o campo depois move as bipagens antigas para a transportadora nova | Comportamento conhecido e aceito — não tentar deduzir a transportadora "da época" |
+| Query nova em `scanning_logs` filtrando por data | Desde 31/08/2026 existe `ix_scanning_logs_timestamp`; **filtro fora de `order_id`/`session_id`/`timestamp` volta a ser Seq Scan** | Conferir com `EXPLAIN ANALYZE`; índice novo entra em `PERF_INDEXES` (`main.py`), idempotente nos dois bancos |
+| Copiar o CSV da aba "Status das NFs" achando que a regra é a mesma | Lá tela e arquivo usam o **mesmo teto** de propósito (vai para o cliente). Na aba Bipagens é o **oposto**: a tela é a amostra e o CSV é o todo | Decidir pelo destino do arquivo. Sem teto, escrever em blocos (`yield_per`) para não materializar dezenas de milhares de linhas na memória |
 | Apertar Deploy no Railway sem olhar o "Details" | As mudanças ficam em espera ("Apply N changes") e o Deploy aplica **tudo** da fila. Em 27/08/2026 havia um serviço `function-bun` (template Bun/Hono, nada a ver com o WMS) prestes a ser criado junto | Abrir *Details*, descartar individualmente o que não é seu, conferir que o rodapé lista só o serviço esperado |

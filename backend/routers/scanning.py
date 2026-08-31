@@ -13,7 +13,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, case
 
 from ..database import get_db
 from ..auth import get_current_user, require_internal, require_manager_or_above, require_admin, get_user_seller_ids
@@ -1990,21 +1990,47 @@ def reactivate_order(
     }
 
 
-@router.get("/audit-log")
-def get_audit_log(
-    session_id: Optional[int] = None,
-    order_id: Optional[int] = None,
+# ============================================================
+# TRILHA DE AUDITORIA DA BIPAGEM (aba "Bipagens")
+# ============================================================
+
+# Linhas por pagina da tela. O CSV NAO usa este teto — sai completo.
+AUDIT_PAGE_SIZE = 100
+
+# Rotulo da opcao "sem transportadora" no filtro. NF de entrada quase nunca tem
+# transportadora preenchida; sem esta opcao essas bipagens so apareceriam em
+# "Todas" e ficariam impossiveis de isolar.
+CARRIER_NONE = "__SEM_TRANSPORTADORA__"
+
+
+def _audit_base_query(
+    db: Session,
+    seller_id: Optional[int] = None,
+    carrier: Optional[str] = None,
     operator_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    limit: int = Query(default=200, le=5000),
-    current_user: models.User = Depends(require_manager_or_above),
-    db: Session = Depends(get_db),
+    search: Optional[str] = None,
+    session_id: Optional[int] = None,
+    order_id: Optional[int] = None,
 ):
-    """Retorna trilha de auditoria completa da bipagem."""
-    query = db.query(models.ScanningLog).options(
-        joinedload(models.ScanningLog.operator),
-        joinedload(models.ScanningLog.order).joinedload(models.Order.seller),
+    """
+    Monta a query base da trilha de bipagem com TODOS os filtros combinados (AND).
+
+    Os filtros ficam nesta funcao unica de proposito: a lista, os KPIs, a
+    produtividade e o CSV precisam enxergar exatamente o mesmo recorte. Duplicar
+    a montagem em cada endpoint faria um deles divergir na primeira alteracao.
+
+    ⚠️ Os joins com `orders` e `users` sao SEMPRE aplicados, mesmo sem filtro que
+    os use: assim a produtividade reaproveita esta query sem repetir o join (o
+    que geraria "users especificada duas vezes") e a contagem bate sempre.
+    `ScanningLog.order_id` e NOT NULL, entao o inner join nao descarta linha; o
+    de `users` e outer justamente para nao sumir com log de operador removido.
+    """
+    query = db.query(models.ScanningLog).join(
+        models.Order, models.Order.id == models.ScanningLog.order_id
+    ).outerjoin(
+        models.User, models.User.id == models.ScanningLog.operator_id
     )
 
     if session_id:
@@ -2013,32 +2039,294 @@ def get_audit_log(
         query = query.filter(models.ScanningLog.order_id == order_id)
     if operator_id:
         query = query.filter(models.ScanningLog.operator_id == operator_id)
+    if seller_id:
+        query = query.filter(models.Order.seller_id == seller_id)
+
+    if carrier:
+        if carrier == CARRIER_NONE:
+            query = query.filter(
+                or_(models.Order.carrier.is_(None), func.trim(models.Order.carrier) == "")
+            )
+        else:
+            # Case-insensitive: "motoboy" e "MOTOBOY" sao a mesma transportadora.
+            # Mesmo criterio ja usado em SKU e email no resto do sistema.
+            query = query.filter(
+                func.lower(func.trim(models.Order.carrier)) == carrier.strip().lower()
+            )
+
     if date_from:
         query = query.filter(models.ScanningLog.timestamp >= date_from)
     if date_to:
-        # Usa o fim do dia (23:59:59) — senão "timestamp <= date_to" equivale a
+        # Usa o fim do dia (23:59:59) — senao "timestamp <= date_to" equivale a
         # comparar com date_to 00:00:00 e descarta TODAS as bipagens daquele dia.
         query = query.filter(models.ScanningLog.timestamp <= end_of_day(date_to))
 
-    logs = query.order_by(models.ScanningLog.timestamp.desc()).limit(limit).all()
+    if search:
+        # Busca no SERVIDOR (nao apenas na pagina aberta): com paginacao, filtrar
+        # no navegador acharia so dentro das 100 linhas visiveis e diria
+        # "nenhum resultado" para uma NF que existe na pagina seguinte.
+        termo = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.ScanningLog.sku).like(termo),
+                func.lower(models.ScanningLog.barcode_scanned).like(termo),
+                func.lower(models.Order.nf_number).like(termo),
+                func.lower(models.User.name).like(termo),
+            )
+        )
 
-    return [
-        {
-            "id": log.id,
-            "timestamp": log.timestamp.strftime("%d/%m/%Y %H:%M:%S"),
-            "order_nf": log.order.nf_number if log.order else None,
-            "order_customer": log.order.customer_name if log.order else None,
-            "seller_name": (log.order.seller.trade_name if log.order and log.order.seller else None),
-            "sku": log.sku,
-            "barcode": log.barcode_scanned,
-            "quantity": log.quantity,
-            "operator": log.operator.name if log.operator else None,
-            "is_error": log.is_error,
-            "is_interrupted": log.is_interrupted,
-            "error_message": log.error_message,
-        }
-        for log in logs
-    ]
+    return query
+
+
+def _audit_row(log: models.ScanningLog) -> dict:
+    """
+    Uma linha da trilha de bipagem. Usada pela tela E pelo CSV — os dois tem que
+    sair identicos, entao a montagem fica num lugar so.
+    """
+    return {
+        "id": log.id,
+        "timestamp": log.timestamp.strftime("%d/%m/%Y %H:%M:%S") if log.timestamp else None,
+        "order_nf": log.order.nf_number if log.order else None,
+        "order_customer": log.order.customer_name if log.order else None,
+        "seller_name": (log.order.seller.trade_name if log.order and log.order.seller else None),
+        "carrier": log.order.carrier if log.order else None,
+        "sku": log.sku,
+        "barcode": log.barcode_scanned,
+        "quantity": log.quantity,
+        "operator": log.operator.name if log.operator else None,
+        "is_error": log.is_error,
+        "is_interrupted": log.is_interrupted,
+        "error_message": log.error_message,
+    }
+
+
+@router.get("/audit-log")
+def get_audit_log(
+    session_id: Optional[int] = None,
+    order_id: Optional[int] = None,
+    operator_id: Optional[int] = None,
+    seller_id: Optional[int] = None,
+    carrier: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=AUDIT_PAGE_SIZE, ge=1, le=500),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Trilha de auditoria da bipagem — paginada, com todos os filtros combinados.
+
+    ⚠️ A resposta e um OBJETO (`rows` + totais), nao uma lista como ate 31/08/2026.
+    Os totais vem do banco de proposito: com paginacao, contar as linhas na tela
+    devolveria sempre o tamanho da pagina e o KPI "Total Registros" mentiria.
+    """
+    query = _audit_base_query(
+        db,
+        seller_id=seller_id,
+        carrier=carrier,
+        operator_id=operator_id,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+        session_id=session_id,
+        order_id=order_id,
+    )
+
+    # Totais do periodo INTEIRO (nao da pagina). Uma consulta agregada resolve os
+    # tres KPIs de uma vez, em vez de tres COUNT separados.
+    totals = query.with_entities(
+        func.count(models.ScanningLog.id),
+        func.coalesce(func.sum(case((models.ScanningLog.is_error == True, 1), else_=0)), 0),        # noqa: E712
+        func.coalesce(func.sum(case((models.ScanningLog.is_interrupted == True, 1), else_=0)), 0),  # noqa: E712
+    ).one()
+
+    total = int(totals[0] or 0)
+    total_errors = int(totals[1] or 0)
+    total_interrupted = int(totals[2] or 0)
+    # "OK" mantem a definicao que a tela ja usava: nem erro, nem interrupcao.
+    total_ok = total - total_errors - total_interrupted
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, total_pages)
+
+    logs = (
+        query.options(
+            joinedload(models.ScanningLog.operator),
+            joinedload(models.ScanningLog.order).joinedload(models.Order.seller),
+        )
+        # id como desempate: sem ele, bipagens no mesmo segundo trocam de ordem
+        # entre uma pagina e outra e uma linha pode aparecer duas vezes ou sumir.
+        .order_by(models.ScanningLog.timestamp.desc(), models.ScanningLog.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "rows": [_audit_row(log) for log in logs],
+        "total": total,
+        "total_ok": total_ok,
+        "total_errors": total_errors,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
+
+
+@router.get("/audit-log/carriers")
+def get_audit_log_carriers(
+    seller_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Transportadoras que aparecem nas bipagens do periodo — alimenta o dropdown.
+
+    Respeita data e seller (nao a propria transportadora, nem operador/busca):
+    escolhendo um seller, a lista encolhe para as transportadoras dele, evitando
+    montar uma combinacao que devolve vazio.
+
+    Agrupa por minuscula — "motoboy" e "MOTOBOY" viram uma opcao so — e usa como
+    rotulo a grafia MAIS FREQUENTE, nao a primeira encontrada.
+
+    ⚠️ Transportadora e texto livre em `Order.carrier`; nao existe cadastro de
+    transportadoras. Grafias distintas da mesma empresa ("Correios" x "EMPRESA
+    BRASILEIRA DE CORREIOS E TELEGRAFOS") continuam sendo opcoes separadas —
+    juntar isso exigiria um de-para, que ficou deliberadamente fora (31/08/2026).
+    """
+    query = _audit_base_query(
+        db, seller_id=seller_id, date_from=date_from, date_to=date_to,
+    )
+
+    rows = query.with_entities(
+        models.Order.carrier,
+        func.count(models.ScanningLog.id),
+    ).group_by(models.Order.carrier).all()
+
+    # {chave normalizada: {grafia: total}} — vence a grafia mais usada.
+    agrupado: dict[str, dict[str, int]] = {}
+    sem_transportadora = 0
+    for carrier_raw, qtd in rows:
+        nome = (carrier_raw or "").strip()
+        if not nome:
+            sem_transportadora += int(qtd or 0)
+            continue
+        grafias = agrupado.setdefault(nome.lower(), {})
+        grafias[nome] = grafias.get(nome, 0) + int(qtd or 0)
+
+    opcoes = []
+    for chave, grafias in agrupado.items():
+        rotulo = max(grafias.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        opcoes.append({
+            "value": chave,
+            "label": rotulo,
+            "total": sum(grafias.values()),
+            # So preenche quando ha mais de uma grafia — a tela usa isso no title
+            # do <option> para explicar por que aquele numero e maior.
+            "variants": sorted(grafias.keys()) if len(grafias) > 1 else [],
+        })
+
+    opcoes.sort(key=lambda o: o["label"].lower())
+
+    if sem_transportadora:
+        opcoes.append({
+            "value": CARRIER_NONE,
+            "label": "(sem transportadora)",
+            "total": sem_transportadora,
+            "variants": [],
+        })
+
+    return opcoes
+
+
+@router.get("/audit-log/export/csv")
+def export_audit_log_csv(
+    operator_id: Optional[int] = None,
+    seller_id: Optional[int] = None,
+    carrier: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Exporta a trilha de bipagem em CSV, com os mesmos filtros da tela.
+
+    ⚠️ SEM TETO de linhas, ao contrario da tela — e justamente o caminho para
+    levar um mes inteiro para o Excel sem travar o navegador. Por isso a escrita
+    sai em blocos (`yield_per`), sem materializar dezenas de milhares de linhas
+    na memoria do servidor de uma vez.
+
+    ⚠️ Diferente do CSV da aba "Status das NFs", que usa o MESMO teto da tela de
+    proposito (aquele arquivo vai para o cliente e precisa ser exatamente o que
+    a pessoa viu). Aqui o objetivo e o oposto: a tela e a amostra, o CSV e o todo.
+
+    Deliberadamente `def` e nao `async def`: faz I/O sincrono de banco e, no
+    event loop, travaria a bipagem inteira (ver CLAUDE.md).
+    """
+    query = _audit_base_query(
+        db,
+        seller_id=seller_id,
+        carrier=carrier,
+        operator_id=operator_id,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    ).options(
+        joinedload(models.ScanningLog.operator),
+        joinedload(models.ScanningLog.order).joinedload(models.Order.seller),
+    ).order_by(models.ScanningLog.timestamp.desc(), models.ScanningLog.id.desc())
+
+    def gerar():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";")
+
+        def despejar() -> str:
+            valor = buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+            return valor
+
+        writer.writerow([
+            "Horario", "Operador", "Cliente", "Transportadora", "NF",
+            "Cliente Final", "SKU", "Codigo Bipado", "Qtd", "Status", "Mensagem",
+        ])
+        # BOM na frente para o Excel abrir com a acentuacao correta.
+        yield "﻿" + despejar()
+
+        for log in query.yield_per(1000):
+            r = _audit_row(log)
+            status = "Erro" if r["is_error"] else ("Interrompido" if r["is_interrupted"] else "OK")
+            writer.writerow([
+                r["timestamp"] or "",
+                r["operator"] or "",
+                r["seller_name"] or "",
+                r["carrier"] or "",
+                r["order_nf"] or "",
+                r["order_customer"] or "",
+                r["sku"] or "",
+                r["barcode"] or "",
+                r["quantity"] if r["quantity"] is not None else "",
+                status,
+                r["error_message"] or "",
+            ])
+            yield despejar()
+
+    periodo = ""
+    if date_from and date_to:
+        periodo = f"_{date_from.isoformat()}_a_{date_to.isoformat()}"
+    filename = f"bipagens{periodo}.csv"
+
+    return StreamingResponse(
+        gerar(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/interrupted-orders")
@@ -2355,6 +2643,10 @@ def operator_productivity(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     unit_id: Optional[int] = None,
+    operator_id: Optional[int] = None,
+    seller_id: Optional[int] = None,
+    carrier: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: models.User = Depends(require_manager_or_above),
     db: Session = Depends(get_db),
 ):
@@ -2365,31 +2657,35 @@ def operator_productivity(
     pedido) e o marcador de interrupção (sku='INTERRUPT', quantity=0) ficam de
     fora — senão errar muito aumentaria a "produtividade" do operador. É o mesmo
     par de filtros usado para contar bipagem no process_scan.
+
+    Desde 31/08/2026 respeita os MESMOS filtros da lista de bipagens (seller,
+    transportadora, operador e busca), por `_audit_base_query`. Antes disso
+    ignorava até o filtro de Operador que já existia na tela, então selecionar um
+    operador listava todos assim mesmo.
     """
-    query = db.query(
+    query = _audit_base_query(
+        db,
+        seller_id=seller_id,
+        carrier=carrier,
+        operator_id=operator_id,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    ).filter(
+        models.ScanningLog.is_error == False,        # noqa: E712
+        models.ScanningLog.is_interrupted == False,  # noqa: E712
+        # Pausar/retomar não é bipagem — ver MARKER_SKUS.
+        models.ScanningLog.sku.notin_(MARKER_SKUS),
+    ).with_entities(
         models.User.name.label("operator"),
         func.count(models.ScanningLog.id).label("total_scans"),
         func.sum(models.ScanningLog.quantity).label("total_items"),
-    ).join(
-        models.ScanningLog, models.User.id == models.ScanningLog.operator_id
-    ).filter(
-        models.ScanningLog.is_error == False,
-        models.ScanningLog.is_interrupted == False,
-        # Pausar/retomar não é bipagem — ver MARKER_SKUS.
-        models.ScanningLog.sku.notin_(MARKER_SKUS),
     ).group_by(models.User.id, models.User.name)
 
     # Manager enxerga só os operadores da própria unidade; admin vê todas.
     user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
     if user_role != "admin":
         query = query.filter(models.User.unit_id == current_user.unit_id)
-
-    if date_from:
-        query = query.filter(models.ScanningLog.timestamp >= date_from)
-    if date_to:
-        # end_of_day é obrigatório: a tela abre com date_to = hoje, e
-        # 'timestamp <= hoje 00:00:00' excluiria todas as bipagens do dia.
-        query = query.filter(models.ScanningLog.timestamp <= end_of_day(date_to))
 
     results = query.all()
 

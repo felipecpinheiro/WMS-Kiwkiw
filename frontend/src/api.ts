@@ -607,8 +607,43 @@ export const scanningApi = {
   /** Pausa a conferência de entrada — a NF continua EM ABERTO para retomar depois. */
   pauseEntry: (orderId: number, reason?: string) =>
     api.post(`/scanning/orders/${orderId}/pause`, { reason }),
+  /**
+   * Trilha de bipagem, paginada. Todos os filtros são aplicados no SERVIDOR e se
+   * combinam (AND) — inclusive a busca: com paginação, filtrar no navegador
+   * acharia só dentro da página aberta e diria "nenhum resultado" para uma NF
+   * que está na página seguinte.
+   *
+   * ⚠️ Devolve um OBJETO, não uma lista (mudou em 31/08/2026). Os totais vêm do
+   * servidor porque, paginado, contar na tela devolveria o tamanho da página.
+   */
   auditLog: (params?: Record<string, any>) =>
-    api.get('/scanning/audit-log', { params }),
+    api.get<{
+      rows: Record<string, any>[];
+      total: number;
+      total_ok: number;
+      total_errors: number;
+      page: number;
+      page_size: number;
+      total_pages: number;
+    }>('/scanning/audit-log', { params }),
+  /** Transportadoras presentes nas bipagens do período (agrupadas por maiúscula/minúscula). */
+  auditLogCarriers: (params?: Record<string, any>) =>
+    api.get<{ value: string; label: string; total: number; variants: string[] }[]>(
+      '/scanning/audit-log/carriers', { params },
+    ),
+  /** Mesmas linhas da trilha de bipagem, em CSV e SEM teto — é o caminho para ver
+   *  um mês inteiro sem travar o navegador. Download autenticado (window.open daria 401). */
+  exportAuditLogCsv: (params: Record<string, any>) => {
+    const qs = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => [k, String(v)]),
+    ).toString();
+    return downloadAuthenticatedFile(
+      `/scanning/audit-log/export/csv?${qs}`,
+      `bipagens_${params.date_from ?? ''}_a_${params.date_to ?? ''}.csv`,
+    );
+  },
   /** Log de auditoria do sistema: todas as ações (cadastros, uploads, estoque, etc.). */
   systemAuditLog: (params?: Record<string, any>) =>
     api.get('/scanning/system-audit-log', { params }),

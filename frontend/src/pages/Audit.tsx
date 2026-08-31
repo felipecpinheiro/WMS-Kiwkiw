@@ -7,7 +7,7 @@
  *     mudanças de estoque, interrupções, configurações, etc.)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from 'react-query';
 import {
   Shield, Search, CheckCircle, XCircle, Activity,
@@ -40,39 +40,120 @@ const ACTION_COLOR: Record<string, string> = {
   CONFIG_UPDATE:   'bg-warn-soft text-warn border-warn/20',
 };
 
+/**
+ * Adia um valor até a digitação parar. A busca da aba Bipagens vai ao servidor
+ * (é a única forma de achar algo que está fora da página aberta), e sem isso
+ * cada tecla dispararia uma requisição.
+ */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+
 // ── Subcomponente: aba Bipagens ───────────────────────────────────────────────
+/**
+ * Todos os filtros (data, seller, transportadora, operador e busca) são aplicados
+ * no SERVIDOR e se combinam. Isso não é detalhe de implementação: a lista é
+ * paginada, então filtrar no navegador acharia apenas dentro da página aberta e
+ * devolveria "nenhum registro" para uma NF que existe na página seguinte.
+ *
+ * Os KPIs e a Produtividade leem o mesmo recorte — os totais vêm do servidor,
+ * senão exibiriam sempre o tamanho da página em vez do total do período.
+ */
 function ScanAuditTab() {
   const [dateFrom, setDateFrom] = useState(todayBrasiliaStr());
   const [dateTo, setDateTo]     = useState(todayBrasiliaStr());
   const [operatorId, setOperatorId] = useState('');
-  const [search, setSearch] = useState('');
+  const [sellerId, setSellerId] = useState('');
+  const [carrier, setCarrier]   = useState('');
+  const [search, setSearch]     = useState('');
+  const [page, setPage]         = useState(1);
+  const [exporting, setExporting] = useState(false);
 
   const isAdmin = (() => { try { return JSON.parse(localStorage.getItem('wms_user') || '{}').role === 'admin'; } catch { return false; } })();
 
-  const { data: logs = [], isLoading } = useQuery(
-    ['audit', dateFrom, dateTo, operatorId],
-    () => scanningApi.auditLog({ date_from: dateFrom, date_to: dateTo, operator_id: operatorId || undefined }).then(r => r.data),
-    { keepPreviousData: true }
+  // A busca agora vai ao servidor: sem o atraso, cada tecla dispararia uma
+  // requisição. 500ms é o tempo de parar de digitar, não de pensar.
+  const debouncedSearch = useDebouncedValue(search, 500);
+
+  // Filtro novo => volta para a primeira página. Sem isto, quem estivesse na
+  // página 7 e filtrasse um seller com 2 páginas veria uma tela vazia e
+  // concluiria que aquele seller não teve bipagem nenhuma.
+  useEffect(() => {
+    setPage(1);
+  }, [dateFrom, dateTo, operatorId, sellerId, carrier, debouncedSearch]);
+
+  const filterParams = {
+    date_from: dateFrom,
+    date_to: dateTo,
+    operator_id: operatorId || undefined,
+    seller_id: sellerId || undefined,
+    carrier: carrier || undefined,
+    search: debouncedSearch || undefined,
+  };
+
+  const { data, isLoading, isFetching } = useQuery(
+    ['audit', filterParams, page],
+    () => scanningApi.auditLog({ ...filterParams, page }).then(r => r.data),
+    { keepPreviousData: true },
   );
+
+  const rows: any[]  = data?.rows ?? [];
+  const total        = data?.total ?? 0;
+  const totalPages   = data?.total_pages ?? 1;
+  const currentPage  = data?.page ?? page;
 
   const { data: users = [] } = useQuery('users', () => cadastrosApi.users().then(r => r.data), { enabled: isAdmin });
 
+  // Só sellers ativos (decisão de 31/08/2026). A chave 'sellers' é a mesma das
+  // telas que veem apenas ativos — não usar ['sellers','all'], que traz inativos.
+  const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+
+  // A lista de transportadoras acompanha data e seller: escolhendo um seller,
+  // sobram só as transportadoras dele, o que evita montar uma combinação vazia.
+  const { data: carriers = [] } = useQuery(
+    ['audit-carriers', dateFrom, dateTo, sellerId],
+    () => scanningApi.auditLogCarriers({
+      date_from: dateFrom,
+      date_to: dateTo,
+      seller_id: sellerId || undefined,
+    }).then(r => r.data),
+  );
+
+  // Se a transportadora escolhida sumir da lista (por troca de seller/período),
+  // o <select> cairia em branco exibindo "Todas" enquanto o filtro segue ativo.
+  useEffect(() => {
+    if (carrier && (carriers as any[]).length > 0
+        && !(carriers as any[]).some((c: any) => c.value === carrier)) {
+      setCarrier('');
+    }
+  }, [carriers, carrier]);
+
   const { data: productivity = [] } = useQuery(
-    ['productivity', dateFrom, dateTo],
-    () => scanningApi.productivity({ date_from: dateFrom, date_to: dateTo }).then(r => r.data)
+    ['productivity', filterParams],
+    () => scanningApi.productivity(filterParams).then(r => r.data),
   );
 
-  const filtered = (logs as any[]).filter((l: any) =>
-    !search ||
-    l.sku?.toLowerCase().includes(search.toLowerCase()) ||
-    l.barcode?.includes(search) ||
-    l.order_nf?.includes(search) ||
-    l.operator?.toLowerCase().includes(search.toLowerCase()) ||
-    l.operator_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const successCount = data?.total_ok ?? 0;
+  const errorCount   = data?.total_errors ?? 0;
 
-  const successCount = filtered.filter((l: any) => !l.is_error && !l.is_interrupted).length;
-  const errorCount   = filtered.filter((l: any) => l.is_error).length;
+  const hasFilters = !!(operatorId || sellerId || carrier || search);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await scanningApi.exportAuditLogCsv(filterParams);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Falha ao gerar o CSV');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -90,6 +171,36 @@ function ScanAuditTab() {
             className="border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t1"
             style={{ background: 'rgb(var(--surface-2))' }} />
         </div>
+        <div className="min-w-[180px]">
+          <label className="block text-xs text-t3 mb-1">Seller</label>
+          <select value={sellerId} onChange={e => setSellerId(e.target.value)}
+            className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t1"
+            style={{ background: 'rgb(var(--surface-2))' }}>
+            <option value="">Todos</option>
+            {(sellers as any[]).map((s: any) => (
+              <option key={s.id} value={s.id}>{s.trade_name || s.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-[190px]">
+          <label className="block text-xs text-t3 mb-1">Transportadora</label>
+          <select value={carrier} onChange={e => setCarrier(e.target.value)}
+            className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t1"
+            style={{ background: 'rgb(var(--surface-2))' }}>
+            <option value="">Todas</option>
+            {(carriers as any[]).map((c: any) => (
+              <option
+                key={c.value}
+                value={c.value}
+                /* Grafias juntadas por maiúscula/minúscula — o title explica por
+                   que o número é maior do que a grafia exibida sugere. */
+                title={c.variants?.length ? `Inclui: ${c.variants.join(' · ')}` : undefined}
+              >
+                {c.label}{c.variants?.length ? ' *' : ''} ({c.total})
+              </option>
+            ))}
+          </select>
+        </div>
         <div>
           <label className="block text-xs text-t3 mb-1">Operador</label>
           <select value={operatorId} onChange={e => setOperatorId(e.target.value)}
@@ -105,18 +216,28 @@ function ScanAuditTab() {
           <label className="block text-xs text-t3 mb-1">Buscar</label>
           <div className="relative">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="SKU, NF, operador..."
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="SKU, NF, código, operador..."
               className="w-full pl-7 pr-3 py-2 border border-line rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-500 text-t1"
               style={{ background: 'rgb(var(--surface-2))' }} />
           </div>
         </div>
+        {hasFilters && (
+          <div className="flex items-end">
+            <button
+              onClick={() => { setOperatorId(''); setSellerId(''); setCarrier(''); setSearch(''); }}
+              className="text-xs text-violet-400 hover:underline whitespace-nowrap pb-2.5"
+            >
+              Limpar filtros
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* KPIs */}
+      {/* KPIs — do período inteiro, não da página aberta */}
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-surface rounded-xl border border-line-soft p-4 flex items-center gap-3">
           <Shield size={20} className="text-t3" />
-          <div><p className="text-xs text-t3">Total Registros</p><p className="text-2xl font-bold text-t1">{filtered.length}</p></div>
+          <div><p className="text-xs text-t3">Total Registros</p><p className="text-2xl font-bold text-t1">{total}</p></div>
         </div>
         <div className="bg-surface rounded-xl border border-line-soft p-4 flex items-center gap-3">
           <CheckCircle size={20} className="text-violet-400" />
@@ -128,7 +249,7 @@ function ScanAuditTab() {
         </div>
       </div>
 
-      {/* Produtividade por operador */}
+      {/* Produtividade por operador — mesmo recorte dos filtros acima */}
       {(productivity as any[]).length > 0 && (
         <div className="bg-surface rounded-xl border border-line-soft p-5">
           <h2 className="text-sm font-semibold text-t2 mb-4">Produtividade por Operador</h2>
@@ -157,30 +278,45 @@ function ScanAuditTab() {
 
       {/* Log detalhado */}
       <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
-        <div className="p-4 border-b border-line-soft flex items-center justify-between">
+        <div className="p-4 border-b border-line-soft flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-sm font-semibold text-t2">Log Detalhado de Bipagens</h2>
-          <span className="text-xs text-t4">{filtered.length} registros</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-t4">
+              {total} {total === 1 ? 'registro' : 'registros'}
+              {isFetching && <span className="text-t5"> · atualizando...</span>}
+            </span>
+            <button
+              onClick={handleExport}
+              disabled={exporting || total === 0}
+              title="Exporta TODAS as linhas do filtro atual, sem o limite da tela"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-t1 disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+            >
+              <FileDown size={13} />
+              {exporting ? 'Gerando...' : 'Exportar CSV'}
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="bg-surface-2 border-b border-line-soft">
-                {['Horário', 'Operador', 'Cliente', 'NF', 'SKU', 'Código Bipado', 'Qtd', 'Status', 'Mensagem'].map(h => (
+                {['Horário', 'Operador', 'Cliente', 'Transportadora', 'NF', 'SKU', 'Código Bipado', 'Qtd', 'Status', 'Mensagem'].map(h => (
                   <th key={h} className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={9} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
-              ) : filtered.length > 0 ? filtered.map((l: any, i: number) => (
-                <tr key={i} className={`border-b border-line-soft hover:bg-surface-2 ${l.is_error ? 'bg-bad-soft' : l.is_interrupted ? 'bg-warn-soft' : ''}`}>
+                <tr><td colSpan={10} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
+              ) : rows.length > 0 ? rows.map((l: any, i: number) => (
+                <tr key={l.id ?? i} className={`border-b border-line-soft hover:bg-surface-2 ${l.is_error ? 'bg-bad-soft' : l.is_interrupted ? 'bg-warn-soft' : ''}`}>
                   <td className="py-2 px-3 text-xs font-mono text-t3 whitespace-nowrap">{l.timestamp}</td>
-                  <td className="py-2 px-3 text-sm text-t2">{l.operator || l.operator_name}</td>
+                  <td className="py-2 px-3 text-sm text-t2">{l.operator || '—'}</td>
                   <td className="py-2 px-3 text-xs text-t3">{l.seller_name || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-t3">{l.carrier || '—'}</td>
                   <td className="py-2 px-3 text-xs font-mono text-t3">{l.order_nf}</td>
                   <td className="py-2 px-3 text-xs font-mono text-t3">{l.sku || '—'}</td>
-                  <td className="py-2 px-3 text-xs font-mono text-t3">{l.barcode || l.barcode_scanned}</td>
+                  <td className="py-2 px-3 text-xs font-mono text-t3">{l.barcode}</td>
                   <td className="py-2 px-3 text-sm text-t3 text-right">{l.quantity ?? 1}</td>
                   <td className="py-2 px-3">
                     {l.is_error ? (
@@ -191,10 +327,10 @@ function ScanAuditTab() {
                       <span className="inline-flex items-center gap-1 text-xs text-violet-400"><CheckCircle size={11} /> OK</span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-xs text-t4 max-w-[200px] truncate">{l.error_message || l.message || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-t4 max-w-[200px] truncate" title={l.error_message || ''}>{l.error_message || '—'}</td>
                 </tr>
               )) : (
-                <tr><td colSpan={9} className="text-center py-10">
+                <tr><td colSpan={10} className="text-center py-10">
                   <Shield size={28} className="text-t5 mx-auto mb-2" />
                   <p className="text-sm text-t4">Nenhum registro encontrado para os filtros selecionados</p>
                 </td></tr>
@@ -202,6 +338,45 @@ function ScanAuditTab() {
             </tbody>
           </table>
         </div>
+
+        {/* Paginação */}
+        {totalPages > 1 && (
+          <div className="p-3 border-t border-line-soft flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-xs text-t4">
+              Página {currentPage} de {totalPages}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setPage(1)}
+                disabled={currentPage <= 1}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-line text-t3 hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                « Primeira
+              </button>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-line text-t3 hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                ‹ Anterior
+              </button>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-line text-t3 hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                Próxima ›
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={currentPage >= totalPages}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-line text-t3 hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                Última »
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -64,6 +64,13 @@ PERF_INDEXES = [
     # scan-logs da sessão e trilha de auditoria
     ("ix_scanning_logs_session_id",
      "CREATE INDEX IF NOT EXISTS ix_scanning_logs_session_id ON scanning_logs (session_id)"),
+    # Trilha de auditoria da bipagem (31/08/2026): a aba filtra e ORDENA por
+    # timestamp, e a paginação exige um COUNT a mais na mesma condição. Sem este
+    # índice, cada carregamento varre scanning_logs inteira e ordena em memória —
+    # exatamente o que causou o SLOW REQUEST de 5-6s na tela de Estoque e levou
+    # ao ix_stock_movements_seller_date em 14/08/2026.
+    ("ix_scanning_logs_timestamp",
+     "CREATE INDEX IF NOT EXISTS ix_scanning_logs_timestamp ON scanning_logs (timestamp)"),
     # get_session_orders / get_order / process_scan (01/08/2026) — sem isso,
     # buscar os itens de um pedido varre order_items inteira (8k+ linhas)
     ("ix_order_items_order_id",

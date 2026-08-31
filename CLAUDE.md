@@ -39,6 +39,56 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 31/08/2026
+
+### Manuseios mostrava só parte do período escolhido
+
+`GET /scanning/session-cards` tinha um **`limit(100)` fixo aplicado DEPOIS do filtro de data**, e
+descartava o resto **em silêncio** — sem aviso na tela. Com ~15 sessões por dia útil, qualquer
+intervalo acima de ~6 dias perdia as sessões mais antigas.
+
+O relato veio do dono do sistema, que desconfiou dos totais ao filtrar 01/08→31/08:
+
+| | Cards | Pedidos | Concluídos |
+|---|---:|---:|---:|
+| Tela mostrava | 257 | 3.210 | 3.008 |
+| Real | **849** | **14.303** | **14.098** |
+
+Eram 328 sessões no período; as 100 mais recentes começavam em 21/08 20:00, então a tela mostrava
+**só de 24/08 em diante** com 01/08 selecionado.
+
+**Agora o teto só vale quando NÃO há `date_from`** — sem período, ele continua protegendo contra
+varrer o histórico inteiro; com período, o próprio intervalo já limita o volume. **Filtro de um dia
+(o uso do dia a dia) nunca foi afetado** e não mudou, nem no resultado nem no tempo.
+
+⚠️ **Custo aceito:** o mês inteiro carrega ~328 sessões / ~14 mil pedidos em memória para montar 849
+cards (440ms → 1.239ms medidos localmente). A resposta HTTP continua pequena — são só os cards.
+
+### NF em bipagem não contava (status inexistente)
+
+No mesmo endpoint, `in_prog` comparava o status com **`"in_progress"`, que não existe no
+`OrderStatus`** — o valor certo é **`"scanning"`**. A contagem era sempre 0 e a NF aberta na bancada
+caía em `pending`: o card do seller **só saía de "A Iniciar" quando a primeira NF fosse concluída**.
+
+Passou despercebido porque a coluna "Em Processo" do kanban funciona por outro caminho
+(`completed > 0`), e porque `in_progress_orders`/`pending_orders` **não são exibidos** — `Handling.tsx`
+recalcula o pendente como `total_orders - completed_orders`.
+
+### Laço de render em Handling.tsx
+
+`const { data: serverCards = [] } = useQuery(...)` + `useEffect(..., [serverCards])`: com o default
+na desestruturação, **cada render criava um array novo**, o efeito re-disparava e o `setState`
+re-renderizava — laço até a resposta chegar ("Maximum update depth exceeded" no console, a cada carga
+da tela e a cada troca de filtro). A dependência passou a ser o `data` cru, que o react-query mantém
+estável, com guarda `if (serverCards)`.
+
+**Testes:** 9 cenários de status (3 falhavam no código anterior), 6 combinações de data/unidade
+contra backup de produção restaurado, entradas inválidas sem 500, `tsc --noEmit` sem erro novo, e
+conferência visual com os 800 cards renderizando. Os totais novos batem com a consulta SQL direta, e
+as 4 unidades somadas dão exatamente o total sem filtro.
+
+---
+
 ## Mudanças Recentes — 24/08/2026
 
 ### ENTRADA: estoque entra na FINALIZAÇÃO da bipagem, pela contagem física
@@ -1590,6 +1640,9 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Ler `order.items` logo após criar os itens no import | Itens são criados com `order_id` (não pela relationship) e a sessão é `autoflush=False` → a lista vem **vazia** e nada baixa, em silêncio | `db.flush()` e recarregar com `joinedload(Order.items)` antes de usar |
 | Consultar produto/kit dentro de laço no import | Era N+1: 1 query de kit + 1 de produto **por item** do arquivo (2.410 queries num arquivo de 960 linhas) | Já resolvido pelos caches `_kits_of` / `_products_of` em `import_excel_orders`. Ao mexer no laço de persistência, **continuar passando `kits_by_sku`** para `process_order_items` — sem ele a função volta a consultar item a item (fallback mantido de propósito) |
 | Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado 3× nesta base: `scanning.py` e `dashboard.py` **já corrigidos**, `billing.py:193-213` (`_get_box`) **ainda em aberto** — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema (01-02/08/2026, ver seção "Performance — N+1 na bipagem") | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** (`WHERE (seller_id, sku) IN (...)` ou `GROUP BY`) fora do laço — mesmo padrão já usado em `get_session_orders`/`_build_progress` e agora em `master_dashboard` |
+| Limitar uma listagem com `limit(N)` fixo depois de um filtro de data | O `limit` corta as linhas mais antigas **sem avisar ninguém**: a tela mostra um total menor que a realidade e ninguém desconfia. Foi assim que Manuseios mostrou 3.210 de 14.303 pedidos em agosto | Se há filtro de período, o período já limita o volume — o teto só faz sentido **sem** filtro. Se precisar mesmo de teto com filtro, a tela tem que **dizer** que truncou |
+| Comparar `Order.status` com string escrita à mão | `"in_progress"` não existe no `OrderStatus` (o certo é `"scanning"`), e a comparação simplesmente nunca casa — contagem sempre 0, sem erro nenhum | Usar `models.OrderStatus.SCANNING.value`, ou conferir a lista de valores do enum antes. Um `==` com literal errado falha em silêncio |
+| `const { data: x = [] } = useQuery(...)` usado como dependência de `useEffect` | O default na desestruturação cria um array NOVO a cada render → o efeito re-dispara → `setState` re-renderiza → laço infinito enquanto a resposta não chega | Depender do `data` cru (estável no react-query) e tratar o `undefined` dentro do efeito: `useEffect(() => { if (data) setX(data) }, [data])` |
 | Investigar "o sistema está lento" abrindo o código direto | Até 27/08/2026 a lentidão crônica NÃO era código: o `DATABASE_URL` apontava para o proxy público do Railway e cada consulta custava ~150ms. Meses de otimização de código foram gastos num gargalo que estava na configuração de rede | **Primeiro** conferir se o endpoint é lento em produção mas rápido local, e dividir o tempo de produção pelo nº de consultas. Valor constante entre endpoints diferentes = latência de rede, não código |
 | Confiar no `/perf` para diagnosticar lentidão de produção | A bateria roda **tudo local**, com o banco na mesma máquina — é estruturalmente cega para latência de rede entre app e banco. Ela diria "está tudo ótimo" com o sistema travando em produção | `/perf` mede **código**. Para lentidão relatada em produção, checar infraestrutura primeiro (ver `.claude/commands/perf.md`) |
 | Montar a URL do banco com `PGPORT` | Em alguns projetos Railway o `PGPORT` guarda a porta do **proxy público** (ex: `18963`) — usar isso reintroduz exatamente o problema | Usar **`5432` fixo** com `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` |

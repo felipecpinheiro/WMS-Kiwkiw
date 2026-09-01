@@ -95,26 +95,31 @@ export default function BillingPage() {
     setDraft(d => d ? { ...d, [k]: v } : d); setDirty(true);
   };
 
-  const buildBody = () => {
-    if (!draft) return null;
-    const overrides = Object.entries(draft.overrides).map(([oid, o]) => ({ order_id: Number(oid), ...o }));
-    return { ...draft.params, cubagem_m3: draft.cubagem_m3, valor_segurado: draft.valor_segurado,
-      adjustments: draft.adjustments, nf_overrides: overrides };
+  const buildBody = (d: Draft | null) => {
+    if (!d) return null;
+    const overrides = Object.entries(d.overrides).map(([oid, o]) => ({ order_id: Number(oid), ...o }));
+    return { ...d.params, cubagem_m3: d.cubagem_m3, valor_segurado: d.valor_segurado,
+      adjustments: d.adjustments, nf_overrides: overrides };
   };
 
-  const saveDraft = async (silent = false) => {
-    const body = buildBody();
+  // Persiste um draft explícito (usado tanto pelo botão "Salvar rascunho" quanto
+  // pelas ações que precisam de efeito imediato — troca de canal, adicional B2B).
+  const persistDraft = async (d: Draft | null, okMsg: string | null) => {
+    const body = buildBody(d);
     if (!body || !sellerId) return;
     setBusy(true);
     try {
       const res = await billingApi.saveClosing(Number(sellerId), refMonth, body);
       qc.setQueryData(['billing-closing', sellerId, refMonth], res.data);
+      qc.invalidateQueries(['billing-consolidated']);
       setDirty(false);
-      if (!silent) toast.success('Rascunho salvo');
+      if (okMsg) toast.success(okMsg);
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || 'Erro ao salvar');
     } finally { setBusy(false); }
   };
+
+  const saveDraft = (silent = false) => persistDraft(draft, silent ? null : 'Rascunho salvo');
 
   const doAction = async (fn: () => Promise<any>, ok: string) => {
     setBusy(true);
@@ -146,21 +151,29 @@ export default function BillingPage() {
 
   // ── troca de canal / avulsos ──────────────────────────────────────────────
   const EMPTY_OV = { channel_override: null, b2b_adicional: null, note: null };
-  const moveChannel = (orderId: number, to: 'b2c' | 'b2b') => {
-    setDraft(d => {
-      if (!d) return d;
-      const prev = d.overrides[orderId] || EMPTY_OV;
-      return { ...d, overrides: { ...d.overrides, [orderId]: { ...prev, channel_override: to } } };
-    });
-    setDirty(true);
+
+  // Troca de canal tem efeito IMEDIATO: aplica o override e já salva, para a NF
+  // pular de lista na hora (não depende do botão "Salvar rascunho").
+  const moveChannel = async (orderId: number, to: 'b2c' | 'b2b') => {
+    if (!draft || busy) return;
+    const prev = draft.overrides[orderId] || EMPTY_OV;
+    const next: Draft = {
+      ...draft,
+      overrides: { ...draft.overrides, [orderId]: { ...prev, channel_override: to } },
+    };
+    setDraft(next);
+    await persistDraft(next, `NF movida para ${to.toUpperCase()}`);
   };
-  const setB2bAdic = (orderId: number, v: number) => {
-    setDraft(d => {
-      if (!d) return d;
-      const prev = d.overrides[orderId] || EMPTY_OV;
-      return { ...d, overrides: { ...d.overrides, [orderId]: { ...prev, b2b_adicional: v } } };
-    });
-    setDirty(true);
+  const setB2bAdic = async (orderId: number, v: number) => {
+    if (!draft) return;
+    const prev = draft.overrides[orderId] || EMPTY_OV;
+    if ((prev.b2b_adicional ?? 0) === v) return;   // sem mudança, não salva à toa
+    const next: Draft = {
+      ...draft,
+      overrides: { ...draft.overrides, [orderId]: { ...prev, b2b_adicional: v } },
+    };
+    setDraft(next);
+    await persistDraft(next, 'Adicional B2B salvo');
   };
   const addAvulso = () => { setDraft(d => d ? { ...d, adjustments: [...d.adjustments, { descricao: '', obs: '', sign: 1, valor: 0 }] } : d); setDirty(true); };
   const setAvulso = (i: number, patch: any) => {

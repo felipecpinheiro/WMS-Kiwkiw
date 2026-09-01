@@ -90,7 +90,12 @@ def put_seller_params(
 ):
     _seller_or_404(db, seller_id)
     row = _get_or_create_params(db, seller_id)
+    # adic_produto_b2b é parâmetro só-do-mês (vive no fechamento). Não é gravado
+    # no default do seller — a aba Comercial de Sellers não o edita e um PUT sem
+    # o campo zeraria o valor.
     for f in calc.PARAM_FIELDS:
+        if f == "adic_produto_b2b":
+            continue
         setattr(row, f, getattr(body, f))
     _audit(db, current_user, "UPDATE_SELLER_PARAMS", seller_id, body.model_dump())
     db.commit()
@@ -290,9 +295,11 @@ def apply_forward(
         raise HTTPException(400, "Salve o rascunho deste mês antes de aplicar aos seguintes.")
     src_params = calc.params_from_obj(src)
 
-    # default do seller
+    # default do seller (adic_produto_b2b é só-do-mês, não desce pro default)
     row = _get_or_create_params(db, seller_id)
     for f in calc.PARAM_FIELDS:
+        if f == "adic_produto_b2b":
+            continue
         setattr(row, f, src_params[f])
 
     # meses futuros ainda abertos

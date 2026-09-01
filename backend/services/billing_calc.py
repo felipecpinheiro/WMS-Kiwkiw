@@ -29,16 +29,17 @@ from ..models import FileType, OrderStatus
 
 PARAM_FIELDS = (
     "preco_unitario", "min_pedidos", "manuseio_b2b", "valor_caixa_b2b",
-    "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
+    "adic_produto_b2b", "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
     "franquia_m3", "preco_m3", "seguro_incluso", "aliquota_seguro",
     "armazenagem_inclusa",
 )
 
 DEFAULT_PARAMS = {
     "preco_unitario": 0.0, "min_pedidos": 0, "manuseio_b2b": 0.0,
-    "valor_caixa_b2b": 0.0, "limite_itens_b2b": 0, "tipos_caixa_inclusos": "",
-    "cota_caixas_mes": 0, "franquia_m3": 0.0, "preco_m3": 0.0,
-    "seguro_incluso": False, "aliquota_seguro": 0.30, "armazenagem_inclusa": False,
+    "valor_caixa_b2b": 0.0, "adic_produto_b2b": 0.0, "limite_itens_b2b": 0,
+    "tipos_caixa_inclusos": "", "cota_caixas_mes": 0, "franquia_m3": 0.0,
+    "preco_m3": 0.0, "seguro_incluso": False, "aliquota_seguro": 0.30,
+    "armazenagem_inclusa": False,
 }
 
 
@@ -93,7 +94,9 @@ def parse_grupo_a(txt: str) -> set[str]:
 # ── parâmetros ───────────────────────────────────────────────────────────────
 
 def params_from_obj(obj) -> dict:
-    return {f: getattr(obj, f) for f in PARAM_FIELDS}
+    # getattr com fallback: coluna aditiva pode não existir num registro antigo
+    # até a migração leve rodar.
+    return {f: getattr(obj, f, DEFAULT_PARAMS[f]) for f in PARAM_FIELDS}
 
 
 def default_params_for_seller(db: Session, seller_id: int) -> dict:
@@ -184,6 +187,7 @@ def compute_live(
     preco_unit = float(params.get("preco_unitario") or 0.0)
     mb2b = float(params.get("manuseio_b2b") or 0.0)
     cb2b = float(params.get("valor_caixa_b2b") or 0.0)
+    apb2b = float(params.get("adic_produto_b2b") or 0.0)
     cota = int(params.get("cota_caixas_mes") or 0)
 
     # canal por NF
@@ -240,7 +244,8 @@ def compute_live(
             })
         else:
             b2b_adic = float(ov.get("b2b_adicional") or 0.0)
-            total = mb2b + cb2b + b2b_adic
+            adic_produto = apb2b * order_qty(o)
+            total = mb2b + cb2b + adic_produto + b2b_adic
             soma_b2b += total
             b2b_lines.append({
                 "order_id": o.id,
@@ -251,6 +256,7 @@ def compute_live(
                 "itens": order_qty(o),
                 "valor_caixa_b2b": r2(cb2b),
                 "manuseio_b2b": r2(mb2b),
+                "adic_produto": r2(adic_produto),
                 "b2b_adicional": r2(b2b_adic),
                 "total": r2(total),
                 "note": ov.get("note") or "",
@@ -329,7 +335,7 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             order_date=_parse_date(ln["order_date"]),
             imported_at=_parse_dt(ln["imported_at"]),
             channel="b2b", box=ln["box"], adic_caixa=ln["b2b_adicional"],
-            manuseio=r2(ln["manuseio_b2b"] + ln["valor_caixa_b2b"]),
+            manuseio=r2(ln["manuseio_b2b"] + ln["valor_caixa_b2b"] + ln["adic_produto"]),
             total=ln["total"], sem_caixa=False,
         ))
 
@@ -378,7 +384,8 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
             b2c_lines.append(d)
         else:
             d.update({"b2b_adicional": r2(ln.adic_caixa), "manuseio_b2b": r2(ln.manuseio),
-                      "valor_caixa_b2b": 0.0, "itens": None, "auto_channel": "b2b"})
+                      "valor_caixa_b2b": 0.0, "adic_produto": 0.0,
+                      "itens": None, "auto_channel": "b2b"})
             b2b_lines.append(d)
 
     fatura = {

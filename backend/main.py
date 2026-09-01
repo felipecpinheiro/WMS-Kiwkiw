@@ -138,6 +138,17 @@ def run_light_migrations():
             # order_has_stock_applied() em services/stock_manager.py.
             if not col_exists("orders", "stock_applied_at"):
                 index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at TIMESTAMP")
+            # Faturamento (01/09/2026): adicional por produto na NF B2B. Coluna
+            # aditiva (default 0) nas duas tabelas de parâmetro. Vai em
+            # index_migrations (print texto puro) — regra do emoji.
+            if not col_exists("billing_seller_params", "adic_produto_b2b"):
+                index_migrations.append(
+                    "ALTER TABLE billing_seller_params ADD COLUMN adic_produto_b2b "
+                    "DOUBLE PRECISION DEFAULT 0 NOT NULL")
+            if not col_exists("billing_monthly_closings", "adic_produto_b2b"):
+                index_migrations.append(
+                    "ALTER TABLE billing_monthly_closings ADD COLUMN adic_produto_b2b "
+                    "DOUBLE PRECISION DEFAULT 0 NOT NULL")
 
             # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
             # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
@@ -232,6 +243,13 @@ def run_light_migrations():
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at DATETIME")
             if "stock_applied_at" not in existing_ord:
                 index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at DATETIME")
+
+            # Faturamento (01/09/2026): adicional por produto na NF B2B.
+            for _bt in ("billing_seller_params", "billing_monthly_closings"):
+                _cols = {r[1] for r in db.execute(text(f"PRAGMA table_info({_bt})")).fetchall()}
+                if "adic_produto_b2b" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN adic_produto_b2b FLOAT DEFAULT 0 NOT NULL")
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:

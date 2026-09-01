@@ -75,6 +75,8 @@ def invoice_pdf_bytes(p: dict) -> bytes:
          "Nº mínimo de pedidos", str(pr["min_pedidos"])],
         ["Manuseio B2B", brl(pr["manuseio_b2b"]),
          "Valor caixa B2B", brl(pr["valor_caixa_b2b"])],
+        ["Adicional por produto B2B", brl(pr["adic_produto_b2b"]),
+         "", ""],
         ["É B2B a partir de (itens)", str(pr["limite_itens_b2b"]),
          "Tipos de caixa inclusos", pr["tipos_caixa_inclusos"] or "—"],
         ["Cota de caixas / mês", str(pr["cota_caixas_mes"]),
@@ -150,9 +152,10 @@ def invoice_pdf_bytes(p: dict) -> bytes:
                   for l in p["b2c_lines"]],
                  p["soma_b2c"])
     _append_list(el, "Notas fiscais B2B", h2, hdr, cell, cellr,
-                 ["Data", "NF", "Itens", "Cx B2B", "Manus.", "Adic.", "Total"],
+                 ["Data", "NF", "Itens", "Cx B2B", "Manus.", "Ad.prod", "Adic.", "Total"],
                  [[_d(l["order_date"]), l["nf_number"], l["itens"],
                    brl(l["valor_caixa_b2b"]), brl(l["manuseio_b2b"]),
+                   brl(l.get("adic_produto") or 0.0),
                    brl(l["b2b_adicional"]), brl(l["total"])]
                   for l in p["b2b_lines"]],
                  p["soma_b2b"])
@@ -214,6 +217,7 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Nº mínimo de pedidos", pr["min_pedidos"]),
         ("Manuseio B2B", pr["manuseio_b2b"]),
         ("Valor caixa B2B", pr["valor_caixa_b2b"]),
+        ("Adicional por produto B2B", pr["adic_produto_b2b"]),
         ("É B2B a partir de (itens)", pr["limite_itens_b2b"]),
         ("Tipos de caixa inclusos", pr["tipos_caixa_inclusos"] or "—"),
         ("Cota de caixas / mês", pr["cota_caixas_mes"]),
@@ -270,9 +274,11 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
                      "SIM" if l["sem_caixa"] else ""]
                     for l in p["b2c_lines"]], hdr_fill, hdr_font, amber, sem_caixa_col=8)
     r = _xlsx_list(ws, r + 1, "NOTAS FISCAIS B2B",
-                   ["Data", "NF", "Itens", "Caixa B2B", "Manuseio B2B", "Adicional", "Total"],
+                   ["Data", "NF", "Itens", "Caixa B2B", "Manuseio B2B",
+                    "Adic. produto", "Adicional", "Total"],
                    [[l["order_date"], l["nf_number"], l["itens"], l["valor_caixa_b2b"],
-                     l["manuseio_b2b"], l["b2b_adicional"], l["total"]]
+                     l["manuseio_b2b"], l.get("adic_produto") or 0.0,
+                     l["b2b_adicional"], l["total"]]
                     for l in p["b2b_lines"]], hdr_fill, hdr_font, amber)
 
     out = io.BytesIO()

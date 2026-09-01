@@ -22,6 +22,7 @@ const brl = (n: number | null | undefined) =>
 
 const PARAM_KEYS = [
   'preco_unitario', 'min_pedidos', 'manuseio_b2b', 'valor_caixa_b2b',
+  'adic_produto_b2b',
   'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
   'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
 ] as const;
@@ -265,6 +266,8 @@ export default function BillingPage() {
               <ParamGroup title="Pedidos B2B">
                 <NumRow label="Manuseio B2B" v={draft.params.manuseio_b2b} onChange={v => setParam('manuseio_b2b', v)} />
                 <NumRow label="Valor caixa B2B" v={draft.params.valor_caixa_b2b} onChange={v => setParam('valor_caixa_b2b', v)} />
+                <NumRow label="Adicional por produto B2B" v={draft.params.adic_produto_b2b} onChange={v => setParam('adic_produto_b2b', v)} />
+                <p className="text-[11px] text-t4">Cobrado × soma das quantidades dos itens de cada NF B2B.</p>
               </ParamGroup>
               <ParamGroup title="Classificação B2C × B2B">
                 <NumRow label="É B2B a partir de (itens)" v={draft.params.limite_itens_b2b} onChange={v => setParam('limite_itens_b2b', v)} int />
@@ -460,7 +463,8 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
               <th className="text-left px-2 py-1.5">NF</th>
               <th className="text-right px-2 py-1.5">Itens</th>
               <th className="text-right px-2 py-1.5">Cx</th>
-              {b2c ? <th className="text-right px-2 py-1.5">Adic.</th> : <th className="text-right px-2 py-1.5">Adic.</th>}
+              {!b2c && <th className="text-right px-2 py-1.5">Ad.prod</th>}
+              <th className="text-right px-2 py-1.5">Adic.</th>
               <th className="text-right px-2 py-1.5">Total</th>
               <th className="px-2 py-1.5"></th>
             </tr>
@@ -476,6 +480,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                     <td className="px-2 py-1.5 font-mono">{l.nf_number}</td>
                     <td className="px-2 py-1.5 text-right">{l.itens ?? '—'}</td>
                     <td className="px-2 py-1.5 text-right">{l.box || '—'}</td>
+                    {!b2c && <td className="px-2 py-1.5 text-right font-mono">{brl(l.adic_produto || 0)}</td>}
                     <td className="px-2 py-1.5 text-right font-mono">
                       {b2c ? brl(l.adic_caixa) : (
                         <input type="number" step="0.01" disabled={locked} defaultValue={l.b2b_adicional}
@@ -495,7 +500,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                   </tr>
                   {oid != null && expanded[oid] && l.items && (
                     <tr className="bg-surface-2">
-                      <td colSpan={7} className="px-3 py-2">
+                      <td colSpan={b2c ? 7 : 8} className="px-3 py-2">
                         <div className="text-[11px] text-t4 mb-1">NF {l.nf_number} · {l.items.length} SKU(s)</div>
                         {l.items.map((it: any, j: number) => (
                           <div key={j} className="flex justify-between font-mono text-[11px] text-t3">
@@ -512,7 +517,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
           </tbody>
           <tfoot>
             <tr className="border-t border-line font-semibold">
-              <td colSpan={5} className="px-2 py-2 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
+              <td colSpan={b2c ? 5 : 6} className="px-2 py-2 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
               <td className="px-2 py-2 text-right font-mono text-t1">{brl(soma)}</td>
               <td></td>
             </tr>

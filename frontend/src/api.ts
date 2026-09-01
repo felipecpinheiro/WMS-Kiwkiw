@@ -973,6 +973,7 @@ export interface BillingSellerParams {
   min_pedidos: number;
   manuseio_b2b: number;
   valor_caixa_b2b: number;
+  adic_produto_b2b: number;
   limite_itens_b2b: number;
   tipos_caixa_inclusos: string;
   cota_caixas_mes: number;
@@ -985,6 +986,7 @@ export interface BillingSellerParams {
 
 export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
   preco_unitario: 0, min_pedidos: 0, manuseio_b2b: 0, valor_caixa_b2b: 0,
+  adic_produto_b2b: 0,
   limite_itens_b2b: 0, tipos_caixa_inclusos: '', cota_caixas_mes: 0,
   franquia_m3: 0, preco_m3: 0, seguro_incluso: false, aliquota_seguro: 0.30,
   armazenagem_inclusa: false,

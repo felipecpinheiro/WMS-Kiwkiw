@@ -39,6 +39,89 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 01/09/2026
+
+Quatro commits, **sem push** (aguardando o usuário revisar em teste). Tudo em faturamento/caixas.
+
+### `a0d40dab` — toggle de seguro agora significa "cobrar seguro"
+
+O parâmetro `seguro_incluso` **zerava** o seguro quando ligado (semântica "já incluso no
+plano"). **Invertido:** ligado cobra `valor_segurado × aliquota_seguro / 100`, desligado não
+cobra. Rótulo virou **"Cobrar seguro?"** na tela ([Billing.tsx](frontend/src/pages/Billing.tsx))
+e **"Cobrar seguro"** no PDF e Excel ([billing_docs.py](backend/services/billing_docs.py)).
+⚠️ **Nome da coluna `seguro_incluso` foi mantido** (renomear em produção é risco) — só o
+significado, o rótulo e (nada, era teste) mudaram. Sem migração de dados.
+
+### `c07f94c2` — adicional por produto nas NFs B2B
+
+Parâmetro novo `adic_produto_b2b`: cobrado por **unidade de produto** (`× Σ quantidade dos
+itens`) em cada NF classificada B2B. Entra no `total` da NF junto com `manuseio_b2b`,
+`valor_caixa_b2b` e o adicional manual por NF (`b2b_adicional`) — os quatro se somam.
+
+- ⚠️ **Parâmetro SÓ-DO-MÊS.** Vive no snapshot do fechamento (`billing_monthly_closings`),
+  o pré-preenchimento puxa do mês anterior, `apply-forward` copia para os meses futuros
+  abertos — mas **NÃO desce para o default do seller** (`put_seller_params` e o laço de
+  default do `apply-forward` pulam esse campo de propósito) e **não aparece na aba Comercial
+  de Sellers**. Um `PUT /billing/seller-params` sem o campo zeraria o valor.
+- Coluna aditiva (`Float default 0`) nas **duas** tabelas de parâmetro, migração no laço
+  `index_migrations` (print texto puro — regra do emoji). `params_from_obj` ganhou
+  `getattr(obj, f, DEFAULT_PARAMS[f])` como fallback.
+- Meses fechados não mudam (o `adic_caixa`/`total` da NF já é congelado; no `freeze` o
+  adicional por produto é dobrado no bucket `manuseio` gravado, igual `valor_caixa_b2b`).
+- Coluna **"Ad.prod"** na lista de NFs B2B (tela + PDF + Excel).
+
+### `ed18d268` + `dfee34c8` — caixas padronizadas (lista canônica de 13)
+
+**`billing_calc.CANONICAL_BOXES`** é a fonte única: `1..11, Saco de Embarque, Própria`.
+Repetida no Scanner, no faturamento e no cadastro do seller.
+
+- **Scanner:** o campo de texto livre da caixa **foi removido** — a caixa só é escolhida
+  pelos **13 botões** ([Scanner.tsx](frontend/src/pages/Scanner.tsx), estado `boxEditVal`
+  eliminado). `handleBoxSave` inalterado.
+- **Tabela global de caixas** (`billing_box_prices`) passou de **9 → 13 chaves** (seed
+  idempotente em [main.py](backend/main.py) agora itera `CANONICAL_BOXES`). `get_box_prices`
+  devolve na ordem canônica.
+- `normaliza_box` reconhece `"saco"/"sacola"/"embarque"` → `"Saco de Embarque"`.
+  `parse_grupo_a` quebra por vírgula e normaliza cada item (aceita o formato novo e o
+  antigo `"1,2"`).
+- ⚠️ **Histórico de `box_used` NÃO foi convertido** — a padronização vale só daqui pra
+  frente (decisão do dono).
+- ⚠️ **Algoritmo de Caixa e `Seller.caixa1..8` intactos.** A "caixa sugerida" do Scanner
+  ainda pode mostrar `c1`, `c2`… (vem da matriz `box_algorithms`); os botões que gravam
+  são os canônicos. Os campos `caixa1..8` **saíram da tela** (aba "Caixas" do seller) mas
+  **continuam no banco e no payload** — sem migração destrutiva.
+
+**Preço de caixa por seller** (`dfee34c8`):
+- Tabela nova **`billing_seller_box_prices`** (`seller_id` × `box_key` × `price` nullable,
+  único por par). Só grava onde o seller definiu um valor.
+- **Preço efetivo = global sobrescrito pelo do seller onde houver.**
+  `_effective_box_prices(db, seller_id)` em [billing.py](backend/routers/billing.py),
+  aplicado nos **dois** pontos de cálculo (`_build_payload` ao vivo e `close_month`).
+- Endpoints `GET/PUT /billing/seller-box-prices/{seller_id}` — **`require_manager_or_above`**
+  (igual `seller-params`, editado pela tela de Sellers).
+- Mês fechado lê o snapshot congelado — preço novo não mexe em fatura fechada.
+- **Aba "Caixas" do cadastro de seller reescrita:** 13 linhas — nome (fixo) + preço opcional
+  (em branco = usa o global) + checkbox **"inclusa (grupo A)"**. O grupo A continua guardado
+  em `billing_seller_params.tipos_caixa_inclusos`, agora como **lista canônica separada por
+  vírgula**, salvo pelo `saveSellerParams` normal (o endpoint de box-prices só cuida de
+  preço).
+- **No Faturamento por mês**, o grupo A virou **13 checkboxes** (grava
+  `tipos_caixa_inclusos` no rascunho). `TextRow` de Billing.tsx removido (sem uso).
+- Grupo A e cota continuam por cima de tudo; `Saco de Embarque` se comporta como as
+  numeradas.
+
+**Armadilhas novas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| `seguro_incluso` no cálculo | O nome diz "incluso" mas desde 01/09 **significa "cobrar"** (ligado = cobra) | Ler o comentário em [billing_calc.py](backend/services/billing_calc.py) `_fatura`. Não "consertar" invertendo de novo |
+| Parâmetro de faturamento novo que é "só do mês" | Se entrar em `PARAM_FIELDS` sem guarda, `put_seller_params`/`apply-forward` gravam no default do seller e um PUT sem o campo zera | Ver `adic_produto_b2b`: está em `PARAM_FIELDS` (pro snapshot/prefill/apply-forward de mês) mas os dois laços que escrevem no **default do seller** pulam ele com `if f == "adic_produto_b2b": continue` |
+| Caixa nova / opção de caixa em qualquer tela | Escrever a lista à mão divergindo das outras telas | Importar `CANONICAL_BOXES` (`billing_calc.py` no backend, `api.ts` no frontend). Fonte única |
+| Query nova de preço de caixa no faturamento | Usar `_box_prices_dict` (só global) e ignorar o override do seller | Usar `_effective_box_prices(db, seller_id)` — já aplicado no cálculo ao vivo e no fechamento |
+| `parse_grupo_a` com texto legado multi-dígito num token | O split por vírgula + `normaliza_box` pegaria só o 1º número de `"1 2 3"` | A função faz `re.findall(r"\d+")` por parte antes de cair no `normaliza_box` — cobre `"10"` e o legado `"1 2"` |
+
+---
+
 ## Mudanças Recentes — 31/08/2026
 
 ### Faturamento reescrito por completo

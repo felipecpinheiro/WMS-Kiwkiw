@@ -52,11 +52,17 @@ e **"Cobrar seguro"** no PDF e Excel ([billing_docs.py](backend/services/billing
 ⚠️ **Nome da coluna `seguro_incluso` foi mantido** (renomear em produção é risco) — só o
 significado, o rótulo e (nada, era teste) mudaram. Sem migração de dados.
 
-### `c07f94c2` — adicional por produto nas NFs B2B
+### `c07f94c2` — adicional por produto nas NFs B2B (fórmula corrigida em `<próximo commit>`)
 
-Parâmetro novo `adic_produto_b2b`: cobrado por **unidade de produto** (`× Σ quantidade dos
-itens`) em cada NF classificada B2B. Entra no `total` da NF junto com `manuseio_b2b`,
-`valor_caixa_b2b` e o adicional manual por NF (`b2b_adicional`) — os quatro se somam.
+Parâmetro `adic_produto_b2b`: cobrado por produto **acima da franquia** em cada NF B2B —
+`adic_produto_b2b × max(0, Σ quantidade dos itens − franquia_produtos_b2b)`. A regra de
+cobrança (confirmada com o time em 01/09): caixa fixa + manuseio + R$ X **a partir do
+(franquia+1)º produto** (R$ X varia por cliente). Entra no `total` da NF junto com
+`manuseio_b2b`, `valor_caixa_b2b` e o adicional manual por NF (`b2b_adicional`).
+
+⚠️ A versão original do `c07f94c2` cobrava **todo produto** (`× Σ quantidade`) — errado.
+O commit seguinte adicionou `franquia_produtos_b2b` (int, default **15**, também só-do-mês)
+e a fórmula com corte.
 
 - ⚠️ **Parâmetro SÓ-DO-MÊS.** Vive no snapshot do fechamento (`billing_monthly_closings`),
   o pré-preenchimento puxa do mês anterior, `apply-forward` copia para os meses futuros
@@ -120,6 +126,27 @@ Caixa legada fora da lista aparece como opção `"(antigo)"`. Mês fechado é re
 congelada nem tem `order_id`). Só frontend. ⚠️ O endpoint do Scanner **conclui o pedido** se
 todos os itens já estiverem bipados e a caixa era a última pendência — aceitável aqui porque
 as NFs de faturamento de mês passado já estão finalizadas.
+
+### `<commit seguinte>` — franquia de produtos B2B + colunas B2C/B2B repontadas
+
+- **`adic_produto_b2b` agora tem corte:** `× max(0, itens − franquia_produtos_b2b)`.
+  `franquia_produtos_b2b` (int, default 15) é **só-do-mês** — entrou em `_MONTH_ONLY_PARAMS`
+  ([billing.py](backend/routers/billing.py)), que substituiu o `if f == "adic_produto_b2b"`
+  nos dois laços de default do seller. Regra confirmada com cobrança: caixa fixa + manuseio
+  + R$ X **a partir do (franquia+1)º produto** na caixa (R$ X varia por cliente).
+- **B2B na lista perdeu o seletor de caixa** (que o `15124cfd` tinha posto). A coluna virou
+  **"Cx B2B"** e mostra o `valor_caixa_b2b` fixo, só leitura. O Scanner continua gravando
+  `box_used`; só some do faturamento. O seletor **continua no B2C**.
+- **B2C ganhou adicional manual por NF.** O `b2b_adicional` do override virou **genérico
+  "adicional manual da NF"** — vale nos dois canais, **sem coluna nova**. `draftFromPayload`
+  reconstrói o override de `b2b_adicional` para B2C também.
+- **Layout:** B2C = `Cx · Adic. caixa · Adic. · Total`; B2B = `Cx B2B · Ad.prod · Adic. ·
+  Total`. `NfList` ramifica por canal; `colSpan` fixo (8 no expandido, 6 no rodapé).
+- `freeze` do B2C dobra o adicional manual no bucket `manuseio` gravado (o `total` já inclui)
+  — mês fechado mostra o B2C achatado, igual o B2B.
+- Coluna `franquia_produtos_b2b INTEGER DEFAULT 15` nas 2 tabelas, migração no laço
+  `index_migrations`. Docs: linha "Franquia de produtos B2B" nos parâmetros, coluna "Adic.
+  man." na lista B2C.
 
 **Armadilhas novas:**
 

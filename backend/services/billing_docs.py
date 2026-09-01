@@ -76,7 +76,7 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         ["Manuseio B2B", brl(pr["manuseio_b2b"]),
          "Valor caixa B2B", brl(pr["valor_caixa_b2b"])],
         ["Adicional por produto B2B", brl(pr["adic_produto_b2b"]),
-         "", ""],
+         "Franquia de produtos B2B", str(pr["franquia_produtos_b2b"])],
         ["É B2B a partir de (itens)", str(pr["limite_itens_b2b"]),
          "Tipos de caixa inclusos", pr["tipos_caixa_inclusos"] or "—"],
         ["Cota de caixas / mês", str(pr["cota_caixas_mes"]),
@@ -146,9 +146,10 @@ def invoice_pdf_bytes(p: dict) -> bytes:
 
     # listas
     _append_list(el, "Notas fiscais B2C", h2, hdr, cell, cellr,
-                 ["Data", "NF", "Cx", "Itens", "Adic.", "Manus.", "Total"],
+                 ["Data", "NF", "Cx", "Itens", "Adic. caixa", "Adic. man.", "Manus.", "Total"],
                  [[_d(l["order_date"]), l["nf_number"], l["box"] or "—", l["itens"],
-                   brl(l["adic_caixa"]), brl(l["manuseio"]), brl(l["total"])]
+                   brl(l["adic_caixa"]), brl(l.get("adic_manual") or 0.0),
+                   brl(l["manuseio"]), brl(l["total"])]
                   for l in p["b2c_lines"]],
                  p["soma_b2c"])
     _append_list(el, "Notas fiscais B2B", h2, hdr, cell, cellr,
@@ -218,6 +219,7 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Manuseio B2B", pr["manuseio_b2b"]),
         ("Valor caixa B2B", pr["valor_caixa_b2b"]),
         ("Adicional por produto B2B", pr["adic_produto_b2b"]),
+        ("Franquia de produtos B2B", pr["franquia_produtos_b2b"]),
         ("É B2B a partir de (itens)", pr["limite_itens_b2b"]),
         ("Tipos de caixa inclusos", pr["tipos_caixa_inclusos"] or "—"),
         ("Cota de caixas / mês", pr["cota_caixas_mes"]),
@@ -268,11 +270,11 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         r += 1
 
     r = _xlsx_list(ws, r, "NOTAS FISCAIS B2C",
-                   ["Data", "NF", "Caixa", "Itens", "Adic. caixa", "Manuseio", "Total", "Sem caixa"],
+                   ["Data", "NF", "Caixa", "Itens", "Adic. caixa", "Adic. manual", "Manuseio", "Total", "Sem caixa"],
                    [[l["order_date"], l["nf_number"], l["box"], l["itens"],
-                     l["adic_caixa"], l["manuseio"], l["total"],
+                     l["adic_caixa"], l.get("adic_manual") or 0.0, l["manuseio"], l["total"],
                      "SIM" if l["sem_caixa"] else ""]
-                    for l in p["b2c_lines"]], hdr_fill, hdr_font, amber, sem_caixa_col=8)
+                    for l in p["b2c_lines"]], hdr_fill, hdr_font, amber, sem_caixa_col=9)
     r = _xlsx_list(ws, r + 1, "NOTAS FISCAIS B2B",
                    ["Data", "NF", "Itens", "Caixa B2B", "Manuseio B2B",
                     "Adic. produto", "Adicional", "Total"],

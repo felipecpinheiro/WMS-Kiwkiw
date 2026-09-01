@@ -507,7 +507,8 @@ class BillingSellerParams(Base):
     min_pedidos = Column(Integer, default=0, nullable=False)          # nº mínimo de pedidos B2C
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
-    adic_produto_b2b = Column(Float, default=0.0, nullable=False)     # adicional por produto (× Σ qtd itens) na NF B2B
+    adic_produto_b2b = Column(Float, default=0.0, nullable=False)     # adicional por produto acima da franquia, na NF B2B
+    franquia_produtos_b2b = Column(Integer, default=15, nullable=False)  # nº de produtos grátis antes do adicional
     limite_itens_b2b = Column(Integer, default=0, nullable=False)     # 0 = nunca classifica B2B sozinho
     tipos_caixa_inclusos = Column(String(200), default="", nullable=False)  # grupo A, ex. "1,2"
     cota_caixas_mes = Column(Integer, default=0, nullable=False)      # cota B
@@ -561,6 +562,7 @@ class BillingMonthlyClosing(Base):
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
     adic_produto_b2b = Column(Float, default=0.0, nullable=False)
+    franquia_produtos_b2b = Column(Integer, default=15, nullable=False)
     limite_itens_b2b = Column(Integer, default=0, nullable=False)
     tipos_caixa_inclusos = Column(String(200), default="", nullable=False)
     cota_caixas_mes = Column(Integer, default=0, nullable=False)

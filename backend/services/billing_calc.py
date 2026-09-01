@@ -29,14 +29,16 @@ from ..models import FileType, OrderStatus
 
 PARAM_FIELDS = (
     "preco_unitario", "min_pedidos", "manuseio_b2b", "valor_caixa_b2b",
-    "adic_produto_b2b", "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
+    "adic_produto_b2b", "franquia_produtos_b2b",
+    "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
     "franquia_m3", "preco_m3", "seguro_incluso", "aliquota_seguro",
     "armazenagem_inclusa",
 )
 
 DEFAULT_PARAMS = {
     "preco_unitario": 0.0, "min_pedidos": 0, "manuseio_b2b": 0.0,
-    "valor_caixa_b2b": 0.0, "adic_produto_b2b": 0.0, "limite_itens_b2b": 0,
+    "valor_caixa_b2b": 0.0, "adic_produto_b2b": 0.0, "franquia_produtos_b2b": 15,
+    "limite_itens_b2b": 0,
     "tipos_caixa_inclusos": "", "cota_caixas_mes": 0, "franquia_m3": 0.0,
     "preco_m3": 0.0, "seguro_incluso": False, "aliquota_seguro": 0.30,
     "armazenagem_inclusa": False,
@@ -206,6 +208,7 @@ def compute_live(
     mb2b = float(params.get("manuseio_b2b") or 0.0)
     cb2b = float(params.get("valor_caixa_b2b") or 0.0)
     apb2b = float(params.get("adic_produto_b2b") or 0.0)
+    fpb2b = int(params.get("franquia_produtos_b2b") or 0)
     cota = int(params.get("cota_caixas_mes") or 0)
 
     # canal por NF
@@ -242,7 +245,8 @@ def compute_live(
                 adic = 0.0
             else:
                 adic = float(box_prices.get(nb) or 0.0)
-            total = preco_unit + adic
+            manual_adic = float(ov.get("b2b_adicional") or 0.0)   # adicional manual da NF (genérico)
+            total = preco_unit + adic + manual_adic
             soma_b2c += total
             b2c_lines.append({
                 "order_id": o.id,
@@ -253,6 +257,8 @@ def compute_live(
                 "box_norm": nb,
                 "itens": order_qty(o),
                 "adic_caixa": r2(adic),
+                "adic_manual": r2(manual_adic),
+                "b2b_adicional": r2(manual_adic),
                 "manuseio": r2(preco_unit),
                 "total": r2(total),
                 "sem_caixa": sem_caixa,
@@ -262,7 +268,7 @@ def compute_live(
             })
         else:
             b2b_adic = float(ov.get("b2b_adicional") or 0.0)
-            adic_produto = apb2b * order_qty(o)
+            adic_produto = apb2b * max(0, order_qty(o) - fpb2b)   # só a partir do (franquia+1)º produto
             total = mb2b + cb2b + adic_produto + b2b_adic
             soma_b2b += total
             b2b_lines.append({
@@ -345,7 +351,10 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             order_date=_parse_date(ln["order_date"]),
             imported_at=_parse_dt(ln["imported_at"]),
             channel="b2c", box=ln["box"], adic_caixa=ln["adic_caixa"],
-            manuseio=ln["manuseio"], total=ln["total"], sem_caixa=ln["sem_caixa"],
+            # adicional manual da NF dobrado no bucket manuseio (igual o B2B faz
+            # com valor_caixa_b2b); o total já inclui tudo.
+            manuseio=r2(ln["manuseio"] + ln.get("adic_manual", 0.0)),
+            total=ln["total"], sem_caixa=ln["sem_caixa"],
         ))
     for ln in computed["b2b_lines"]:
         db.add(models.BillingClosingLine(
@@ -396,7 +405,8 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
             "note": "",
         }
         if ln.channel == "b2c":
-            d.update({"adic_caixa": r2(ln.adic_caixa), "manuseio": r2(ln.manuseio),
+            d.update({"adic_caixa": r2(ln.adic_caixa), "adic_manual": 0.0,
+                      "b2b_adicional": 0.0, "manuseio": r2(ln.manuseio),
                       "sem_caixa": ln.sem_caixa, "box_norm": normaliza_box(ln.box),
                       "itens": None, "auto_channel": "b2c"})
             b2c_lines.append(d)

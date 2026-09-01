@@ -36,6 +36,12 @@ router = APIRouter(prefix="/billing", tags=["Faturamento"])
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
+# Parâmetros que vivem SÓ no fechamento do mês: entram no snapshot, no
+# pré-preenchimento e no apply-forward para meses futuros, mas NÃO descem para
+# o default do seller (billing_seller_params) — a aba Comercial não os edita e
+# um PUT sem o campo zeraria o valor.
+_MONTH_ONLY_PARAMS = {"adic_produto_b2b", "franquia_produtos_b2b"}
+
 
 def _check_month(ref_month: str):
     if not _MONTH_RE.match(ref_month):
@@ -94,7 +100,7 @@ def put_seller_params(
     # no default do seller — a aba Comercial de Sellers não o edita e um PUT sem
     # o campo zeraria o valor.
     for f in calc.PARAM_FIELDS:
-        if f == "adic_produto_b2b":
+        if f in _MONTH_ONLY_PARAMS:
             continue
         setattr(row, f, getattr(body, f))
     _audit(db, current_user, "UPDATE_SELLER_PARAMS", seller_id, body.model_dump())
@@ -359,10 +365,10 @@ def apply_forward(
         raise HTTPException(400, "Salve o rascunho deste mês antes de aplicar aos seguintes.")
     src_params = calc.params_from_obj(src)
 
-    # default do seller (adic_produto_b2b é só-do-mês, não desce pro default)
+    # default do seller (params só-do-mês não descem pro default)
     row = _get_or_create_params(db, seller_id)
     for f in calc.PARAM_FIELDS:
-        if f == "adic_produto_b2b":
+        if f in _MONTH_ONLY_PARAMS:
             continue
         setattr(row, f, src_params[f])
 

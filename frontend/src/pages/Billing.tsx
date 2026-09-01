@@ -22,7 +22,7 @@ const brl = (n: number | null | undefined) =>
 
 const PARAM_KEYS = [
   'preco_unitario', 'min_pedidos', 'manuseio_b2b', 'valor_caixa_b2b',
-  'adic_produto_b2b',
+  'adic_produto_b2b', 'franquia_produtos_b2b',
   'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
   'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
 ] as const;
@@ -45,7 +45,7 @@ function draftFromPayload(p: any): Draft {
     const channel = p.b2c_lines.includes(l) ? 'b2c' : 'b2b';
     const ov: any = {};
     if (l.auto_channel && l.auto_channel !== channel) ov.channel_override = channel;
-    if (channel === 'b2b' && l.b2b_adicional) ov.b2b_adicional = l.b2b_adicional;
+    if (l.b2b_adicional) ov.b2b_adicional = l.b2b_adicional;   // adicional manual (B2C e B2B)
     if (l.note) ov.note = l.note;
     if (Object.keys(ov).length) overrides[l.order_id] = {
       channel_override: ov.channel_override ?? null,
@@ -283,7 +283,8 @@ export default function BillingPage() {
                 <NumRow label="Manuseio B2B" v={draft.params.manuseio_b2b} onChange={v => setParam('manuseio_b2b', v)} />
                 <NumRow label="Valor caixa B2B" v={draft.params.valor_caixa_b2b} onChange={v => setParam('valor_caixa_b2b', v)} />
                 <NumRow label="Adicional por produto B2B" v={draft.params.adic_produto_b2b} onChange={v => setParam('adic_produto_b2b', v)} />
-                <p className="text-[11px] text-t4">Cobrado × soma das quantidades dos itens de cada NF B2B.</p>
+                <NumRow label="Franquia de produtos (grátis)" v={draft.params.franquia_produtos_b2b} onChange={v => setParam('franquia_produtos_b2b', v)} int />
+                <p className="text-[11px] text-t4">Adicional cobrado só a partir do produto seguinte à franquia (ex.: franquia 15 → cobra do 16º).</p>
               </ParamGroup>
               <ParamGroup title="Classificação B2C × B2B">
                 <NumRow label="É B2B a partir de (itens)" v={draft.params.limite_itens_b2b} onChange={v => setParam('limite_itens_b2b', v)} int />
@@ -396,10 +397,10 @@ export default function BillingPage() {
             <div className="grid gap-4 lg:grid-cols-2">
               <NfList kind="b2c" lines={payload.b2c_lines} soma={payload.soma_b2c}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed}
-                onMove={(oid: number) => moveChannel(oid, 'b2b')} onSetBox={setOrderBox} />
+                onMove={(oid: number) => moveChannel(oid, 'b2b')} onB2bAdic={setB2bAdic} onSetBox={setOrderBox} />
               <NfList kind="b2b" lines={payload.b2b_lines} soma={payload.soma_b2b}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed}
-                onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} onSetBox={setOrderBox} />
+                onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} />
             </div>
           </section>
         </div>
@@ -478,7 +479,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
           <span className={`text-[10px] px-1.5 py-0.5 rounded ${b2c ? 'bg-violet-900/40 text-violet-300' : 'bg-teal-900/40 text-teal-300'}`}>
             {b2c ? 'B2C' : 'B2B'}</span> &nbsp;{lines.length} NFs
         </span>
-        <span className="text-[11px] text-t4">{b2c ? 'manuseio + adic. caixa' : 'manus. + caixa + adic.'}</span>
+        <span className="text-[11px] text-t4">{b2c ? 'manuseio + adic. caixa + adic.' : 'manus. + caixa + ad.prod + adic.'}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]">
@@ -487,8 +488,17 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
               <th className="text-left px-2 py-1.5">Data</th>
               <th className="text-left px-2 py-1.5">NF</th>
               <th className="text-right px-2 py-1.5">Itens</th>
-              <th className="text-right px-2 py-1.5">Cx</th>
-              {!b2c && <th className="text-right px-2 py-1.5">Ad.prod</th>}
+              {b2c ? (
+                <>
+                  <th className="text-right px-2 py-1.5">Cx</th>
+                  <th className="text-right px-2 py-1.5">Adic. caixa</th>
+                </>
+              ) : (
+                <>
+                  <th className="text-right px-2 py-1.5">Cx B2B</th>
+                  <th className="text-right px-2 py-1.5">Ad.prod</th>
+                </>
+              )}
               <th className="text-right px-2 py-1.5">Adic.</th>
               <th className="text-right px-2 py-1.5">Total</th>
               <th className="px-2 py-1.5"></th>
@@ -504,27 +514,35 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                     <td className="px-2 py-1.5">{l.order_date ? l.order_date.slice(8, 10) + '/' + l.order_date.slice(5, 7) : '—'}</td>
                     <td className="px-2 py-1.5 font-mono">{l.nf_number}</td>
                     <td className="px-2 py-1.5 text-right">{l.itens ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-right">
-                      {!locked && oid != null ? (
-                        <select
-                          value={l.box || ''}
-                          onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
-                          className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none '
-                            + (l.box ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
-                        >
-                          <option value="" disabled>—</option>
-                          {l.box && !CANONICAL_BOXES.includes(l.box) && <option value={l.box}>{l.box} (antigo)</option>}
-                          {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
-                        </select>
-                      ) : (l.box || '—')}
-                    </td>
-                    {!b2c && <td className="px-2 py-1.5 text-right font-mono">{brl(l.adic_produto || 0)}</td>}
+                    {b2c ? (
+                      <>
+                        <td className="px-2 py-1.5 text-right">
+                          {!locked && oid != null ? (
+                            <select
+                              value={l.box || ''}
+                              onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
+                              className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none '
+                                + (l.box ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
+                            >
+                              <option value="" disabled>—</option>
+                              {l.box && !CANONICAL_BOXES.includes(l.box) && <option value={l.box}>{l.box} (antigo)</option>}
+                              {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
+                            </select>
+                          ) : (l.box || '—')}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono">{brl(l.adic_caixa)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-2 py-1.5 text-right font-mono">{brl(l.valor_caixa_b2b || 0)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{brl(l.adic_produto || 0)}</td>
+                      </>
+                    )}
                     <td className="px-2 py-1.5 text-right font-mono">
-                      {b2c ? brl(l.adic_caixa) : (
-                        <input type="number" step="0.01" disabled={locked} defaultValue={l.b2b_adicional}
-                          onBlur={e => onB2bAdic && oid != null && onB2bAdic(oid, Number(e.target.value))}
-                          className="w-16 text-right border border-line rounded px-1 py-0.5 bg-surface text-t1" />
-                      )}
+                      <input key={`adic-${oid}-${l.b2b_adicional ?? 0}`} type="number" step="0.01"
+                        disabled={locked} defaultValue={l.b2b_adicional ?? 0}
+                        onBlur={e => onB2bAdic && oid != null && onB2bAdic(oid, Number(e.target.value))}
+                        className="w-16 text-right border border-line rounded px-1 py-0.5 bg-surface text-t1 disabled:opacity-50" />
                     </td>
                     <td className="px-2 py-1.5 text-right font-mono">{brl(l.total)}</td>
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">
@@ -538,7 +556,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                   </tr>
                   {oid != null && expanded[oid] && l.items && (
                     <tr className="bg-surface-2">
-                      <td colSpan={b2c ? 7 : 8} className="px-3 py-2">
+                      <td colSpan={8} className="px-3 py-2">
                         <div className="text-[11px] text-t4 mb-1">NF {l.nf_number} · {l.items.length} SKU(s)</div>
                         {l.items.map((it: any, j: number) => (
                           <div key={j} className="flex justify-between font-mono text-[11px] text-t3">
@@ -555,7 +573,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
           </tbody>
           <tfoot>
             <tr className="border-t border-line font-semibold">
-              <td colSpan={b2c ? 5 : 6} className="px-2 py-2 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
+              <td colSpan={6} className="px-2 py-2 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
               <td className="px-2 py-2 text-right font-mono text-t1">{brl(soma)}</td>
               <td></td>
             </tr>

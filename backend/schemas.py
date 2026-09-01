@@ -699,6 +699,7 @@ class BillingSellerParamsIn(BaseModel):
     manuseio_b2b: float = 0.0
     valor_caixa_b2b: float = 0.0
     adic_produto_b2b: float = 0.0
+    franquia_produtos_b2b: int = 15
     limite_itens_b2b: int = 0
     tipos_caixa_inclusos: str = ""
     cota_caixas_mes: int = 0

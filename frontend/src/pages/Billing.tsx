@@ -187,13 +187,14 @@ export default function BillingPage() {
   // via o mesmo endpoint do Scanner e recarrega o fechamento para o adicional
   // recalcular ao vivo.
   const setOrderBox = async (orderId: number, box: string) => {
-    if (busy) return;
-    setBusy(true);
+    if (busy) return;   // serializa a gravação — sem isso, cliques em rajada
+    setBusy(true);      // disparam PATCHs concorrentes e a caixa cai na NF errada
     try {
       await scanningApi.saveOrderBox(orderId, box);
-      await qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
-      qc.invalidateQueries(['billing-consolidated']);
       toast.success(`Caixa ${box} cadastrada na NF`);
+      // recarrega em segundo plano; não segura o botão até o refetch terminar
+      qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
+      qc.invalidateQueries(['billing-consolidated']);
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || 'Erro ao cadastrar caixa');
     } finally { setBusy(false); }

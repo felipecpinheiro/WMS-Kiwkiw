@@ -14,7 +14,7 @@ import {
   DollarSign, Save, Download, Lock, Unlock, ArrowLeftRight, List as ListIcon,
   Plus, X, Settings2, ArrowRight,
 } from 'lucide-react';
-import { billingApi, cadastrosApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
+import { billingApi, cadastrosApi, scanningApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
 const brl = (n: number | null | undefined) =>
@@ -182,6 +182,22 @@ export default function BillingPage() {
     setDirty(true);
   };
   const rmAvulso = (i: number) => { setDraft(d => d ? { ...d, adjustments: d.adjustments.filter((_, j) => j !== i) } : d); setDirty(true); };
+
+  // Cadastra a caixa de uma NF direto da lista (mês aberto). Grava em Order.box_used
+  // via o mesmo endpoint do Scanner e recarrega o fechamento para o adicional
+  // recalcular ao vivo.
+  const setOrderBox = async (orderId: number, box: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await scanningApi.saveOrderBox(orderId, box);
+      await qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
+      qc.invalidateQueries(['billing-consolidated']);
+      toast.success(`Caixa ${box} cadastrada na NF`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Erro ao cadastrar caixa');
+    } finally { setBusy(false); }
+  };
 
   const lock = isClosed ? 'opacity-50 pointer-events-none' : '';
 
@@ -380,10 +396,10 @@ export default function BillingPage() {
             <div className="grid gap-4 lg:grid-cols-2">
               <NfList kind="b2c" lines={payload.b2c_lines} soma={payload.soma_b2c}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed}
-                onMove={(oid: number) => moveChannel(oid, 'b2b')} />
+                onMove={(oid: number) => moveChannel(oid, 'b2b')} onSetBox={setOrderBox} />
               <NfList kind="b2b" lines={payload.b2b_lines} soma={payload.soma_b2b}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed}
-                onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} />
+                onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} onSetBox={setOrderBox} />
             </div>
           </section>
         </div>
@@ -453,7 +469,7 @@ function FaturaTable({ f }: any) {
   );
 }
 
-function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2bAdic, overrides }: any) {
+function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2bAdic, onSetBox, overrides }: any) {
   const b2c = kind === 'b2c';
   return (
     <div className="border border-line-soft rounded-xl overflow-hidden">
@@ -488,7 +504,20 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                     <td className="px-2 py-1.5">{l.order_date ? l.order_date.slice(8, 10) + '/' + l.order_date.slice(5, 7) : '—'}</td>
                     <td className="px-2 py-1.5 font-mono">{l.nf_number}</td>
                     <td className="px-2 py-1.5 text-right">{l.itens ?? '—'}</td>
-                    <td className="px-2 py-1.5 text-right">{l.box || '—'}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      {!locked && oid != null ? (
+                        <select
+                          value={l.box || ''}
+                          onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
+                          className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none '
+                            + (l.box ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
+                        >
+                          <option value="" disabled>—</option>
+                          {l.box && !CANONICAL_BOXES.includes(l.box) && <option value={l.box}>{l.box} (antigo)</option>}
+                          {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
+                        </select>
+                      ) : (l.box || '—')}
+                    </td>
                     {!b2c && <td className="px-2 py-1.5 text-right font-mono">{brl(l.adic_produto || 0)}</td>}
                     <td className="px-2 py-1.5 text-right font-mono">
                       {b2c ? brl(l.adic_caixa) : (

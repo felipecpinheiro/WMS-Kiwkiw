@@ -110,8 +110,9 @@ def get_box_prices(
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    rows = db.query(models.BillingBoxPrice).order_by(models.BillingBoxPrice.id.asc()).all()
-    return {"prices": [{"box_key": r.box_key, "price": r.price} for r in rows]}
+    by_key = {r.box_key: r.price for r in db.query(models.BillingBoxPrice).all()}
+    ordered = list(calc.CANONICAL_BOXES) + [k for k in by_key if k not in calc.CANONICAL_BOXES]
+    return {"prices": [{"box_key": k, "price": by_key.get(k)} for k in ordered]}
 
 
 @router.put("/box-prices")

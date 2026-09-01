@@ -12,7 +12,7 @@ import {
   LogOut, Pause, KeyRound, ClipboardList, Plus, ZoomIn, X,
   Ban, RotateCcw,
 } from 'lucide-react';
-import { scanningApi, cadastrosApi } from '../api';
+import { scanningApi, cadastrosApi, CANONICAL_BOXES } from '../api';
 import type { EntryConference } from '../api';
 import toast from 'react-hot-toast';
 import ThemeToggle from '../components/ThemeToggle';
@@ -230,7 +230,6 @@ export default function ScannerPage() {
   // ── Caixa sugerida ────────────────────────────────────────
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
   const [boxUsed, setBoxUsed]             = useState<string | null>(null);
-  const [boxEditVal, setBoxEditVal]       = useState('');
   const [boxSaving, setBoxSaving]         = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; item: SessionOrderItem;
@@ -346,7 +345,6 @@ export default function ScannerPage() {
 
   // ── Busca caixa sugerida quando muda o pedido ───────────────
   useEffect(() => {
-    setBoxEditVal('');
     if (!activeOrderId) { setBoxSuggested(null); setBoxUsed(null); return; }
     scanningApi.suggestedBox(activeOrderId).then(r => {
       setBoxSuggested(r.data.suggested);
@@ -362,7 +360,6 @@ export default function ScannerPage() {
       const v = val.trim() || null;
       const res = await scanningApi.saveOrderBox(orderId, v);
       setBoxUsed(v);
-      setBoxEditVal('');
       if (res.data.order_completed) {
         // Caixa era a última pendência (todos os itens já bipados) — conclui
         // igual ao fim de bipagem normal. Mudar o status aqui já recalcula
@@ -1137,9 +1134,8 @@ export default function ScannerPage() {
                         🚚 {displayOrder.carrier}
                       </span>
                     )}
-                    {/* Caixa sugerida — só em SAÍDA (ver showBoxBadge). Não existe em modo consulta.
-                        Campo de texto sempre editável (sem precisar clicar num botão antes),
-                        mais atalhos 1–11 e "própria" (seller usa caixa própria). */}
+                    {/* Caixa usada — só em SAÍDA (ver showBoxBadge). Não existe em modo consulta.
+                        Padronizado: só botões da lista canônica, sem escrita manual. */}
                     {!isAuditView && showBoxBadge && (
                       <span className="inline-flex items-center gap-1.5 flex-wrap">
                         <span
@@ -1155,42 +1151,28 @@ export default function ScannerPage() {
                                 : { background: 'rgba(239,68,68,0.15)', color: 'rgb(var(--bad))', border: '1px solid rgba(239,68,68,0.35)' }
                           }
                           title={awaitingBox
-                            ? 'Caixa obrigatória — todos os itens já foram bipados, falta cadastrar a caixa para concluir a NF'
-                            : 'Caixa sugerida pelo algoritmo — ajuste no campo ao lado'}
+                            ? 'Caixa obrigatória — todos os itens já foram bipados, falta escolher a caixa para concluir a NF'
+                            : 'Caixa sugerida pelo algoritmo — clique num botão para ajustar'}
                         >
                           📦 {boxUsed || boxSuggested || 'N.A'}
                         </span>
-                        <input
-                          value={boxEditVal}
-                          onChange={e => setBoxEditVal(e.target.value)}
-                          onFocus={() => { if (!boxEditVal) setBoxEditVal(boxUsed || boxSuggested || ''); }}
-                          onKeyDown={e => { if (e.key === 'Enter') handleBoxSave(boxEditVal); }}
-                          placeholder="Ex: c1"
-                          disabled={boxSaving}
-                          className="w-20 bg-surface-2 border border-violet-400/50 rounded px-2 py-0.5 text-xs text-t1 outline-none"
-                        />
-                        <button onClick={() => handleBoxSave(boxEditVal)} disabled={boxSaving}
-                          className="text-[10px] text-violet-300 hover:text-violet-100 px-1">
-                          {boxSaving ? '…' : '✓'}
-                        </button>
-                        {Array.from({ length: 11 }, (_, i) => String(i + 1)).map(n => (
+                        {CANONICAL_BOXES.map(n => (
                           <button
                             key={n}
-                            onClick={() => { setBoxEditVal(n); handleBoxSave(n); }}
+                            onClick={() => handleBoxSave(n)}
                             disabled={boxSaving}
-                            className="w-6 h-6 flex items-center justify-center text-[11px] font-bold rounded border border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300 transition"
+                            title={n === 'Própria' ? 'Seller usa caixa própria' : `Caixa ${n}`}
+                            className={
+                              'h-6 flex items-center justify-center text-[11px] font-bold rounded border transition '
+                              + (n.length > 2 ? 'px-2 ' : 'w-6 ')
+                              + (boxUsed === n
+                                  ? 'border-violet-400 text-violet-200 bg-violet-500/20'
+                                  : 'border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300')
+                            }
                           >
                             {n}
                           </button>
                         ))}
-                        <button
-                          onClick={() => { setBoxEditVal('Própria'); handleBoxSave('Própria'); }}
-                          disabled={boxSaving}
-                          title="Seller usa caixa própria"
-                          className="px-2 h-6 flex items-center justify-center text-[11px] font-bold rounded border border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300 transition"
-                        >
-                          Própria
-                        </button>
                       </span>
                     )}
                   </div>

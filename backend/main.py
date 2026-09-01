@@ -289,8 +289,10 @@ def run_light_migrations():
 
         # ── Seed idempotente da tabela GLOBAL de adicional por caixa ───────────
         # A tabela em si é criada por Base.metadata.create_all (init_db). Aqui só
-        # garantimos as 9 chaves com price NULL (= sem adicional) se faltarem.
-        for _bk in ("1", "2", "3", "4", "5", "6", "7", "8", "Própria"):
+        # garantimos as 13 chaves canônicas com price NULL (= sem adicional) se
+        # faltarem. Chaves antigas fora da lista (se houver) não são removidas.
+        from backend.services.billing_calc import CANONICAL_BOXES
+        for _bk in CANONICAL_BOXES:
             db.execute(text(
                 "INSERT INTO billing_box_prices (box_key, price) "
                 "SELECT :bk, NULL "

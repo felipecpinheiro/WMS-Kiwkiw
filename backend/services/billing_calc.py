@@ -66,9 +66,18 @@ def prev_ref_month(ref_month: str) -> str:
     return f"{year:04d}-{mon:02d}"
 
 
-# ── normalização de caixa ────────────────────────────────────────────────────
+# ── caixas ───────────────────────────────────────────────────────────────────
+
+# Lista canônica — repetida em todo o sistema (Scanner, faturamento, cadastro
+# do seller). A ordem é a de exibição.
+CANONICAL_BOXES = [
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11",
+    "Saco de Embarque", "Própria",
+]
+
 
 def normaliza_box(raw) -> Optional[str]:
+    """Converte o texto de `Order.box_used` numa chave canônica de caixa."""
     if raw is None:
         return None
     s = str(raw).strip()
@@ -77,17 +86,26 @@ def normaliza_box(raw) -> Optional[str]:
     low = s.lower()
     if low.startswith("pró") or low.startswith("pro") or "propr" in low:
         return "Própria"
+    if "saco" in low or "sacola" in low or "embarque" in low:
+        return "Saco de Embarque"
     m = re.search(r"\d+", s)
     return m.group(0) if m else s
 
 
 def parse_grupo_a(txt: str) -> set[str]:
+    """Lista de caixas inclusas (grupo A). Aceita o formato novo (canônicas
+    separadas por vírgula) e o antigo ("1,2" / texto livre com "própria")."""
     if not txt:
         return set()
-    out: set[str] = set(re.findall(r"\d+", txt))
-    low = txt.lower()
-    if "propr" in low or "pró" in low:
-        out.add("Própria")
+    out: set[str] = set()
+    for part in str(txt).split(","):
+        nums = re.findall(r"\d+", part)
+        if nums:
+            out.update(nums)            # "10" -> {"10"}, legado "1 2" -> {"1","2"}
+        else:
+            nb = normaliza_box(part)
+            if nb:
+                out.add(nb)
     return out
 
 

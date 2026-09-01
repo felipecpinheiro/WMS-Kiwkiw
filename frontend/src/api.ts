@@ -994,6 +994,17 @@ export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
 
 export interface BillingBoxPrice { box_key: string; price: number | null }
 
+// Lista canônica de caixas — repetida no Scanner, faturamento e cadastro do seller.
+export const CANONICAL_BOXES = [
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
+  'Saco de Embarque', 'Própria',
+] as const;
+
+export interface BillingSellerBoxPrices {
+  prices: BillingBoxPrice[];      // uma entrada por caixa canônica; price null = usa o global
+  grupo_a: string[];              // caixas inclusas (grupo A)
+}
+
 export const billingApi = {
   // parâmetros default do seller (aba Comercial + topo do Faturamento)
   sellerParams: (sellerId: number) =>
@@ -1005,6 +1016,12 @@ export const billingApi = {
   boxPrices: () => api.get<{ prices: BillingBoxPrice[] }>('/billing/box-prices'),
   saveBoxPrices: (prices: BillingBoxPrice[]) =>
     api.put('/billing/box-prices', { prices }),
+
+  // preço de caixa + grupo A por seller (aba "Caixas" do cadastro de seller)
+  sellerBoxPrices: (sellerId: number) =>
+    api.get<BillingSellerBoxPrices>(`/billing/seller-box-prices/${sellerId}`),
+  saveSellerBoxPrices: (sellerId: number, body: BillingSellerBoxPrices) =>
+    api.put(`/billing/seller-box-prices/${sellerId}`, body),
 
   // fechamento mensal
   closing: (sellerId: number, refMonth: string) =>

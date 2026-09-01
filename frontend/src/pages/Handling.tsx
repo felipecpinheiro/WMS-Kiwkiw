@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
-import { scanningApi } from '../api';
+import { scanningApi, cadastrosApi } from '../api';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
 import type { SessionCard } from '../api';
@@ -253,11 +253,13 @@ function HandlingCard({
   card,
   onClick,
   onCtxMenu,
+  onRegister,
   isEntrada,
 }: {
   card: SessionCard;
   onClick: () => void;
   onCtxMenu?: (e: React.MouseEvent) => void;
+  onRegister?: () => void;
   isEntrada?: boolean;
 }) {
   const info = statusInfo(card.status, isEntrada);
@@ -303,6 +305,15 @@ function HandlingCard({
             >
               🔒 {card.held_orders} sem produto cadastrado
             </span>
+          )}
+          {!!card.held_orders && !!(card.held_skus && card.held_skus.length) && onRegister && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRegister(); }}
+              className="mt-1 ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+                text-t1 bg-[#3DD9A4]/90 hover:bg-[#3DD9A4] transition"
+            >
+              + Cadastrar produto
+            </button>
           )}
           {/* Conferência de entrada pausada: a NF continua EM ABERTO e já está
               contada em pending_orders — este badge só avisa que alguém parou
@@ -372,13 +383,14 @@ function HandlingCard({
 // ── Kanban Column ─────────────────────────────────────────────────────────────
 
 function KanbanColumn({
-  title, status, cards, onCardClick, onCardCtxMenu, isEntrada,
+  title, status, cards, onCardClick, onCardCtxMenu, onCardRegister, isEntrada,
 }: {
   title: string;
   status: string;
   cards: SessionCard[];
   onCardClick: (card: SessionCard) => void;
   onCardCtxMenu?: (e: React.MouseEvent, card: SessionCard) => void;
+  onCardRegister?: (card: SessionCard) => void;
   isEntrada?: boolean;
 }) {
   const info = statusInfo(status, isEntrada);
@@ -416,10 +428,122 @@ function KanbanColumn({
             card={c}
             onClick={() => onCardClick(c)}
             onCtxMenu={onCardCtxMenu ? (e) => onCardCtxMenu(e, c) : undefined}
+            onRegister={onCardRegister ? () => onCardRegister(c) : undefined}
             isEntrada={isEntrada}
           />
         ))
       )}
+    </div>
+  );
+}
+
+// ── Modal: cadastrar produto faltante direto do card ─────────────────────────
+
+function HeldProductModal({
+  card,
+  onClose,
+  onRegistered,
+}: {
+  card: SessionCard;
+  onClose: () => void;
+  onRegistered: () => void;
+}) {
+  const skus = card.held_skus ?? [];
+  const [forms, setForms] = useState<Record<string, { name: string; barcode: string }>>(
+    () => Object.fromEntries(skus.map(s => [s.sku, { name: s.product_name ?? '', barcode: '' }]))
+  );
+  const [savingSku, setSavingSku] = useState<string | null>(null);
+  const [doneSkus, setDoneSkus] = useState<Set<string>>(new Set());
+
+  async function register(sku: string) {
+    const f = forms[sku];
+    if (!f?.name.trim()) {
+      toast.error('Nome do produto é obrigatório');
+      return;
+    }
+    if (!card.seller_id) return;
+    setSavingSku(sku);
+    try {
+      await cadastrosApi.createProduct({
+        seller_id: card.seller_id,
+        sku,
+        name: f.name.trim(),
+        barcode_seller: f.barcode.trim() || undefined,
+      });
+      toast.success(`Produto ${sku} cadastrado`);
+      const next = new Set(doneSkus); next.add(sku);
+      setDoneSkus(next);
+      onRegistered();
+      if (next.size === skus.length) setTimeout(onClose, 400);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao cadastrar produto');
+    } finally {
+      setSavingSku(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-6 pb-3">
+          <h3 className="text-base font-semibold text-t1 mb-1">
+            Cadastrar produto — {card.seller_name}
+          </h3>
+          <p className="text-xs text-t3">
+            Essas NFs não podem ser bipadas até o SKU ter produto cadastrado. Ao salvar,
+            a NF volta sozinha para o manuseio.
+          </p>
+        </div>
+        <div className="px-6 overflow-y-auto flex-1">
+        <div className="border border-line-soft rounded-lg divide-y divide-line-soft">
+          {skus.map((s) => {
+            const f = forms[s.sku] ?? { name: '', barcode: '' };
+            const done = doneSkus.has(s.sku);
+            return (
+              <div key={s.sku} className={`px-3 py-2.5 ${done ? 'opacity-40' : ''}`}>
+                <p className="text-xs text-t3 mb-1.5">
+                  <span className="font-mono text-t2">{s.sku}</span> · NF {s.nf_number}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    value={f.name}
+                    disabled={done}
+                    onChange={(e) => setForms(prev => ({ ...prev, [s.sku]: { ...f, name: e.target.value } }))}
+                    placeholder="Nome do produto (obrigatório)"
+                    className="flex-1 min-w-[180px] bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
+                  />
+                  <input
+                    value={f.barcode}
+                    disabled={done}
+                    onChange={(e) => setForms(prev => ({ ...prev, [s.sku]: { ...f, barcode: e.target.value } }))}
+                    placeholder="Código de barras (opcional)"
+                    className="w-40 bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-xs text-t1"
+                  />
+                  <button
+                    onClick={() => register(s.sku)}
+                    disabled={done || savingSku === s.sku}
+                    className="px-3 py-1.5 rounded-lg bg-[#3DD9A4] text-[#14122A] text-xs font-semibold disabled:opacity-50"
+                  >
+                    {done ? 'OK' : savingSku === s.sku ? 'Salvando…' : 'Cadastrar'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        </div>
+        <div className="flex justify-end p-6 pt-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg bg-surface-2 text-t1 text-sm hover:bg-brand-soft"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -460,6 +584,7 @@ export default function HandlingPage() {
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ action: AdminAction; card: SessionCard } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [heldCard, setHeldCard] = useState<SessionCard | null>(null);
 
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
@@ -673,9 +798,9 @@ export default function HandlingPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
-          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
-          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
         </div>
       )}
 
@@ -685,6 +810,15 @@ export default function HandlingPage() {
           <p className="text-sm font-medium">Nenhum card encontrado</p>
           <p className="text-xs mt-1">Ajuste os filtros ou importe um arquivo no Dashboard</p>
         </div>
+      )}
+
+      {/* Cadastro de produto faltante direto do card (entrada e saída) */}
+      {heldCard && (
+        <HeldProductModal
+          card={heldCard}
+          onClose={() => setHeldCard(null)}
+          onRegistered={() => refetch()}
+        />
       )}
 
       {/* ── Admin overlays ─────────────────────────────────────────────────── */}

@@ -14,7 +14,7 @@ import re
 from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from .kit_handler import process_order_items
-from .stock_manager import apply_stock_for_orders
+from .stock_manager import apply_stock_for_orders, orders_missing_product_skus
 from .excel_utils import ensure_xlsx_path
 from . import import_progress
 from ..timezone_utils import now_brasilia, today_brasilia
@@ -1155,6 +1155,58 @@ def import_excel_orders(
                 f"{len(stock_report.pending_orders)} NF(s) NÃO baixaram estoque — "
                 f"falta transportadora ou produto cadastrado"
             )
+
+        # ── ENTRADA: aviso de SKU sem produto cadastrado ──────────────────────
+        # A entrada NÃO baixa estoque no import (entra na finalização da
+        # bipagem), então apply_stock_for_orders devolve tudo vazio. Mas a NF de
+        # entrada com SKU sem produto cadastrado FICA FORA DO MANUSEIO e é
+        # impossível de bipar — mesma trava da saída (ver
+        # orders_missing_product_skus / open_order_by_nfe). Aqui montamos o mesmo
+        # relatório (missing_products + pending_orders) para a tela dar o MESMO
+        # modal pós-import e o MESMO aviso fixo do Dashboard.
+        #   - missing_carrier = False: transportadora não bloqueia entrada.
+        #   - can_apply = False: entrada nunca "reprocessa" — a única saída é
+        #     cadastrar o produto.
+        if session_file_type == models.FileType.IMPORT:
+            held_map = orders_missing_product_skus(db, [o.id for o in session_orders])
+            if held_map:
+                by_order = {o.id: o for o in session_orders}
+                missing_acc: dict = {}
+                pending_acc: list = []
+                for oid, skus in held_map.items():
+                    o = by_order.get(oid)
+                    if o is None:
+                        continue
+                    pending_acc.append(schemas.PendingStockOrderInfo(
+                        order_id=o.id,
+                        nf_number=o.nf_number,
+                        seller_id=o.seller_id,
+                        seller_name=o.seller.trade_name if o.seller else None,
+                        customer_name=o.customer_name,
+                        missing_carrier=False,
+                        missing_skus=skus,
+                        can_apply=False,
+                    ))
+                    for sku in skus:
+                        key = (o.seller_id, sku)
+                        if key not in missing_acc:
+                            missing_acc[key] = schemas.MissingProductInfo(
+                                seller_id=o.seller_id,
+                                seller_name=o.seller.trade_name if o.seller else None,
+                                sku=sku,
+                                product_name=next(
+                                    (i.product_name for i in o.items if i.sku == sku), sku
+                                ),
+                                nf_numbers=[],
+                            )
+                        if o.nf_number not in missing_acc[key].nf_numbers:
+                            missing_acc[key].nf_numbers.append(o.nf_number)
+                stock_report.pending_orders = pending_acc
+                stock_report.missing_products = list(missing_acc.values())
+                warnings.append(
+                    f"{len(pending_acc)} NF(s) de entrada não podem ser bipadas "
+                    f"até cadastrar o produto"
+                )
 
         # Log de auditoria
         audit = models.AuditLog(

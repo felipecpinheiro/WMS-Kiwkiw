@@ -3015,7 +3015,24 @@ def session_cards(
     # NFs seguradas por falta de produto cadastrado — ficam fora do manuseio.
     # UMA consulta para todas as sessões da tela (não uma por card/pedido).
     all_order_ids = [o.id for s in sessions for o in s.orders]
-    held_ids = set(orders_missing_product_skus(db, all_order_ids).keys())
+    held_map_all = orders_missing_product_skus(db, all_order_ids)
+    held_ids = set(held_map_all.keys())
+    # Nome do produto (do próprio OrderItem) por (order_id, sku) — só das NFs
+    # seguradas, para o card poder listar QUAL SKU falta sem carregar
+    # joinedload(items) na tela inteira (que é pesada — ver CLAUDE.md).
+    held_names: dict = {}
+    if held_ids:
+        for oid, sku, pname in (
+            db.query(
+                models.OrderItem.order_id,
+                models.OrderItem.sku,
+                func.min(models.OrderItem.product_name),
+            )
+            .filter(models.OrderItem.order_id.in_(list(held_ids)))
+            .group_by(models.OrderItem.order_id, models.OrderItem.sku)
+            .all()
+        ):
+            held_names[(oid, sku)] = pname
 
     # Conferências de entrada pausadas — UMA consulta para a tela inteira, pelo
     # mesmo motivo de held_ids (nunca uma por card/pedido). NF pausada continua
@@ -3080,6 +3097,22 @@ def session_cards(
             # card poder avisar que ela existe. Volta sozinha ao cadastrar.
             held_here = [o for o in active_orders if o.id in held_ids]
             active_orders = [o for o in active_orders if o.id not in held_ids]
+
+            # SKUs sem produto cadastrado deste card — alimenta o botão
+            # "Cadastrar produto" no card de Manuseios. Um por (seller, sku),
+            # com a NF de exemplo e o nome que veio no arquivo.
+            held_skus: list = []
+            _seen_held_skus: set = set()
+            for _ho in held_here:
+                for _sku in held_map_all.get(_ho.id, []):
+                    if _sku in _seen_held_skus:
+                        continue
+                    _seen_held_skus.add(_sku)
+                    held_skus.append({
+                        "sku": _sku,
+                        "product_name": held_names.get((_ho.id, _sku)) or _sku,
+                        "nf_number": _ho.nf_number,
+                    })
             if not active_orders:
                 # Tudo que sobrou está segurado — o card ainda aparece, mas só
                 # para mostrar a pendência (senão o seller sumiria do kanban).
@@ -3162,6 +3195,7 @@ def session_cards(
                 # Não entram em total_orders nem no progresso.
                 "held_orders": len(held_here),
                 "held_only": held_only_card,
+                "held_skus": held_skus,
             })
 
     return cards

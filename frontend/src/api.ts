@@ -249,6 +249,9 @@ export interface SessionCard {
   // bipar (sem produto não há barcode). Não entram em total_orders.
   held_orders?: number;
   held_only?: boolean;
+  // SKUs sem produto cadastrado deste card (um por seller+sku) — alimenta o
+  // botão "Cadastrar produto" no card de Manuseios.
+  held_skus?: { sku: string; product_name: string | null; nf_number: string }[];
   /**
    * Conferências de ENTRADA pausadas neste card. Já contadas em
    * pending_orders — a NF pausada continua EM ABERTO; isto é só o badge.

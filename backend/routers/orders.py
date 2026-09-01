@@ -26,6 +26,7 @@ from ..services.stock_manager import (
     apply_stock_for_order,
     reverse_stock_for_order,
     evaluate_orders_for_stock,
+    orders_missing_product_skus,
     release_pending_orders_for_sku,
     relink_sku_in_pending_orders,
     order_has_scan_overage,
@@ -501,6 +502,39 @@ def _pending_stock_base_query(db: Session):
     )
 
 
+def _entrada_held_orders(db: Session, session_id: Optional[int] = None) -> list:
+    """
+    NFs de ENTRADA que não podem ser bipadas porque algum SKU não tem produto
+    ativo cadastrado (24/08/2026).
+
+    A entrada não baixa estoque no import, então ela FICA FORA de
+    `_pending_stock_base_query` de propósito (stock_applied_at vazio é o estado
+    normal de uma entrada esperando conferência). Mas quando o bloqueio é SKU
+    sem cadastro, é uma pendência real — a mesma da saída — e tem que aparecer
+    no aviso fixo do Dashboard. Entrada só esperando conferência NÃO entra aqui.
+    """
+    q = db.query(models.Order).options(
+        joinedload(models.Order.items),
+        joinedload(models.Order.seller),
+    ).join(models.Seller, models.Order.seller_id == models.Seller.id).filter(
+        models.Order.file_type == models.FileType.IMPORT,
+        models.Order.stock_applied_at.is_(None),
+        models.Order.imported_at >= STOCK_ERA_CUTOFF,
+        models.Order.status.notin_([
+            models.OrderStatus.CANCELLED,
+            models.OrderStatus.INACTIVE,
+        ]),
+        models.Seller.active == True,  # noqa: E712
+    )
+    if session_id:
+        q = q.filter(models.Order.session_id == session_id)
+    orders = q.all()
+    if not orders:
+        return []
+    held = orders_missing_product_skus(db, [o.id for o in orders])
+    return [o for o in orders if o.id in held]
+
+
 @router.get("/pending-stock", response_model=schemas.StockApplyReport)
 def list_pending_stock_orders(
     session_id: Optional[int] = None,
@@ -519,35 +553,62 @@ def list_pending_stock_orders(
         q = q.filter(models.Order.session_id == session_id)
 
     orders = q.all()
-    if not orders:
-        return schemas.StockApplyReport()
 
-    evaluation = evaluate_orders_for_stock(orders, db)
     pending, missing = [], {}
-    for o in orders:
-        ev = evaluation[o.id]
-        pending.append(schemas.PendingStockOrderInfo(
-            order_id=o.id,
-            nf_number=o.nf_number,
-            seller_id=o.seller_id,
-            seller_name=o.seller.trade_name if o.seller else None,
-            customer_name=o.customer_name,
-            missing_carrier=ev["missing_carrier"],
-            missing_skus=ev["missing_skus"],
-            can_apply=ev["can_apply"],
-        ))
-        for sku in ev["missing_skus"]:
-            key = (o.seller_id, sku)
-            if key not in missing:
-                missing[key] = schemas.MissingProductInfo(
-                    seller_id=o.seller_id,
-                    seller_name=o.seller.trade_name if o.seller else None,
-                    sku=sku,
-                    product_name=next((i.product_name for i in o.items if i.sku == sku), sku),
-                    nf_numbers=[],
-                )
-            if o.nf_number not in missing[key].nf_numbers:
-                missing[key].nf_numbers.append(o.nf_number)
+
+    def _add_missing(o, sku):
+        key = (o.seller_id, sku)
+        if key not in missing:
+            missing[key] = schemas.MissingProductInfo(
+                seller_id=o.seller_id,
+                seller_name=o.seller.trade_name if o.seller else None,
+                sku=sku,
+                product_name=next((i.product_name for i in o.items if i.sku == sku), sku),
+                nf_numbers=[],
+            )
+        if o.nf_number not in missing[key].nf_numbers:
+            missing[key].nf_numbers.append(o.nf_number)
+
+    if orders:
+        evaluation = evaluate_orders_for_stock(orders, db)
+        for o in orders:
+            ev = evaluation[o.id]
+            pending.append(schemas.PendingStockOrderInfo(
+                order_id=o.id,
+                nf_number=o.nf_number,
+                seller_id=o.seller_id,
+                seller_name=o.seller.trade_name if o.seller else None,
+                customer_name=o.customer_name,
+                missing_carrier=ev["missing_carrier"],
+                missing_skus=ev["missing_skus"],
+                can_apply=ev["can_apply"],
+            ))
+            for sku in ev["missing_skus"]:
+                _add_missing(o, sku)
+
+    # NFs de ENTRADA seguradas por SKU sem produto — mesma pendência da saída,
+    # mas transportadora não bloqueia entrada e não há "reprocessar"
+    # (can_apply=False): a única saída é cadastrar o produto (24/08/2026).
+    entrada_held = _entrada_held_orders(db, session_id)
+    if entrada_held:
+        held_map = orders_missing_product_skus(db, [o.id for o in entrada_held])
+        for o in entrada_held:
+            skus = held_map.get(o.id, [])
+            pending.append(schemas.PendingStockOrderInfo(
+                order_id=o.id,
+                nf_number=o.nf_number,
+                seller_id=o.seller_id,
+                seller_name=o.seller.trade_name if o.seller else None,
+                customer_name=o.customer_name,
+                missing_carrier=False,
+                missing_skus=skus,
+                can_apply=False,
+            ))
+            for sku in skus:
+                _add_missing(o, sku)
+
+    if not pending:
+        return schemas.StockApplyReport()
 
     return schemas.StockApplyReport(
         applied_orders=0,

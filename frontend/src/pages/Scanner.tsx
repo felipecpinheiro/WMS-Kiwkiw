@@ -570,6 +570,12 @@ export default function ScannerPage() {
         setFeedback({ state: 'error', title: '✗ NF inativada', message: data.message });
         toast.error(data.message, { duration: 6000 });
         setTimeout(() => navigate('/manuseios'), 2500);
+      } else if (data.blocked_reason === 'missing_product') {
+        // NF (entrada ou saída) com SKU sem produto cadastrado — impossível de
+        // bipar. A mensagem do backend já lista os SKUs. Cadastre pelo card em
+        // Manuseios ou pelo Dashboard e a NF volta sozinha.
+        setFeedback({ state: 'error', title: '✗ SKU sem cadastro', message: data.message });
+        toast.error(data.message, { duration: 8000 });
       } else {
         setFeedback({ state: 'error', title: '✗ NFe não encontrada', message: data.message || 'Verifique a etiqueta' });
       }

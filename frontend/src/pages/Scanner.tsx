@@ -4,7 +4,7 @@
  * Design visual, robusto e à prova de erros.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import {
@@ -208,6 +208,23 @@ export default function ScannerPage() {
     storedOrderId ? Number(storedOrderId) : null
   );
   const [localOrders, setLocalOrders] = useState<SessionOrder[]>([]);
+  // ── Filtro local "esconder NFs que contêm um SKU" ────────────
+  // Puramente visual e local ao navegador/login. Sobrevive a F5 via
+  // sessionStorage, mas é limpo ao sair da bipagem. Não mexe em progresso
+  // real, contagem de manuseio, faturamento nem backend.
+  const hiddenSkusKey = `scanner_${sessionId}_hiddenSkus`;
+  const [hiddenSkus, setHiddenSkus] = useState<string[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(hiddenSkusKey);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try {
+      if (hiddenSkus.length > 0) sessionStorage.setItem(hiddenSkusKey, JSON.stringify(hiddenSkus));
+      else sessionStorage.removeItem(hiddenSkusKey);
+    } catch { /* ignore */ }
+  }, [hiddenSkus, hiddenSkusKey]);
   const [feedback, setFeedback] = useState<Feedback>({ state: 'idle', title: '', message: '' });
   const [lastScannedSku, setLastScannedSku] = useState<string | undefined>();
   const [flashedSku, setFlashedSku] = useState<string | undefined>(); // 1a: flash visual
@@ -454,6 +471,33 @@ export default function ScannerPage() {
   const doneOrders = localOrders.filter(o => o.status === 'completed').length;
   const sessionPct = totalOrders > 0 ? Math.round((doneOrders / totalOrders) * 100) : 0;
 
+  // Opções do filtro: SKUs distintos presentes nas NFs desta view.
+  const skuOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of localOrders) {
+      for (const it of o.items) {
+        if (it.sku && !map.has(it.sku)) map.set(it.sku, it.product_name || '');
+      }
+    }
+    return Array.from(map, ([sku, name]) => ({ sku, name }))
+      .sort((a, b) => a.sku.localeCompare(b.sku));
+  }, [localOrders]);
+
+  // IDs das NFs escondidas pelo filtro (contêm ao menos um SKU escondido).
+  const hiddenOrderIds = useMemo(() => {
+    const set = new Set<number>();
+    if (hiddenSkus.length === 0) return set;
+    for (const o of localOrders) {
+      if (o.items.some(it => hiddenSkus.includes(it.sku))) set.add(o.id);
+    }
+    return set;
+  }, [localOrders, hiddenSkus]);
+
+  const visibleOrders = useMemo(
+    () => localOrders.filter(o => !hiddenOrderIds.has(o.id)),
+    [localOrders, hiddenOrderIds],
+  );
+
   // ── NFe scan: open order ───────────────────────────────
 
   const handleNfeScan = useCallback(async (nfeKey: string, force: boolean = false) => {
@@ -486,6 +530,21 @@ export default function ScannerPage() {
             title: '✗ Pedido interrompido',
             message: `NF ${matchedOrder.nf_number} foi interrompida e não pode ser reaberta. Contate o supervisor.`,
           });
+          setScanning(false);
+          setBarcodeInput('');
+          inputRef.current?.focus();
+          return;
+        }
+        // Filtro local de SKU: NF escondida não pode ser aberta enquanto o
+        // filtro estiver ativo (evita trabalhar por engano a NF que era pra
+        // ficar de fora).
+        if (hiddenOrderIds.has(data.order_id)) {
+          setFeedback({
+            state: 'error',
+            title: '✗ NF escondida pelo filtro',
+            message: `NF ${data.nf_number} está oculta pelo filtro de SKU. Limpe o filtro para bipá-la.`,
+          });
+          toast('NF escondida pelo filtro de SKU', { icon: '🚫', duration: 6000 });
           setScanning(false);
           setBarcodeInput('');
           inputRef.current?.focus();
@@ -530,6 +589,13 @@ export default function ScannerPage() {
             title: '✗ Pedido interrompido',
             message: `NF ${matched.nf_number} foi interrompida e não pode ser reaberta. Contate o supervisor.`,
           });
+        } else if (hiddenOrderIds.has(matched.id)) {
+          setFeedback({
+            state: 'error',
+            title: '✗ NF escondida pelo filtro',
+            message: `NF ${matched.nf_number} está oculta pelo filtro de SKU. Limpe o filtro para bipá-la.`,
+          });
+          toast('NF escondida pelo filtro de SKU', { icon: '🚫', duration: 6000 });
         } else {
           setActiveOrderId(matched.id);
           setFeedback({ state: 'success', title: `✓ Pedido aberto`, message: `NF ${matched.nf_number} — ${matched.customer_name}` });
@@ -542,7 +608,7 @@ export default function ScannerPage() {
       setBarcodeInput('');
       inputRef.current?.focus();
     }
-  }, [scanning, sessionId, localOrders]);
+  }, [scanning, sessionId, localOrders, hiddenOrderIds]);
 
   // ── Product scan ────────────────────────────────────────
 
@@ -864,7 +930,11 @@ export default function ScannerPage() {
       }
     }
     // Limpa sessionStorage e navega para fora
-    if (sessionId) sessionStorage.removeItem(`scanner_${sessionId}_activeOrder`);
+    if (sessionId) {
+      sessionStorage.removeItem(`scanner_${sessionId}_activeOrder`);
+      sessionStorage.removeItem(hiddenSkusKey);
+    }
+    setHiddenSkus([]);
     setActiveOrderId(null);
     setShowExitDialog(false);
     setExitReason('');
@@ -981,6 +1051,55 @@ export default function ScannerPage() {
               </div>
             ) : null;
           })()}
+          {/* Filtro local: esconder NFs que contêm um SKU (ex.: produto que o
+              seller ainda não enviou). Só visual, só neste login, some ao sair. */}
+          {skuOptions.length > 0 && (
+            <div className="mt-1.5 px-2 py-1.5 rounded-lg text-[9px]"
+              style={{ background: 'rgba(123,99,232,0.08)', border: '1px solid rgba(123,99,232,0.20)' }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-semibold text-t3">Esconder NFs com o SKU</span>
+                {hiddenSkus.length > 0 && (
+                  <button onClick={() => setHiddenSkus([])}
+                    className="text-t5 hover:text-bad font-semibold">Limpar</button>
+                )}
+              </div>
+              <select
+                value=""
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v && !hiddenSkus.includes(v)) setHiddenSkus(prev => [...prev, v]);
+                }}
+                className="w-full bg-surface-2 border border-line-soft rounded px-1.5 py-1 text-[9px] text-t2"
+              >
+                <option value="">+ escolher SKU…</option>
+                {skuOptions
+                  .filter(o => !hiddenSkus.includes(o.sku))
+                  .map(o => (
+                    <option key={o.sku} value={o.sku}>
+                      {o.sku}{o.name ? ` — ${o.name}` : ''}
+                    </option>
+                  ))}
+              </select>
+              {hiddenSkus.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {hiddenSkus.map(sku => (
+                    <span key={sku}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold"
+                      style={{ background: 'rgba(123,99,232,0.18)', color: 'rgb(var(--brand))' }}>
+                      {sku}
+                      <button onClick={() => setHiddenSkus(prev => prev.filter(s => s !== sku))}
+                        className="hover:text-bad"><X size={9} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {hiddenOrderIds.size > 0 && (
+                <p className="mt-1 text-warn font-semibold">
+                  {hiddenOrderIds.size} NF(s) escondida(s)
+                </p>
+              )}
+            </div>
+          )}
           <div className="mt-2">
             <div className="flex justify-between text-[10px] text-t4 mb-1">
               <span>{doneOrders}/{totalOrders} pedidos</span>
@@ -1014,7 +1133,11 @@ export default function ScannerPage() {
             <p className="text-xs text-bad text-center py-4 px-2">
               {(error as any)?.response?.data?.detail || 'Erro ao carregar'}
             </p>
-          ) : localOrders.map(order => {
+          ) : visibleOrders.length === 0 && localOrders.length > 0 ? (
+            <p className="text-[10px] text-t4 text-center py-4 px-2">
+              Todas as NFs estão escondidas pelo filtro de SKU.
+            </p>
+          ) : visibleOrders.map(order => {
             const isActive = order.id === activeOrderId;
             const pct = order.items_total > 0 ? Math.round((order.items_scanned / order.items_total) * 100) : 0;
             const dotColor = order.is_inactive ? 'bg-red-500/60'
@@ -1101,6 +1224,8 @@ export default function ScannerPage() {
               } else if (isAuditView) {
                 setAuditOrder(null);
               } else {
+                if (sessionId) sessionStorage.removeItem(hiddenSkusKey);
+                setHiddenSkus([]);
                 navigate('/manuseios');
               }
             }}

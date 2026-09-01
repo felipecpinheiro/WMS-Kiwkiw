@@ -396,10 +396,10 @@ export default function BillingPage() {
             <p className="text-[11px] text-t4 mb-3">Todas as NFs · qualquer status exceto cancelada · por data de importação</p>
             <div className="grid gap-4 lg:grid-cols-2">
               <NfList kind="b2c" lines={payload.b2c_lines} soma={payload.soma_b2c}
-                expanded={expanded} setExpanded={setExpanded} locked={isClosed}
+                expanded={expanded} setExpanded={setExpanded} locked={isClosed} saving={busy}
                 onMove={(oid: number) => moveChannel(oid, 'b2b')} onB2bAdic={setB2bAdic} onSetBox={setOrderBox} />
               <NfList kind="b2b" lines={payload.b2b_lines} soma={payload.soma_b2b}
-                expanded={expanded} setExpanded={setExpanded} locked={isClosed}
+                expanded={expanded} setExpanded={setExpanded} locked={isClosed} saving={busy}
                 onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} />
             </div>
           </section>
@@ -470,7 +470,7 @@ function FaturaTable({ f }: any) {
   );
 }
 
-function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2bAdic, onSetBox, overrides }: any) {
+function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMove, onB2bAdic, onSetBox, overrides }: any) {
   const b2c = kind === 'b2c';
   return (
     <div className="border border-line-soft rounded-xl overflow-hidden">
@@ -509,7 +509,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
               const oid = l.order_id;
               const yellow = b2c && l.sem_caixa;
               return (
-                <Fragment key={i}>
+                <Fragment key={oid ?? `row-${i}`}>
                   <tr className={`border-t border-line-soft ${yellow ? 'bg-amber-900/15' : ''}`}>
                     <td className="px-2 py-1.5">{l.order_date ? l.order_date.slice(8, 10) + '/' + l.order_date.slice(5, 7) : '—'}</td>
                     <td className="px-2 py-1.5 font-mono">{l.nf_number}</td>
@@ -520,8 +520,9 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                           {!locked && oid != null ? (
                             <select
                               value={l.box || ''}
+                              disabled={saving}
                               onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
-                              className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none '
+                              className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none disabled:opacity-40 '
                                 + (l.box ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
                             >
                               <option value="" disabled>—</option>
@@ -559,7 +560,7 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2
                       <td colSpan={8} className="px-3 py-2">
                         <div className="text-[11px] text-t4 mb-1">NF {l.nf_number} · {l.items.length} SKU(s)</div>
                         {l.items.map((it: any, j: number) => (
-                          <div key={j} className="flex justify-between font-mono text-[11px] text-t3">
+                          <div key={`${it.sku}-${j}`} className="flex justify-between font-mono text-[11px] text-t3">
                             <span>{it.sku} — {it.name}</span><span>× {it.quantity}</span>
                           </div>
                         ))}

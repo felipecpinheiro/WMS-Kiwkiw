@@ -276,7 +276,7 @@ export default function BillingPage() {
                 <p className="text-[11px] text-t4">Só caixas fora do grupo A consomem a cota B.</p>
               </ParamGroup>
               <ParamGroup title="Seguro">
-                <ToggleRow label="Seguro incluso?" v={draft.params.seguro_incluso} onChange={v => setParam('seguro_incluso', v)} />
+                <ToggleRow label="Cobrar seguro?" v={draft.params.seguro_incluso} onChange={v => setParam('seguro_incluso', v)} />
                 <NumRow label="Valor segurado" v={draft.valor_segurado} onChange={v => setField('valor_segurado', v)} />
                 <NumRow label="Alíquota (%)" v={draft.params.aliquota_seguro} onChange={v => setParam('aliquota_seguro', v)} />
               </ParamGroup>

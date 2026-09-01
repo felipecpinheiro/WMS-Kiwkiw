@@ -517,7 +517,7 @@ export default function SellersPage() {
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="seg" checked={form.billing.seguro_incluso}
                       onChange={e => setBilling('seguro_incluso', e.target.checked)} className="w-4 h-4 accent-violet-500" />
-                    <label htmlFor="seg" className="text-sm text-t2">Seguro incluso</label>
+                    <label htmlFor="seg" className="text-sm text-t2">Cobrar seguro</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="arm" checked={form.billing.armazenagem_inclusa}

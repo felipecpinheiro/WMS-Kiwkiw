@@ -280,8 +280,12 @@ def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments) ->
     floor = min_ped * preco_unit
     b2c_min = max(soma_b2c, floor)
     b2b_min = soma_b2b
-    seguro = 0.0 if params.get("seguro_incluso") else \
+    # `seguro_incluso` = "cobrar seguro?": ligado cobra, desligado não cobra.
+    # (O nome da coluna foi mantido por compatibilidade; o rótulo na tela é "Cobrar seguro?".)
+    seguro = (
         float(valor_segurado or 0.0) * float(params.get("aliquota_seguro") or 0.0) / 100.0
+        if params.get("seguro_incluso") else 0.0
+    )
     exc_m3 = max(0.0, float(cubagem or 0.0) - float(params.get("franquia_m3") or 0.0))
     armazenagem = exc_m3 * float(params.get("preco_m3") or 0.0)
     avulsos = sum(int(a.get("sign") or 1) * float(a.get("valor") or 0.0) for a in adjustments)

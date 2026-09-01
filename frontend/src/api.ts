@@ -967,23 +967,70 @@ export const cadastrosApi = {
 // FATURAMENTO
 // ============================================================
 
+export interface BillingSellerParams {
+  seller_id?: number;
+  preco_unitario: number;
+  min_pedidos: number;
+  manuseio_b2b: number;
+  valor_caixa_b2b: number;
+  limite_itens_b2b: number;
+  tipos_caixa_inclusos: string;
+  cota_caixas_mes: number;
+  franquia_m3: number;
+  preco_m3: number;
+  seguro_incluso: boolean;
+  aliquota_seguro: number;
+  armazenagem_inclusa: boolean;
+}
+
+export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
+  preco_unitario: 0, min_pedidos: 0, manuseio_b2b: 0, valor_caixa_b2b: 0,
+  limite_itens_b2b: 0, tipos_caixa_inclusos: '', cota_caixas_mes: 0,
+  franquia_m3: 0, preco_m3: 0, seguro_incluso: false, aliquota_seguro: 0.30,
+  armazenagem_inclusa: false,
+};
+
+export interface BillingBoxPrice { box_key: string; price: number | null }
+
 export const billingApi = {
-  config: (sellerId: number) =>
-    api.get(`/billing/config/${sellerId}`),
-  saveConfig: (data: Record<string, any>) =>
-    api.post('/billing/config', data),
-  report: (sellerId: number, month: string) => {
-    const [year, mon] = month.split('-').map(Number);
-    const date_from = `${month}-01`;
-    const lastDay = new Date(year, mon, 0).getDate();
-    const date_to = `${month}-${String(lastDay).padStart(2, '0')}`;
-    return api.get(`/billing/report/${sellerId}`, { params: { date_from, date_to } });
-  },
-  exportReport: (sellerId: number, month: string) =>
-    window.open(
-      `${API_BASE}/billing/report/${sellerId}/export?month=${month}`,
-      '_blank'
-    ),
+  // parâmetros default do seller (aba Comercial + topo do Faturamento)
+  sellerParams: (sellerId: number) =>
+    api.get<BillingSellerParams>(`/billing/seller-params/${sellerId}`),
+  saveSellerParams: (sellerId: number, body: BillingSellerParams) =>
+    api.put(`/billing/seller-params/${sellerId}`, body),
+
+  // tabela global de adicional por caixa
+  boxPrices: () => api.get<{ prices: BillingBoxPrice[] }>('/billing/box-prices'),
+  saveBoxPrices: (prices: BillingBoxPrice[]) =>
+    api.put('/billing/box-prices', { prices }),
+
+  // fechamento mensal
+  closing: (sellerId: number, refMonth: string) =>
+    api.get(`/billing/closing/${sellerId}/${refMonth}`),
+  saveClosing: (sellerId: number, refMonth: string, body: any) =>
+    api.put(`/billing/closing/${sellerId}/${refMonth}`, body),
+  applyForward: (sellerId: number, refMonth: string) =>
+    api.post(`/billing/closing/${sellerId}/${refMonth}/apply-forward`),
+  closeMonth: (sellerId: number, refMonth: string) =>
+    api.post(`/billing/closing/${sellerId}/${refMonth}/close`),
+  reopenMonth: (sellerId: number, refMonth: string) =>
+    api.post(`/billing/closing/${sellerId}/${refMonth}/reopen`),
+  downloadClosingPdf: (sellerId: number, refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/closing/${sellerId}/${refMonth}/pdf`,
+      `fatura_${refMonth}.pdf`),
+  downloadClosingExcel: (sellerId: number, refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/closing/${sellerId}/${refMonth}/excel`,
+      `fatura_${refMonth}.xlsx`),
+
+  // consolidado do mês
+  consolidated: (refMonth: string) =>
+    api.get(`/billing/consolidated/${refMonth}`),
+  downloadConsolidatedExcel: (refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/consolidated/${refMonth}/excel`,
+      `consolidado_${refMonth}.xlsx`),
+  downloadConsolidatedZip: (refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/consolidated/${refMonth}/pdfs.zip`,
+      `faturas_${refMonth}.zip`),
 };
 
 

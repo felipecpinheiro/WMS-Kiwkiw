@@ -691,6 +691,60 @@ class BillingConfigResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# ── Faturamento reescrito (31/08/2026) ──────────────────────────────────────
+
+class BillingSellerParamsIn(BaseModel):
+    preco_unitario: float = 0.0
+    min_pedidos: int = 0
+    manuseio_b2b: float = 0.0
+    valor_caixa_b2b: float = 0.0
+    limite_itens_b2b: int = 0
+    tipos_caixa_inclusos: str = ""
+    cota_caixas_mes: int = 0
+    franquia_m3: float = 0.0
+    preco_m3: float = 0.0
+    seguro_incluso: bool = False
+    aliquota_seguro: float = 0.30
+    armazenagem_inclusa: bool = False
+
+
+class BillingSellerParamsOut(BillingSellerParamsIn):
+    seller_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class BillingBoxPriceItem(BaseModel):
+    box_key: str
+    price: Optional[float] = None
+
+
+class BillingBoxPricesIn(BaseModel):
+    prices: List[BillingBoxPriceItem]
+
+
+class BillingAdjustmentIn(BaseModel):
+    descricao: str = ""
+    obs: str = ""
+    sign: int = 1
+    valor: float = 0.0
+
+
+class BillingNFOverrideIn(BaseModel):
+    order_id: int
+    channel_override: Optional[str] = None   # 'b2c' | 'b2b' | None
+    b2b_adicional: Optional[float] = None
+    note: Optional[str] = None
+
+
+class BillingClosingDraftIn(BillingSellerParamsIn):
+    cubagem_m3: float = 0.0
+    valor_segurado: float = 0.0
+    adjustments: List[BillingAdjustmentIn] = []
+    nf_overrides: List[BillingNFOverrideIn] = []
+
+
 class DuplicateOrderInfo(BaseModel):
     """Detalhe de um pedido já existente detectado na importação."""
     nf_number: str

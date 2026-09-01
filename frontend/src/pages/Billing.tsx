@@ -1,263 +1,603 @@
 /**
- * WMS Kiwkiw - Faturamento
- * Configuração de cobrança por seller e relatório de faturamento.
+ * WMS Kiwkiw - Faturamento (reescrito em 31/08/2026)
+ * Fechamento mensal por (seller x mês). Só admin.
+ *
+ * A fatura exibida é sempre o último estado salvo no servidor (cálculo no
+ * backend, módulo único). Edições ficam locais até "Salvar rascunho", que
+ * persiste e recarrega — evita duplicar a matemática no navegador.
  */
 
-import { useState } from 'react';
-import { todayBrasiliaStr } from '../timezone';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
-import { DollarSign, Check, Save, Download } from 'lucide-react';
-import { billingApi, cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import {
+  DollarSign, Save, Download, Lock, Unlock, ArrowLeftRight, List as ListIcon,
+  Plus, X, Settings2, ArrowRight,
+} from 'lucide-react';
+import { billingApi, cadastrosApi, BillingBoxPrice } from '../api';
+import { todayBrasiliaStr } from '../timezone';
+
+const brl = (n: number | null | undefined) =>
+  'R$ ' + (Number(n ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const PARAM_KEYS = [
+  'preco_unitario', 'min_pedidos', 'manuseio_b2b', 'valor_caixa_b2b',
+  'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
+  'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
+] as const;
+
+type Draft = {
+  params: Record<string, any>;
+  cubagem_m3: number;
+  valor_segurado: number;
+  adjustments: { descricao: string; obs: string; sign: number; valor: number }[];
+  overrides: Record<number, { channel_override: string | null; b2b_adicional: number | null; note: string | null }>;
+};
+
+function draftFromPayload(p: any): Draft {
+  const params: Record<string, any> = {};
+  PARAM_KEYS.forEach(k => { params[k] = p.params[k]; });
+  const overrides: Draft['overrides'] = {};
+  // reconstrói overrides a partir das linhas (canal != auto ou adicional B2B != 0)
+  [...(p.b2c_lines || []), ...(p.b2b_lines || [])].forEach((l: any) => {
+    if (l.order_id == null) return;
+    const channel = p.b2c_lines.includes(l) ? 'b2c' : 'b2b';
+    const ov: any = {};
+    if (l.auto_channel && l.auto_channel !== channel) ov.channel_override = channel;
+    if (channel === 'b2b' && l.b2b_adicional) ov.b2b_adicional = l.b2b_adicional;
+    if (l.note) ov.note = l.note;
+    if (Object.keys(ov).length) overrides[l.order_id] = {
+      channel_override: ov.channel_override ?? null,
+      b2b_adicional: ov.b2b_adicional ?? null,
+      note: ov.note ?? null,
+    };
+  });
+  return {
+    params,
+    cubagem_m3: p.cubagem_m3 ?? 0,
+    valor_segurado: p.valor_segurado ?? 0,
+    adjustments: (p.adjustments || []).map((a: any) => ({ ...a })),
+    overrides,
+  };
+}
 
 export default function BillingPage() {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<'seller' | 'cons'>('seller');
   const [sellerId, setSellerId] = useState<number | ''>('');
-  const [month, setMonth] = useState(() => todayBrasiliaStr().slice(0, 7));
-  const [config, setConfig] = useState<any>({
-    base_fee: 0, price_per_order: 0, franchise: 1,
-    franchise_orders: 0, extra_order_price: 0,
-    handling: 0, storage_fee_per_sku: 0, storage_included: false,
-  });
-  const [saving, setSaving] = useState(false);
-  // Filtro de data para exportação
-  const [exportFrom, setExportFrom] = useState(() => todayBrasiliaStr().slice(0, 7) + '-01');
-  const [exportTo, setExportTo] = useState(() => todayBrasiliaStr());
-  const [exporting, setExporting] = useState(false);
+  const [refMonth, setRefMonth] = useState(() => todayBrasiliaStr().slice(0, 7));
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
-  const handleExport = async () => {
-    setExporting(true);
-    try {
-      const base = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
-      const sellerParam = sellerId ? `&seller_id=${sellerId}` : '';
-      const token = localStorage.getItem('wms_token');
-      const res = await fetch(
-        `${base}/billing/export?date_from=${exportFrom}&date_to=${exportTo}${sellerParam}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
-      );
-      if (!res.ok) { toast.error('Erro ao exportar'); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `faturamento_${exportFrom}_${exportTo}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Exportado com sucesso!');
-    } catch { toast.error('Erro na exportação'); }
-    finally { setExporting(false); }
-  };
-
-  // Exceção à regra de esconder seller inativo (ver CLAUDE.md): o Faturamento
-  // precisa listar inativos para permitir fechar a última fatura de quem saiu.
-  // Chave própria: a lista completa NÃO pode dividir cache com a chave 'sellers',
-  // usada pelas telas que só enxergam ativos. O prefixo mantém os
-  // invalidateQueries('sellers') existentes funcionando.
   const { data: sellers = [] } = useQuery(['sellers', 'billing'], () =>
-    cadastrosApi.sellers(false).then(r => r.data)
-  );
+    cadastrosApi.sellers(false).then(r => r.data));
 
-  const { data: billingConfig } = useQuery(
-    ['billing-config', sellerId],
-    () => sellerId ? billingApi.config(sellerId).then(r => r.data) : null,
-    {
-      enabled: !!sellerId,
-      onSuccess: (data: any[]) => {
-        if (!data) return;
-        const map: Record<string, string> = {};
-        data.forEach((c: any) => { map[c.config_key] = c.config_value ?? '0'; });
-        setConfig({
-          base_fee:            parseFloat(map['Taxa Base'] ?? '0'),
-          price_per_order:     parseFloat(map['Preço Unitário'] ?? '0'),
-          franchise:           parseInt(map['Franquia'] ?? '1'),
-          franchise_orders:    parseInt(map['Número Mínimo de Pedidos'] ?? '0'),
-          extra_order_price:   parseFloat(map['Preço Adicional'] ?? '0'),
-          handling:            parseFloat(map['Manuseio'] ?? '0'),
-          storage_fee_per_sku: parseFloat(map['Armazenagem'] ?? '0'),
-          storage_included:    (map['Armazenagem Incluso'] ?? '0') !== '0',
-        });
-      }
-    }
+  const closingQ = useQuery(
+    ['billing-closing', sellerId, refMonth],
+    () => billingApi.closing(Number(sellerId), refMonth).then(r => r.data),
+    { enabled: !!sellerId, keepPreviousData: false },
   );
+  const payload = closingQ.data;
+  const isClosed = payload?.status === 'closed';
 
-  const { data: report } = useQuery(
-    ['billing-report', sellerId, month],
-    () => sellerId ? billingApi.report(sellerId, month).then(r => r.data) : null,
-    { enabled: !!sellerId }
-  );
+  useEffect(() => {
+    if (payload) { setDraft(draftFromPayload(payload)); setDirty(false); setExpanded({}); }
+  }, [payload]);
 
-  const handleSaveConfig = async () => {
-    if (!sellerId) { toast.error('Selecione um seller'); return; }
-    setSaving(true);
-    try {
-      const entries = [
-        { config_key: 'Taxa Base',               config_value: String(config.base_fee) },
-        { config_key: 'Preço Unitário',           config_value: String(config.price_per_order) },
-        { config_key: 'Franquia',                 config_value: String(config.franchise) },
-        { config_key: 'Número Mínimo de Pedidos', config_value: String(config.franchise_orders) },
-        { config_key: 'Preço Adicional',          config_value: String(config.extra_order_price) },
-        { config_key: 'Manuseio',                 config_value: String(config.handling) },
-        { config_key: 'Armazenagem',              config_value: String(config.storage_fee_per_sku) },
-        { config_key: 'Armazenagem Incluso',      config_value: config.storage_included ? '1' : '0' },
-      ];
-      await Promise.all(entries.map(e => billingApi.saveConfig({ seller_id: Number(sellerId), ...e })));
-      toast.success('Configuração salva!');
-      qc.invalidateQueries(['billing-config', sellerId]);
-    } catch { toast.error('Erro ao salvar configuração'); }
-    finally { setSaving(false); }
+  const setParam = (k: string, v: any) => {
+    setDraft(d => d ? { ...d, params: { ...d.params, [k]: v } } : d);
+    setDirty(true);
+  };
+  const setField = (k: 'cubagem_m3' | 'valor_segurado', v: number) => {
+    setDraft(d => d ? { ...d, [k]: v } : d); setDirty(true);
   };
 
-  const f = (key: string, val: any) => setConfig((prev: any) => ({ ...prev, [key]: Number(val) }));
+  const buildBody = () => {
+    if (!draft) return null;
+    const overrides = Object.entries(draft.overrides).map(([oid, o]) => ({ order_id: Number(oid), ...o }));
+    return { ...draft.params, cubagem_m3: draft.cubagem_m3, valor_segurado: draft.valor_segurado,
+      adjustments: draft.adjustments, nf_overrides: overrides };
+  };
+
+  const saveDraft = async (silent = false) => {
+    const body = buildBody();
+    if (!body || !sellerId) return;
+    setBusy(true);
+    try {
+      const res = await billingApi.saveClosing(Number(sellerId), refMonth, body);
+      qc.setQueryData(['billing-closing', sellerId, refMonth], res.data);
+      setDirty(false);
+      if (!silent) toast.success('Rascunho salvo');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Erro ao salvar');
+    } finally { setBusy(false); }
+  };
+
+  const doAction = async (fn: () => Promise<any>, ok: string) => {
+    setBusy(true);
+    try {
+      const res = await fn();
+      if (res?.data?.status) qc.setQueryData(['billing-closing', sellerId, refMonth], res.data);
+      else qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
+      qc.invalidateQueries(['billing-consolidated']);
+      toast.success(ok);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Erro');
+    } finally { setBusy(false); }
+  };
+
+  const applyForward = async () => {
+    if (dirty) await saveDraft(true);
+    await doAction(() => billingApi.applyForward(Number(sellerId), refMonth),
+      'Parâmetros aplicados aos meses seguintes abertos e ao default do seller');
+  };
+  const closeMonth = async () => {
+    if (dirty) await saveDraft(true);
+    if (!confirm('Fechar o mês congela todos os valores. Continuar?')) return;
+    await doAction(() => billingApi.closeMonth(Number(sellerId), refMonth), 'Mês fechado');
+  };
+  const reopen = async () => {
+    if (!confirm('Reabrir volta a derivar as NFs dos dados vivos. Continuar?')) return;
+    await doAction(() => billingApi.reopenMonth(Number(sellerId), refMonth), 'Mês reaberto');
+  };
+
+  // ── troca de canal / avulsos ──────────────────────────────────────────────
+  const EMPTY_OV = { channel_override: null, b2b_adicional: null, note: null };
+  const moveChannel = (orderId: number, to: 'b2c' | 'b2b') => {
+    setDraft(d => {
+      if (!d) return d;
+      const prev = d.overrides[orderId] || EMPTY_OV;
+      return { ...d, overrides: { ...d.overrides, [orderId]: { ...prev, channel_override: to } } };
+    });
+    setDirty(true);
+  };
+  const setB2bAdic = (orderId: number, v: number) => {
+    setDraft(d => {
+      if (!d) return d;
+      const prev = d.overrides[orderId] || EMPTY_OV;
+      return { ...d, overrides: { ...d.overrides, [orderId]: { ...prev, b2b_adicional: v } } };
+    });
+    setDirty(true);
+  };
+  const addAvulso = () => { setDraft(d => d ? { ...d, adjustments: [...d.adjustments, { descricao: '', obs: '', sign: 1, valor: 0 }] } : d); setDirty(true); };
+  const setAvulso = (i: number, patch: any) => {
+    setDraft(d => d ? { ...d, adjustments: d.adjustments.map((a, j) => j === i ? { ...a, ...patch } : a) } : d);
+    setDirty(true);
+  };
+  const rmAvulso = (i: number) => { setDraft(d => d ? { ...d, adjustments: d.adjustments.filter((_, j) => j !== i) } : d); setDirty(true); };
+
+  const lock = isClosed ? 'opacity-50 pointer-events-none' : '';
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-t1">Faturamento</h1>
-        <p className="text-sm text-t3 mt-0.5">Configuração de cobrança e relatório por seller</p>
-      </div>
-
-      {/* Seleção de seller */}
-      {/* ── Exportar Excel ──────────────────────────────────────── */}
-      <div className="bg-surface rounded-xl border border-line-soft p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-t2">Exportar Relatório</h2>
-          <span className="text-[11px] text-t4">Seller · NF · Data · SKU · Qtd · Entrada/Saída · Caixa</span>
+    <div className="p-6 space-y-5">
+      {/* topo */}
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-t1">Faturamento</h1>
+          <p className="text-sm text-t3 mt-0.5">Fechamento mensal por seller</p>
         </div>
-        <div className="flex gap-3 flex-wrap items-end">
+        <div className="flex items-end gap-2">
           <div>
-            <label className="block text-xs text-t3 mb-1">Data inicial</label>
-            <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
-              className="border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              style={{ background: 'rgb(var(--surface-2))', color: 'rgb(var(--t1))' }} />
-          </div>
-          <div>
-            <label className="block text-xs text-t3 mb-1">Data final</label>
-            <input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)}
-              className="border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              style={{ background: 'rgb(var(--surface-2))', color: 'rgb(var(--t1))' }} />
-          </div>
-          <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs text-t3 mb-1">Seller (opcional)</label>
+            <label className="block text-xs text-t3 mb-1">Seller</label>
             <select value={sellerId} onChange={e => setSellerId(Number(e.target.value) || '')}
-              className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              style={{ background: 'rgb(var(--surface-2))', color: 'rgb(var(--t1))' }}>
-              <option value="">Todos os sellers</option>
-              {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              className="border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1">
+              <option value="">Selecione…</option>
+              {sellers.map((s: any) => (
+                <option key={s.id} value={s.id}>{s.trade_name || s.name}{s.active ? '' : ' (inativo)'}</option>
+              ))}
             </select>
           </div>
-          <button
-            onClick={handleExport}
-            disabled={exporting || !exportFrom || !exportTo}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-t1 transition disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg,#7B63E8,#5B43C8)' }}
-          >
-            <Download size={15} />
-            {exporting ? 'Exportando...' : 'Exportar Excel'}
+          <div>
+            <label className="block text-xs text-t3 mb-1">Mês</label>
+            <input type="month" value={refMonth} onChange={e => setRefMonth(e.target.value)}
+              className="border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1" />
+          </div>
+          <button onClick={() => setShowCfg(true)} title="Tabela global de caixas"
+            className="w-10 h-10 flex items-center justify-center rounded-lg border border-line text-t3 hover:text-violet-400">
+            <Settings2 size={17} />
           </button>
         </div>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs text-t3 mb-1">Seller</label>
-          <select value={sellerId} onChange={e => setSellerId(Number(e.target.value))}
-            className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Selecione um seller...</option>
-            {sellers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-t3 mb-1">Mês de referência</label>
-          <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-            className="border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500" />
-        </div>
+      {/* abas */}
+      <div className="flex gap-1 border-b border-line">
+        {(['seller', 'cons'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tab === t ? 'text-violet-400 border-violet-400' : 'text-t3 border-transparent'}`}>
+            {t === 'seller' ? 'Fechamento do seller' : 'Consolidado do mês'}
+          </button>
+        ))}
       </div>
 
-      {sellerId && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Configuração */}
-          <div className="bg-surface rounded-xl border border-line-soft shadow-none p-5">
-            <h2 className="text-sm font-semibold text-t2 mb-4">Parâmetros de Cobrança</h2>
-            <div className="space-y-3">
-              {[
-                { label: 'Taxa Base (R$)', key: 'base_fee' },
-                { label: 'Preço por Pedido (R$)', key: 'price_per_order' },
-                { label: 'Ativa Franquia (0 = não, 1 = sim)', key: 'franchise' },
-                { label: 'Número Mínimo de Pedidos (Franquia)', key: 'franchise_orders' },
-                { label: 'Extra por Pedido Acima da Franquia (R$)', key: 'extra_order_price' },
-                { label: 'Manuseio (R$)', key: 'handling' },
-                { label: 'Armazenagem por SKU (R$)', key: 'storage_fee_per_sku' },
-              ].map(field => (
-                <div key={field.key}>
-                  <label className="block text-xs text-t3 mb-1">{field.label}</label>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={config[field.key] ?? 0}
-                    onChange={e => f(field.key, e.target.value)}
-                    className="w-full border border-line rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                  />
-                </div>
-              ))}
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="storage_included"
-                  checked={!!config.storage_included}
-                  onChange={e => setConfig((prev: any) => ({ ...prev, storage_included: e.target.checked }))}
-                  className="w-4 h-4 accent-violet-500"
-                />
-                <label htmlFor="storage_included" className="text-xs text-t3 cursor-pointer">
-                  Armazenagem inclusa no plano
-                </label>
-              </div>
-            </div>
-            <button onClick={handleSaveConfig} disabled={saving}
-              className="mt-4 w-full flex items-center justify-center gap-1.5 py-2 text-sm text-t1 bg-violet-600 hover:bg-violet-500 disabled:opacity-60 rounded-lg transition">
-              <Save size={14} /> {saving ? 'Salvando...' : 'Salvar Configuração'}
-            </button>
-          </div>
+      {tab === 'cons' && <Consolidated refMonth={refMonth} onOpen={(sid) => { setSellerId(sid); setTab('seller'); }} />}
 
-          {/* Relatório */}
-          <div className="bg-surface rounded-xl border border-line-soft shadow-none p-5">
-            <h2 className="text-sm font-semibold text-t2 mb-4">
-              Relatório — {month}
-            </h2>
-            {report ? (
-              <div className="space-y-3">
-                {[
-                  { label: 'Total de Pedidos',                value: report.total_orders,    fmt: (v: number) => v.toString() },
-                  { label: 'Cobrança por Pedidos',            value: report.base_value,      fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                  { label: 'Pedidos Extras (acima franquia)', value: report.franchise_value, fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                  { label: 'Armazenagem',                     value: report.storage,         fmt: (v: number) => `R$ ${v.toFixed(2)}` },
-                ].map(row => (
-                  <div key={row.label} className="flex justify-between py-2 border-b border-line-soft last:border-0">
-                    <span className="text-sm text-t3">{row.label}</span>
-                    <span className="text-sm font-medium text-t1">{row.fmt(row.value ?? 0)}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between py-3 bg-violet-900/25 rounded-lg px-3 mt-2">
-                  <span className="text-sm font-bold text-t2">Total do Mês</span>
-                  <span className="text-lg font-black text-violet-400">R$ {(report.total ?? 0).toFixed(2)}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-40">
-                <div className="text-center">
-                  <DollarSign size={32} className="text-t5 mx-auto mb-2" />
-                  <p className="text-sm text-t4">Nenhum dado para o período</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!sellerId && (
+      {tab === 'seller' && !sellerId && (
         <div className="bg-surface border border-dashed border-line rounded-xl p-12 text-center">
           <DollarSign size={40} className="text-t5 mx-auto mb-3" />
-          <p className="text-t4">Selecione um seller para ver e configurar o faturamento</p>
+          <p className="text-t4">Selecione um seller para começar o fechamento</p>
         </div>
       )}
+
+      {tab === 'seller' && sellerId && payload && draft && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className={`text-xs font-semibold px-3 py-1 rounded-full ${isClosed ? 'bg-teal-900/30 text-teal-400' : 'bg-amber-900/30 text-amber-400'}`}>
+              {isClosed ? '● Fechado' : '● Em aberto'}
+            </span>
+            {dirty && <span className="text-xs text-amber-400">alterações não salvas</span>}
+          </div>
+
+          {isClosed && (
+            <div className="flex items-center justify-between gap-3 bg-teal-900/20 border border-teal-700 rounded-xl px-4 py-3 text-sm text-teal-300">
+              <span className="flex items-center gap-2"><Lock size={15} />
+                Mês fechado{payload.closed_at ? ` em ${payload.closed_at.slice(0, 10)}` : ''}. Valores congelados.</span>
+              <button onClick={reopen} disabled={busy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-600 text-teal-300 text-sm">
+                <Unlock size={14} /> Reabrir mês
+              </button>
+            </div>
+          )}
+
+          {/* PARÂMETROS */}
+          <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
+            <h2 className="text-sm font-semibold text-t2 mb-4">Parâmetros de cobrança — {refMonth}</h2>
+            <div className="grid gap-4 md:grid-cols-3">
+              <ParamGroup title="Pedidos B2C">
+                <NumRow label="Nº mínimo de pedidos" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
+                <NumRow label="Preço unitário / manuseio" v={draft.params.preco_unitario} onChange={v => setParam('preco_unitario', v)} />
+              </ParamGroup>
+              <ParamGroup title="Pedidos B2B">
+                <NumRow label="Manuseio B2B" v={draft.params.manuseio_b2b} onChange={v => setParam('manuseio_b2b', v)} />
+                <NumRow label="Valor caixa B2B" v={draft.params.valor_caixa_b2b} onChange={v => setParam('valor_caixa_b2b', v)} />
+              </ParamGroup>
+              <ParamGroup title="Classificação B2C × B2B">
+                <NumRow label="É B2B a partir de (itens)" v={draft.params.limite_itens_b2b} onChange={v => setParam('limite_itens_b2b', v)} int />
+                <p className="text-[11px] text-t4 pt-1">0 = nenhuma NF vira B2B sozinha. Fora da regra, use o botão ⇄ na lista.</p>
+              </ParamGroup>
+              <ParamGroup title="Caixas inclusas">
+                <TextRow label="A · tipos sem adicional" v={draft.params.tipos_caixa_inclusos} onChange={v => setParam('tipos_caixa_inclusos', v)} />
+                <NumRow label="B · cota de caixas / mês" v={draft.params.cota_caixas_mes} onChange={v => setParam('cota_caixas_mes', v)} int />
+                <p className="text-[11px] text-t4">Só caixas fora do grupo A consomem a cota B.</p>
+              </ParamGroup>
+              <ParamGroup title="Seguro">
+                <ToggleRow label="Seguro incluso?" v={draft.params.seguro_incluso} onChange={v => setParam('seguro_incluso', v)} />
+                <NumRow label="Valor segurado" v={draft.valor_segurado} onChange={v => setField('valor_segurado', v)} />
+                <NumRow label="Alíquota (%)" v={draft.params.aliquota_seguro} onChange={v => setParam('aliquota_seguro', v)} />
+              </ParamGroup>
+              <ParamGroup title="Armazenagem">
+                <ToggleRow label="Armazenagem inclusa? (informativo)" v={draft.params.armazenagem_inclusa} onChange={v => setParam('armazenagem_inclusa', v)} />
+                <NumRow label="Franquia grátis (m³)" v={draft.params.franquia_m3} onChange={v => setParam('franquia_m3', v)} />
+                <NumRow label="Preço por m³ adicional" v={draft.params.preco_m3} onChange={v => setParam('preco_m3', v)} />
+                <NumRow label="Cubagem medida do mês" v={draft.cubagem_m3} onChange={v => setField('cubagem_m3', v)} />
+              </ParamGroup>
+            </div>
+            <div className="flex items-center gap-3 mt-4 flex-wrap">
+              <button onClick={() => saveDraft()} disabled={busy || !dirty}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
+                <Save size={14} /> Salvar rascunho
+              </button>
+              <button onClick={applyForward} disabled={busy}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-line text-t1 text-sm font-semibold">
+                <ArrowRight size={14} /> Aplicar aos meses seguintes
+              </button>
+              <span className="text-xs text-t3">Copia só os parâmetros para meses futuros <b>abertos</b> e o default do seller. Fechados não mudam.</span>
+            </div>
+          </section>
+
+          {/* AVULSOS */}
+          <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
+            <h2 className="text-sm font-semibold text-t2 mb-3">Linhas avulsas</h2>
+            <div className="space-y-2">
+              {draft.adjustments.map((a, i) => (
+                <div key={i} className="grid grid-cols-[1.4fr_1.2fr_auto_110px_auto] gap-2 items-center">
+                  <input value={a.descricao} placeholder="Descrição" onChange={e => setAvulso(i, { descricao: e.target.value })}
+                    className="border border-line rounded-lg px-2 py-1.5 text-sm bg-surface-2 text-t1" />
+                  <input value={a.obs} placeholder="Motivo / obs." onChange={e => setAvulso(i, { obs: e.target.value })}
+                    className="border border-line rounded-lg px-2 py-1.5 text-sm bg-surface-2 text-t1" />
+                  <div className="flex gap-1">
+                    {[1, -1].map(s => (
+                      <button key={s} onClick={() => setAvulso(i, { sign: s })}
+                        className={`px-2.5 py-1.5 rounded-lg border text-sm ${a.sign === s ? 'bg-violet-600 text-white border-violet-600' : 'border-line text-t3'}`}>
+                        {s > 0 ? '+' : '−'}
+                      </button>
+                    ))}
+                  </div>
+                  <input type="number" step="0.01" value={a.valor} onChange={e => setAvulso(i, { valor: Number(e.target.value) })}
+                    className="border border-line rounded-lg px-2 py-1.5 text-sm text-right bg-surface-2 text-t1" />
+                  <button onClick={() => rmAvulso(i)} className="text-t4 hover:text-red-400"><X size={15} /></button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addAvulso} className="mt-3 flex items-center gap-1.5 text-sm text-t3 hover:text-violet-400">
+              <Plus size={14} /> Adicionar linha
+            </button>
+          </section>
+
+          {/* FATURA FINAL */}
+          <section className="bg-surface rounded-xl border border-line-soft p-5">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-sm font-semibold text-t2">Fatura final — {payload.seller_name} · {refMonth}</h2>
+              <div className="flex gap-2">
+                <button onClick={() => billingApi.downloadClosingPdf(Number(sellerId), refMonth)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> PDF</button>
+                <button onClick={() => billingApi.downloadClosingExcel(Number(sellerId), refMonth)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Excel</button>
+                {!isClosed && (
+                  <button onClick={closeMonth} disabled={busy}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-white text-sm font-semibold"><Lock size={14} /> Fechar mês</button>
+                )}
+              </div>
+            </div>
+            {dirty && <p className="text-xs text-amber-400 mb-2">Salve o rascunho para atualizar os totais.</p>}
+            <FaturaTable f={payload.fatura} />
+            <div className="flex justify-between items-center mt-3 px-4 py-3 rounded-xl bg-t1 text-surface">
+              <span className="font-semibold text-sm">TOTAL GERAL DA FATURA</span>
+              <span className="font-mono font-bold text-lg">{brl(payload.fatura.total_geral)}</span>
+            </div>
+          </section>
+
+          {/* LISTAS COMPLETAS (último bloco) */}
+          <section className="bg-surface rounded-xl border border-line-soft p-5">
+            <h2 className="text-sm font-semibold text-t2 mb-1">Notas fiscais de saída — {refMonth}</h2>
+            <p className="text-[11px] text-t4 mb-3">Todas as NFs · qualquer status exceto cancelada · por data de importação</p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <NfList kind="b2c" lines={payload.b2c_lines} soma={payload.soma_b2c}
+                expanded={expanded} setExpanded={setExpanded} locked={isClosed}
+                onMove={(oid: number) => moveChannel(oid, 'b2b')} />
+              <NfList kind="b2b" lines={payload.b2b_lines} soma={payload.soma_b2b}
+                expanded={expanded} setExpanded={setExpanded} locked={isClosed}
+                onMove={(oid: number) => moveChannel(oid, 'b2c')} onB2bAdic={setB2bAdic} />
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showCfg && <BoxPricesModal onClose={() => setShowCfg(false)} />}
+    </div>
+  );
+}
+
+// ── subcomponentes ─────────────────────────────────────────────────────────
+
+function ParamGroup({ title, children }: any) {
+  return (
+    <div className="bg-surface-2 border border-line-soft rounded-xl p-3.5">
+      <h3 className="text-[11px] uppercase tracking-wide text-t3 font-semibold mb-2">{title}</h3>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+function NumRow({ label, v, onChange, int }: { label: string; v: number; onChange: (v: number) => void; int?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="text-xs text-t2">{label}</span>
+      <input type="number" step={int ? '1' : '0.01'} value={v ?? 0}
+        onChange={e => onChange(int ? parseInt(e.target.value || '0') : Number(e.target.value))}
+        className="w-24 text-right border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1" />
+    </div>
+  );
+}
+function TextRow({ label, v, onChange }: { label: string; v: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="text-xs text-t2">{label}</span>
+      <input value={v ?? ''} onChange={e => onChange(e.target.value)}
+        className="w-28 border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1" />
+    </div>
+  );
+}
+function ToggleRow({ label, v, onChange }: { label: string; v: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="text-xs text-t2">{label}</span>
+      <button onClick={() => onChange(!v)}
+        className={`w-10 h-5 rounded-full relative transition ${v ? 'bg-violet-600' : 'bg-surface-3'}`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition ${v ? 'left-5' : 'left-0.5'}`} />
+      </button>
+    </div>
+  );
+}
+
+function FaturaTable({ f }: any) {
+  const Row = ({ lbl, c, b, strong }: any) => (
+    <div className={`grid grid-cols-[1.4fr_1fr_1fr] px-4 py-2.5 border-b border-line-soft last:border-0 ${strong ? 'font-semibold bg-surface-2' : ''}`}>
+      <span className="text-t2">{lbl}</span>
+      <span className="text-right font-mono text-t1">{c == null ? '—' : brl(c)}</span>
+      <span className="text-right font-mono text-t1">{b == null ? '—' : brl(b)}</span>
+    </div>
+  );
+  return (
+    <div className="border border-line-soft rounded-xl overflow-hidden">
+      <div className="grid grid-cols-[1.4fr_1fr_1fr] px-4 py-2 bg-surface-2 text-[11px] uppercase tracking-wide text-t4 font-semibold">
+        <span>Componente</span><span className="text-right">B2C</span><span className="text-right">B2B</span>
+      </div>
+      <Row lbl="Mínimo mensal" c={f.b2c_min} b={f.b2b_min} />
+      <Row lbl="Seguro" c={f.seguro} b={null} />
+      <Row lbl="Armazenagem" c={f.armazenagem} b={null} />
+      <Row lbl="Linhas avulsas" c={f.avulsos} b={null} />
+      <Row lbl="Subtotal" c={f.subtotal_b2c} b={f.subtotal_b2b} strong />
+      {f.min_atingiu_piso && (
+        <div className="px-4 py-2 text-[11px] text-amber-400 bg-amber-900/15">
+          Mínimo B2C: soma real {brl(f.soma_real_b2c)} &lt; piso {brl(f.floor_b2c)} → cobra-se o maior.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NfList({ kind, lines, soma, expanded, setExpanded, locked, onMove, onB2bAdic, overrides }: any) {
+  const b2c = kind === 'b2c';
+  return (
+    <div className="border border-line-soft rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-surface-2">
+        <span className="text-sm font-semibold text-t2">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${b2c ? 'bg-violet-900/40 text-violet-300' : 'bg-teal-900/40 text-teal-300'}`}>
+            {b2c ? 'B2C' : 'B2B'}</span> &nbsp;{lines.length} NFs
+        </span>
+        <span className="text-[11px] text-t4">{b2c ? 'manuseio + adic. caixa' : 'manus. + caixa + adic.'}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-[10px] uppercase text-t4">
+              <th className="text-left px-2 py-1.5">Data</th>
+              <th className="text-left px-2 py-1.5">NF</th>
+              <th className="text-right px-2 py-1.5">Itens</th>
+              <th className="text-right px-2 py-1.5">Cx</th>
+              {b2c ? <th className="text-right px-2 py-1.5">Adic.</th> : <th className="text-right px-2 py-1.5">Adic.</th>}
+              <th className="text-right px-2 py-1.5">Total</th>
+              <th className="px-2 py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l: any, i: number) => {
+              const oid = l.order_id;
+              const yellow = b2c && l.sem_caixa;
+              return (
+                <Fragment key={i}>
+                  <tr className={`border-t border-line-soft ${yellow ? 'bg-amber-900/15' : ''}`}>
+                    <td className="px-2 py-1.5">{l.order_date ? l.order_date.slice(8, 10) + '/' + l.order_date.slice(5, 7) : '—'}</td>
+                    <td className="px-2 py-1.5 font-mono">{l.nf_number}</td>
+                    <td className="px-2 py-1.5 text-right">{l.itens ?? '—'}</td>
+                    <td className="px-2 py-1.5 text-right">{l.box || '—'}</td>
+                    <td className="px-2 py-1.5 text-right font-mono">
+                      {b2c ? brl(l.adic_caixa) : (
+                        <input type="number" step="0.01" disabled={locked} defaultValue={l.b2b_adicional}
+                          onBlur={e => onB2bAdic && oid != null && onB2bAdic(oid, Number(e.target.value))}
+                          className="w-16 text-right border border-line rounded px-1 py-0.5 bg-surface text-t1" />
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono">{brl(l.total)}</td>
+                    <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                      <button onClick={() => oid != null && setExpanded((x: any) => ({ ...x, [oid]: !x[oid] }))}
+                        className="text-t4 hover:text-violet-400 mr-1"><ListIcon size={13} /></button>
+                      {!locked && oid != null && (
+                        <button onClick={() => onMove(oid)} title={b2c ? 'Mover para B2B' : 'Mover para B2C'}
+                          className="text-t4 hover:text-teal-400"><ArrowLeftRight size={13} /></button>
+                      )}
+                    </td>
+                  </tr>
+                  {oid != null && expanded[oid] && l.items && (
+                    <tr className="bg-surface-2">
+                      <td colSpan={7} className="px-3 py-2">
+                        <div className="text-[11px] text-t4 mb-1">NF {l.nf_number} · {l.items.length} SKU(s)</div>
+                        {l.items.map((it: any, j: number) => (
+                          <div key={j} className="flex justify-between font-mono text-[11px] text-t3">
+                            <span>{it.sku} — {it.name}</span><span>× {it.quantity}</span>
+                          </div>
+                        ))}
+                        {l.note && <div className="text-[11px] text-t4 italic mt-1">{l.note}</div>}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-line font-semibold">
+              <td colSpan={5} className="px-2 py-2 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
+              <td className="px-2 py-2 text-right font-mono text-t1">{brl(soma)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: number) => void }) {
+  const { data } = useQuery(['billing-consolidated', refMonth], () =>
+    billingApi.consolidated(refMonth).then(r => r.data));
+  const rows = data?.rows || [];
+  return (
+    <div className="bg-surface rounded-xl border border-line-soft p-5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="text-sm font-semibold text-t2">Consolidado — {refMonth}</h2>
+        <div className="flex gap-2">
+          <button onClick={() => billingApi.downloadConsolidatedExcel(refMonth)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Excel</button>
+          <button onClick={() => billingApi.downloadConsolidatedZip(refMonth)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Todos os PDFs</button>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead><tr className="text-[10px] uppercase text-t4">
+            <th className="text-left px-2 py-1.5">Seller</th>
+            <th className="text-right px-2 py-1.5">NFs</th>
+            <th className="text-right px-2 py-1.5">B2C</th>
+            <th className="text-right px-2 py-1.5">B2B</th>
+            <th className="text-right px-2 py-1.5">Seguro</th>
+            <th className="text-right px-2 py-1.5">Armazenagem</th>
+            <th className="text-right px-2 py-1.5">Avulsos</th>
+            <th className="text-right px-2 py-1.5">Total</th>
+            <th className="text-left px-2 py-1.5">Situação</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r: any) => (
+              <tr key={r.seller_id} className="border-t border-line-soft hover:bg-surface-2 cursor-pointer"
+                onClick={() => onOpen(r.seller_id)}>
+                <td className="px-2 py-1.5">{r.seller_name}{r.active ? '' : ' (inativo)'}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{r.nf_count}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2c)}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2b)}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{brl(r.seguro)}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{brl(r.armazenagem)}</td>
+                <td className="px-2 py-1.5 text-right font-mono">{brl(r.avulsos)}</td>
+                <td className="px-2 py-1.5 text-right font-mono font-semibold">{brl(r.total)}</td>
+                <td className="px-2 py-1.5">{r.status}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={9} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BoxPricesModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const { data } = useQuery(['billing-box-prices'], () => billingApi.boxPrices().then(r => r.data));
+  const [rows, setRows] = useState<BillingBoxPrice[]>([]);
+  useEffect(() => { if (data) setRows(data.prices); }, [data]);
+  const save = async () => {
+    try {
+      await billingApi.saveBoxPrices(rows);
+      qc.invalidateQueries(['billing-box-prices']);
+      qc.invalidateQueries(['billing-closing']);
+      toast.success('Tabela salva');
+      onClose();
+    } catch (e: any) { toast.error(e?.response?.data?.detail || 'Erro'); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-surface rounded-xl border border-line max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line-soft">
+          <h2 className="font-bold text-t1">Tabela global de caixas</h2>
+          <button onClick={onClose} className="text-t4"><X size={18} /></button>
+        </div>
+        <div className="p-5">
+          <p className="text-xs text-t3 mb-3">Adicional cobrado por tamanho de caixa. Vale para todos os sellers. Em branco = sem adicional.</p>
+          {rows.map((r, i) => (
+            <div key={r.box_key} className="flex items-center justify-between py-1.5 border-b border-line-soft last:border-0">
+              <span className="font-semibold text-t2">{r.box_key}</span>
+              <input type="number" step="0.01" value={r.price ?? ''} placeholder="—"
+                onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, price: e.target.value === '' ? null : Number(e.target.value) } : x))}
+                className="w-24 text-right border border-line rounded-md px-2 py-1 text-sm bg-surface-2 text-t1" />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-line-soft">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-line text-t2 text-sm">Cancelar</button>
+          <button onClick={save} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold">Salvar tabela</button>
+        </div>
+      </div>
     </div>
   );
 }

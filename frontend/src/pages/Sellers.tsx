@@ -16,15 +16,21 @@ import toast from 'react-hot-toast';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Faturamento reescrito (31/08/2026): a aba Comercial edita o DEFAULT do seller
+// em `billing_seller_params` (não mais `billing_configs` nem colunas de Seller).
 interface BillingFields {
-  taxa_base: string;
   preco_unitario: string;
-  franquia: string;
-  num_minimo_pedidos: string;
-  preco_adicional: string;
-  manuseio: string;
-  armazenagem: string;
-  armazenagem_incluso: boolean;
+  min_pedidos: string;
+  manuseio_b2b: string;
+  valor_caixa_b2b: string;
+  limite_itens_b2b: string;
+  tipos_caixa_inclusos: string;
+  cota_caixas_mes: string;
+  franquia_m3: string;
+  preco_m3: string;
+  seguro_incluso: boolean;
+  aliquota_seguro: string;
+  armazenagem_inclusa: boolean;
 }
 
 interface SellerForm {
@@ -38,9 +44,10 @@ interface SellerForm {
 }
 
 const EMPTY_BILLING: BillingFields = {
-  taxa_base: '', preco_unitario: '', franquia: '',
-  num_minimo_pedidos: '', preco_adicional: '',
-  manuseio: '', armazenagem: '', armazenagem_incluso: false,
+  preco_unitario: '', min_pedidos: '', manuseio_b2b: '', valor_caixa_b2b: '',
+  limite_itens_b2b: '', tipos_caixa_inclusos: '', cota_caixas_mes: '',
+  franquia_m3: '', preco_m3: '', seguro_incluso: false,
+  aliquota_seguro: '0.30', armazenagem_inclusa: false,
 };
 
 const EMPTY: SellerForm = {
@@ -56,41 +63,42 @@ const EMPTY: SellerForm = {
 const GRID_ROWS = 10;
 const GRID_COLS = 13;
 
-const BILLING_FIELDS: Array<{ label: string; key: keyof BillingFields; type: 'number' | 'check' }> = [
-  { label: 'Taxa Base (R$)',               key: 'taxa_base',          type: 'number' },
-  { label: 'Preço Unitário (R$)',          key: 'preco_unitario',     type: 'number' },
-  { label: 'Franquia (nº pedidos)',        key: 'franquia',           type: 'number' },
-  { label: 'Nº mín. pedidos',             key: 'num_minimo_pedidos', type: 'number' },
-  { label: 'Preço Adicional (R$)',         key: 'preco_adicional',    type: 'number' },
-  { label: 'Manuseio (R$)',               key: 'manuseio',           type: 'number' },
-  { label: 'Armazenagem (R$)',            key: 'armazenagem',        type: 'number' },
-  { label: 'Armazenagem Inclusa',         key: 'armazenagem_incluso', type: 'check' },
+const BILLING_FIELDS: Array<{ label: string; key: keyof BillingFields }> = [
+  { label: 'Preço unitário / manuseio B2C (R$)', key: 'preco_unitario' },
+  { label: 'Nº mínimo de pedidos',              key: 'min_pedidos' },
+  { label: 'Manuseio B2B (R$)',                 key: 'manuseio_b2b' },
+  { label: 'Valor caixa B2B (R$)',              key: 'valor_caixa_b2b' },
+  { label: 'É B2B a partir de (itens)',         key: 'limite_itens_b2b' },
+  { label: 'Cota de caixas / mês',              key: 'cota_caixas_mes' },
+  { label: 'Franquia grátis de cubagem (m³)',   key: 'franquia_m3' },
+  { label: 'Preço por m³ adicional (R$)',       key: 'preco_m3' },
+  { label: 'Alíquota do seguro (%)',            key: 'aliquota_seguro' },
 ];
 
-// Nomes dos campos no BillingConfig (chaves salvas no banco)
-const BILLING_KEY_MAP: Record<keyof BillingFields, string> = {
-  taxa_base: 'Taxa Base',
-  preco_unitario: 'Preço Unitário',
-  franquia: 'Franquia',
-  num_minimo_pedidos: 'Número Mínimo de Pedidos',
-  preco_adicional: 'Preço Adicional',
-  manuseio: 'Manuseio',
-  armazenagem: 'Armazenagem',
-  armazenagem_incluso: 'Armazenagem Incluso',
-};
+const NUM = (v: string, int = false) =>
+  v === '' ? 0 : (int ? parseInt(v) || 0 : Number(v) || 0);
 
-function billingConfigToFields(configs: any[]): BillingFields {
-  const map: Record<string, string> = {};
-  (configs || []).forEach((c: any) => { map[c.config_key] = c.config_value; });
+function paramsToFields(p: any): BillingFields {
+  const s = (x: any) => (x === null || x === undefined ? '' : String(x));
   return {
-    taxa_base: map['Taxa Base'] ?? '',
-    preco_unitario: map['Preço Unitário'] ?? '',
-    franquia: map['Franquia'] ?? '',
-    num_minimo_pedidos: map['Número Mínimo de Pedidos'] ?? '',
-    preco_adicional: map['Preço Adicional'] ?? '',
-    manuseio: map['Manuseio'] ?? '',
-    armazenagem: map['Armazenagem'] ?? '',
-    armazenagem_incluso: (map['Armazenagem Incluso'] ?? '').toLowerCase() === 'sim',
+    preco_unitario: s(p.preco_unitario), min_pedidos: s(p.min_pedidos),
+    manuseio_b2b: s(p.manuseio_b2b), valor_caixa_b2b: s(p.valor_caixa_b2b),
+    limite_itens_b2b: s(p.limite_itens_b2b), tipos_caixa_inclusos: p.tipos_caixa_inclusos ?? '',
+    cota_caixas_mes: s(p.cota_caixas_mes), franquia_m3: s(p.franquia_m3),
+    preco_m3: s(p.preco_m3), seguro_incluso: !!p.seguro_incluso,
+    aliquota_seguro: s(p.aliquota_seguro), armazenagem_inclusa: !!p.armazenagem_inclusa,
+  };
+}
+
+function fieldsToParams(b: BillingFields) {
+  return {
+    preco_unitario: NUM(b.preco_unitario), min_pedidos: NUM(b.min_pedidos, true),
+    manuseio_b2b: NUM(b.manuseio_b2b), valor_caixa_b2b: NUM(b.valor_caixa_b2b),
+    limite_itens_b2b: NUM(b.limite_itens_b2b, true),
+    tipos_caixa_inclusos: b.tipos_caixa_inclusos || '',
+    cota_caixas_mes: NUM(b.cota_caixas_mes, true), franquia_m3: NUM(b.franquia_m3),
+    preco_m3: NUM(b.preco_m3), seguro_incluso: b.seguro_incluso,
+    aliquota_seguro: NUM(b.aliquota_seguro), armazenagem_inclusa: b.armazenagem_inclusa,
   };
 }
 
@@ -170,13 +178,12 @@ export default function SellersPage() {
       billing: { ...EMPTY_BILLING },
     });
     setShowModal(true);
-    // Carrega BillingConfig em paralelo
+    // Carrega o default de faturamento do seller em paralelo
     try {
-      const res = await billingApi.config(s.id);
-      const configs: any[] = res.data || [];
-      setForm(prev => ({ ...prev, billing: billingConfigToFields(configs) }));
+      const res = await billingApi.sellerParams(s.id);
+      setForm(prev => ({ ...prev, billing: paramsToFields(res.data) }));
     } catch {
-      // se não tem config ainda, campos ficam vazios
+      // sem params ainda: campos ficam vazios
     }
   };
 
@@ -189,8 +196,6 @@ export default function SellersPage() {
     unit_name: form.unit_name||undefined,
     unit_id: form.unit_id !== '' ? Number(form.unit_id) : null,
     is_active: form.is_active, active: form.is_active,
-    preco_unitario: form.billing.preco_unitario !== '' ? Number(form.billing.preco_unitario) : undefined,
-    manuseio: form.billing.manuseio !== '' ? Number(form.billing.manuseio) : undefined,
     caixa_inclusa: form.caixa_inclusa,
     caixa1: form.caixa1||undefined, caixa2: form.caixa2||undefined,
     caixa3: form.caixa3||undefined, caixa4: form.caixa4||undefined,
@@ -199,18 +204,6 @@ export default function SellersPage() {
     caixa_prop: form.caixa_prop, other_aliases: form.other_aliases||undefined,
   });
 
-  const buildBillingPayload = (sellerId: number) => {
-    const b = form.billing;
-    const configs: Array<{ config_key: string; config_value: string }> = [];
-    (Object.keys(BILLING_KEY_MAP) as (keyof BillingFields)[]).forEach(k => {
-      const v = b[k];
-      const val = k === 'armazenagem_incluso' ? (v ? 'sim' : 'nao') : String(v ?? '');
-      if (val !== '' && val !== 'nao') {
-        configs.push({ config_key: BILLING_KEY_MAP[k], config_value: val });
-      }
-    });
-    return { seller_id: sellerId, configs };
-  };
 
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error('Nome é obrigatório'); return; }
@@ -226,12 +219,9 @@ export default function SellersPage() {
         toast.success('Seller criado');
       }
 
-      // Salva BillingConfig se há campos preenchidos
+      // Salva o default de faturamento do seller (billing_seller_params)
       if (savedId) {
-        const billingPayload = buildBillingPayload(savedId);
-        if (billingPayload.configs.length > 0) {
-          await billingApi.saveConfig(billingPayload);
-        }
+        await billingApi.saveSellerParams(savedId, fieldsToParams(form.billing) as any);
       }
 
       // Upload do arquivo de experiência
@@ -300,8 +290,7 @@ export default function SellersPage() {
       cnpj: row[2]?.trim()||undefined, contact_name: row[3]?.trim()||undefined,
       contact_email: row[4]?.trim()||undefined, contact_phone: row[5]?.trim()||undefined,
       unit_name: row[6]?.trim()||undefined,
-      preco_unitario: row[7] ? parseFloat(row[7].replace(',','.')) || undefined : undefined,
-      manuseio: row[8] ? parseFloat(row[8].replace(',','.')) || undefined : undefined,
+      // colada em massa cria só o cadastro; parâmetros de faturamento ficam no default
       caixa_inclusa: ['sim','yes','s','x','1','true'].includes((row[9]||'').toLowerCase()),
       caixa1: row[10]?.trim()||undefined, caixa2: row[11]?.trim()||undefined,
       caixa3: row[12]?.trim()||undefined,
@@ -499,9 +488,12 @@ export default function SellersPage() {
 
             {formTab === 'comercial' && (
               <div className="space-y-4">
-                <p className="text-xs text-t4">Estes valores são sincronizados com o módulo de Faturamento.</p>
+                <p className="text-xs text-t4">
+                  Default de faturamento do seller. O fechamento de cada mês nasce com estes
+                  valores e pode sobrescrevê-los no topo da tela de Faturamento.
+                </p>
                 <div className="grid grid-cols-2 gap-3">
-                  {BILLING_FIELDS.filter(f => f.type === 'number').map(f => (
+                  {BILLING_FIELDS.map(f => (
                     <div key={f.key}>
                       <label className="block text-xs text-t3 mb-1">{f.label}</label>
                       <input
@@ -512,24 +504,33 @@ export default function SellersPage() {
                       />
                     </div>
                   ))}
+                  <div className="col-span-2">
+                    <label className="block text-xs text-t3 mb-1">Tipos de caixa inclusos (grupo A, ex.: "1,2")</label>
+                    <input
+                      value={form.billing.tipos_caixa_inclusos}
+                      onChange={e => setBilling('tipos_caixa_inclusos', e.target.value)}
+                      className={cls} style={clsStyle} placeholder="1,2"
+                    />
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="flex items-center gap-2">
+                    <input type="checkbox" id="seg" checked={form.billing.seguro_incluso}
+                      onChange={e => setBilling('seguro_incluso', e.target.checked)} className="w-4 h-4 accent-violet-500" />
+                    <label htmlFor="seg" className="text-sm text-t2">Seguro incluso</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="arm" checked={form.billing.armazenagem_inclusa}
+                      onChange={e => setBilling('armazenagem_inclusa', e.target.checked)} className="w-4 h-4 accent-violet-500" />
+                    <label htmlFor="arm" className="text-sm text-t2">Armazenagem inclusa (informativo)</label>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <input type="checkbox" id="ci" checked={form.caixa_inclusa} onChange={e => set('caixa_inclusa', e.target.checked)} className="w-4 h-4 accent-violet-500" />
-                    <label htmlFor="ci" className="text-sm text-t2">Caixa inclusa no preço</label>
+                    <label htmlFor="ci" className="text-sm text-t2">Caixa inclusa no preço (cadastro)</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="cp" checked={form.caixa_prop} onChange={e => set('caixa_prop', e.target.checked)} className="w-4 h-4 accent-violet-500" />
-                    <label htmlFor="cp" className="text-sm text-t2">Caixa própria</label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox" id="ai"
-                      checked={form.billing.armazenagem_incluso}
-                      onChange={e => setBilling('armazenagem_incluso', e.target.checked)}
-                      className="w-4 h-4 accent-violet-500"
-                    />
-                    <label htmlFor="ai" className="text-sm text-t2">Armazenagem inclusa</label>
+                    <label htmlFor="cp" className="text-sm text-t2">Caixa própria (cadastro)</label>
                   </div>
                 </div>
               </div>

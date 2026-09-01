@@ -41,6 +41,55 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ## Mudanças Recentes — 31/08/2026
 
+### Faturamento reescrito por completo
+
+A tela `/billing` e o backend de faturamento foram **substituídos**. O cálculo antigo
+(`GET /billing/report`) e o dump (`GET /billing/export`) — mais o helper N+1 `_get_box` — **foram
+removidos**. `billing_configs` e as colunas comerciais de `Seller` **continuam no banco, intactas e
+sem nenhum uso** pelo faturamento novo (rollback).
+
+**Modelo novo** (6 tabelas, migração idempotente via `Base.metadata.create_all` + seed em
+`run_light_migrations`): `billing_seller_params` (default por seller), `billing_box_prices` (tabela
+**global** de adicional por caixa — 9 chaves `1..8`,`Própria`), `billing_monthly_closings` (fechamento
+por seller×mês `YYYY-MM`, com **snapshot dos parâmetros** e cache dos 8 totais da fatura),
+`billing_closing_nfs` (override por NF: canal, adicional B2B, obs), `billing_closing_adjustments`
+(linhas avulsas), `billing_closing_lines` (**snapshot congelado das NFs ao fechar; apagado ao
+reabrir**).
+
+**Cálculo num módulo único: `backend/services/billing_calc.py`.** Documentos em
+`backend/services/billing_docs.py`. Toda a rota está em `routers/billing.py` — **tudo
+`require_admin`**, exceto `GET/PUT /billing/seller-params/{id}` (`require_manager_or_above`, usado pela
+aba Comercial de Sellers).
+
+Regras que mordem:
+- ⚠️ **Base das listas:** NF de **saída** (`file_type != IMPORT`; **NULL conta como saída**), status
+  `!= cancelled`, **`for_billing` verdadeiro** (NULL conta como verdadeiro), `imported_at` dentro do
+  mês em horário de Brasília. Entrada **nunca** entra.
+- ⚠️ **Classificação B2C/B2B automática** por `Σ quantidade dos itens ≥ limite_itens_b2b`. **`limite = 0`
+  ou vazio → nenhuma NF vira B2B sozinha** (só por override manual `⇄`). O override vive só naquele
+  fechamento e **não viaja** no pré-preenchimento do mês seguinte.
+- ⚠️ **Caixas inclusas = dois mecanismos:** grupo A (`tipos_caixa_inclusos`, texto tipo "1,2", por
+  seller) e cota B (`cota_caixas_mes`, por seller). Só NF **B2C** com caixa fora do grupo A consome a
+  cota; as primeiras N por `imported_at, id` ficam com adicional 0.
+- ⚠️ **NF B2C sem `box_used`** → linha amarela, adicional 0, **não bloqueia** o fechamento.
+- ⚠️ **Mês fechado lê o snapshot** (`billing_closing_lines` + cache), read-only — cancelar um `order`
+  depois **não muda** a fatura fechada. Reabrir apaga o snapshot e volta a derivar ao vivo.
+- ⚠️ **`apply-forward`** copia só os **parâmetros** (não cubagem/valor segurado/avulsos) para os meses
+  futuros **abertos** + o default do seller. Fechados e passados não mudam. Exige o rascunho do mês
+  já salvo.
+- ⚠️ **A tela mostra sempre o último estado SALVO** — edições ficam locais até "Salvar rascunho"
+  (`PUT /billing/closing/...`), que persiste e recarrega. O cálculo **não** é duplicado em JS de
+  propósito.
+- Permissão: `/billing` virou **admin-only** (rota + menu). Manager/operator: 403 e sem item no menu.
+- Índice novo `ix_orders_seller_imported` em `PERF_INDEXES` (a IN-list de checagem de índice ganhou
+  `'orders'` nos dois ramos). ⚠️ **Trava gravação em `orders` no 1º boot do deploy** — fora do
+  expediente.
+
+**Testes:** 39 verificações E2E via TestClient, 100% verdes em **SQLite e PostgreSQL** — reproduz os
+números da planilha Cereous (JULHO: mínimo B2C 1.850,00, armazenagem 345,00; era sem franquia
+atingida), classificação + override, cota A/B, NF sem caixa não bloqueia, snapshot imutável,
+apply-forward, consolidado, permissões, PDF/Excel/zip.
+
 ### Manuseios mostrava só parte do período escolhido
 
 `GET /scanning/session-cards` tinha um **`limit(100)` fixo aplicado DEPOIS do filtro de data**, e
@@ -880,12 +929,17 @@ de propósito: senão o admin subiria um arquivo e ele sumiria da tela sem deixa
 - **Excluir** (ícone lixeira): mensagem mais forte "não poderá ser reativado pela interface". Produto some mesmo com toggle ativo — a UI nunca mostra botão Reativar para eles, mas o registro permanece no banco para preservar histórico de bipagem
 - **Não há coluna no banco distinguindo os dois**: a separação é puramente de UX. Não tente criar campo `deleted` — é desnecessário e quebraria a auditoria de bipagem
 
-### BillingConfig e Sellers — fonte de verdade única
-- A aba **Comercial** em Sellers está linkada ao `BillingConfig` (tabela `billing_configs`)
-- Ao abrir edição de um seller, o frontend carrega `GET /billing/config/{seller_id}` e preenche os campos
-- Ao salvar, o frontend chama `PUT /cadastros/sellers/{id}` (para `preco_unitario` e `manuseio` como colunas do Seller) E `POST /billing/config` (para todos os campos do BillingConfig)
-- Chaves do BillingConfig usadas: `'Taxa Base'`, `'Preço Unitário'`, `'Franquia'`, `'Número Mínimo de Pedidos'`, `'Preço Adicional'`, `'Manuseio'`, `'Armazenagem'`, `'Armazenagem Incluso'`
-- **Não duplicar** esses campos em outro formulário sem sincronizar com o BillingConfig
+### Aba Comercial de Sellers e parâmetros de faturamento (31/08/2026)
+- A aba **Comercial** em Sellers edita o **default de faturamento do seller** em `billing_seller_params`
+  via `GET/PUT /billing/seller-params/{seller_id}` (`require_manager_or_above`). Nada mais grava em
+  `billing_configs` nem nas colunas `Seller.preco_unitario`/`Seller.manuseio`.
+- Campos: `preco_unitario`, `min_pedidos`, `manuseio_b2b`, `valor_caixa_b2b`, `limite_itens_b2b`,
+  `tipos_caixa_inclusos` (texto), `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`,
+  `aliquota_seguro` (em %, default 0.30), `armazenagem_inclusa`.
+- **`billing_configs` (tabela `BillingConfig`) está MORTA** — permanece só para rollback. Não
+  reintroduzir leitura/escrita nela.
+- Os mesmos parâmetros também são editáveis **por mês** no topo da tela de Faturamento (gravam no
+  snapshot do `billing_monthly_closings`, não no default).
 
 ### Arquivo de Experiência do Seller
 - Endpoint: `POST /cadastros/sellers/{seller_id}/experience-file` (requer manager+)
@@ -983,7 +1037,7 @@ esses números** (decisão do dono do sistema).
 | `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
-| `/billing` | `routers/billing.py` | Config de cobrança, relatório, export Excel |
+| `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026), admin-only** exceto `seller-params` (manager+). `seller-params` (default do seller), `box-prices` (tabela global de caixa), `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `apply-forward`, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`). Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |
@@ -1010,7 +1064,7 @@ esses números** (decisão do dono do sistema).
 | `/sellers` | Sellers.tsx | admin, manager, operator |
 | `/sellers/corrigir` | SellerFixes.tsx | admin, manager (sem item no menu lateral — acessada pelo aviso do Dashboard ou botão em Sellers.tsx) |
 | `/units` | Units.tsx | admin, manager, operator |
-| `/billing` | Billing.tsx | admin, manager, operator |
+| `/billing` | Billing.tsx | **admin** (reescrita de 31/08/2026 — some do menu para manager/operator) |
 | `/audit` | Audit.tsx | admin, manager, operator |
 | `/settings` | Settings.tsx | admin, manager, operator |
 | `/manuseios` | Handling.tsx | admin, manager, operator |
@@ -1514,7 +1568,7 @@ N+1 em dois lugares nunca antes testados** — maiores que o que já foi corrigi
 
 | Onde | Achado | Causa raiz |
 |---|---|---|
-| `GET /billing/export` | p50 = **14,5s**, máx 16,1s (crítico) | `backend/routers/billing.py:193-213`, função `_get_box()` — 1 consulta em `products` por item + 1 em `box_algorithm` por pedido, sem filtro de seller/período curto no teste (semana inteira = 3.754 pedidos/8.120 itens = ~12 mil consultas numa chamada) |
+| ~~`GET /billing/export`~~ | ~~p50 = 14,5s~~ | **RESOLVIDO por remoção em 31/08/2026** — o endpoint e o `_get_box()` deixaram de existir na reescrita do Faturamento. Não recriar. |
 | `GET /dashboard/master` | p95 = **3,77s**, p99 = 4,61s (crítico) | `backend/routers/dashboard.py:379-402`, checagem "Produtos cadastrados" (uma das P6/P8/P10/P12). `orders_today` não usa `joinedload` → `order.items` faz lazy-load por pedido, e o laço interno faz 1 consulta em `products` por item. Só sexta = ~2.100 consultas por carregamento do Dashboard. Menor, mesmo padrão, em `sessions_today_list` (linha ~439, 1 consulta por sessão) e no acesso a `order.seller` sem eager-load (linhas 371 e 394) |
 
 Confirmado com `EXPLAIN ANALYZE`: **não é falta de índice** — o índice `uq_seller_sku` em
@@ -1718,7 +1772,10 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | `SELECT` em `stock_movements` comparando `movement_type` com string | Em produção é enum nativo: `movement_type IN ('Entrada')` estoura `InvalidTextRepresentation` e **aborta a transação**. SQLite aceita | `CAST(movement_type AS TEXT) IN ('IN','Entrada')` — funciona nos dois bancos |
 | Ler `order.items` logo após criar os itens no import | Itens são criados com `order_id` (não pela relationship) e a sessão é `autoflush=False` → a lista vem **vazia** e nada baixa, em silêncio | `db.flush()` e recarregar com `joinedload(Order.items)` antes de usar |
 | Consultar produto/kit dentro de laço no import | Era N+1: 1 query de kit + 1 de produto **por item** do arquivo (2.410 queries num arquivo de 960 linhas) | Já resolvido pelos caches `_kits_of` / `_products_of` em `import_excel_orders`. Ao mexer no laço de persistência, **continuar passando `kits_by_sku`** para `process_order_items` — sem ele a função volta a consultar item a item (fallback mantido de propósito) |
-| Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado 3× nesta base: `scanning.py` e `dashboard.py` **já corrigidos**, `billing.py:193-213` (`_get_box`) **ainda em aberto** — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema (01-02/08/2026, ver seção "Performance — N+1 na bipagem") | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** (`WHERE (seller_id, sku) IN (...)` ou `GROUP BY`) fora do laço — mesmo padrão já usado em `get_session_orders`/`_build_progress` e agora em `master_dashboard` |
+| Tela nova que itera `for order in orders: for item in order.items: db.query(...)` | Mesmo N+1 achado nesta base: `scanning.py`, `dashboard.py` e o antigo `billing.py` **já resolvidos** (o último por remoção em 31/08/2026) — cada consulta individual é rápida, mas centenas/milhares delas por carregamento derrubam a tela e disputam conexão com o resto do sistema | Sempre `joinedload` a relação antes do laço (`order.items`, `order.seller`), e trocar a consulta por item por **1 consulta agrupada** fora do laço. O faturamento novo usa `joinedload(Order.items)` em `billing_calc.list_month_orders` e a tabela global de caixas em memória — **não voltar a consultar produto por item** |
+| Query nova em `orders` filtrando por `(seller_id, imported_at)` | Desde 31/08/2026 existe `ix_orders_seller_imported`; a IN-list de checagem de índice em `run_light_migrations` ganhou `'orders'` nos dois ramos. Filtro fora dessa forma volta a ser Seq Scan | Conferir com `EXPLAIN ANALYZE` contra dado real; índice novo entra em `PERF_INDEXES` (`main.py`) |
+| Reintroduzir `billing_configs` / `Seller.preco_unitario` no faturamento | A reescrita de 31/08/2026 abandonou os dois — só `billing_seller_params` e `billing_monthly_closings` valem | Aba Comercial e topo do Faturamento gravam em `billing_seller_params` (default) / snapshot do closing (mês). `billing_configs` fica morto para rollback |
+| Deduzir a fatura de um mês fechado recalculando ao vivo | Mês `closed` tem snapshot em `billing_closing_lines` + cache dos 8 totais; recalcular ignoraria o congelamento e mudaria a fatura se um `order` fosse cancelado depois | `billing_calc.read_frozen()` para `closed`; `compute_live()` só para `open`. Reabrir apaga o snapshot |
 | Limitar uma listagem com `limit(N)` fixo depois de um filtro de data | O `limit` corta as linhas mais antigas **sem avisar ninguém**: a tela mostra um total menor que a realidade e ninguém desconfia. Foi assim que Manuseios mostrou 3.210 de 14.303 pedidos em agosto | Se há filtro de período, o período já limita o volume — o teto só faz sentido **sem** filtro. Se precisar mesmo de teto com filtro, a tela tem que **dizer** que truncou |
 | Comparar `Order.status` com string escrita à mão | `"in_progress"` não existe no `OrderStatus` (o certo é `"scanning"`), e a comparação simplesmente nunca casa — contagem sempre 0, sem erro nenhum | Usar `models.OrderStatus.SCANNING.value`, ou conferir a lista de valores do enum antes. Um `==` com literal errado falha em silêncio |
 | `const { data: x = [] } = useQuery(...)` usado como dependência de `useEffect` | O default na desestruturação cria um array NOVO a cada render → o efeito re-dispara → `setState` re-renderiza → laço infinito enquanto a resposta não chega | Depender do `data` cru (estável no react-query) e tratar o `undefined` dentro do efeito: `useEffect(() => { if (data) setX(data) }, [data])` |

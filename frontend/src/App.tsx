@@ -298,7 +298,14 @@ export default function App() {
                 }
               />
               <Route path="units" element={<UnitsPage />} />
-              <Route path="billing" element={<BillingPage />} />
+              <Route
+                path="billing"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <BillingPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="audit" element={<AuditPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="manuseios" element={<HandlingPage />} />

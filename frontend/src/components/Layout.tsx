@@ -67,7 +67,11 @@ export default function Layout() {
   const user = userStr ? JSON.parse(userStr) : { name: 'Usuário', role: 'operator' };
 
   const isOperator = user?.role === 'operator';
-  const activeNav  = isOperator ? navOperator : navItems;
+  const isAdmin    = user?.role === 'admin';
+  // Faturamento é só admin (reescrita de 31/08/2026) — some do menu de manager.
+  const activeNav  = (isOperator ? navOperator : navItems)
+    .map(g => ({ ...g, items: g.items.filter(it => it.to !== '/billing' || isAdmin) }))
+    .filter(g => g.items.length > 0);
   const mobileTabs = isOperator ? mobileTabsOperator : mobileTabsAdmin;
 
   const handleLogout = () => {

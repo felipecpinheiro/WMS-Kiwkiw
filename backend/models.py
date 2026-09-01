@@ -489,6 +489,154 @@ class BillingConfig(Base):
 
 
 # ============================================================
+# FATURAMENTO REESCRITO (31/08/2026)
+# ============================================================
+# Modelo próprio do faturamento novo. `billing_configs` acima e as colunas
+# comerciais de `Seller` ficam INTACTAS e SEM USO por este módulo (decisão do
+# dono do sistema — permite rollback sem perder o cadastro antigo).
+# Regras de cálculo: backend/services/billing_calc.py.
+
+class BillingSellerParams(Base):
+    """Parâmetros default de faturamento por seller (uma linha por seller)."""
+    __tablename__ = "billing_seller_params"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+
+    preco_unitario = Column(Float, default=0.0, nullable=False)       # preço unitário / manuseio B2C
+    min_pedidos = Column(Integer, default=0, nullable=False)          # nº mínimo de pedidos B2C
+    manuseio_b2b = Column(Float, default=0.0, nullable=False)
+    valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
+    limite_itens_b2b = Column(Integer, default=0, nullable=False)     # 0 = nunca classifica B2B sozinho
+    tipos_caixa_inclusos = Column(String(200), default="", nullable=False)  # grupo A, ex. "1,2"
+    cota_caixas_mes = Column(Integer, default=0, nullable=False)      # cota B
+    franquia_m3 = Column(Float, default=0.0, nullable=False)
+    preco_m3 = Column(Float, default=0.0, nullable=False)
+    seguro_incluso = Column(Boolean, default=False, nullable=False)
+    aliquota_seguro = Column(Float, default=0.30, nullable=False)     # em %, ex. 0.30 = 0,30%
+    armazenagem_inclusa = Column(Boolean, default=False, nullable=False)  # só informativo
+
+    __table_args__ = (UniqueConstraint("seller_id", name="uq_billing_seller_params"),)
+
+    seller = relationship("Seller")
+
+
+class BillingBoxPrice(Base):
+    """Tabela GLOBAL de adicional por tipo de caixa (vale para todos os sellers)."""
+    __tablename__ = "billing_box_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    box_key = Column(String(20), nullable=False)      # '1'..'8', 'Própria'
+    price = Column(Float, nullable=True)              # NULL = sem adicional
+
+    __table_args__ = (UniqueConstraint("box_key", name="uq_billing_box_key"),)
+
+
+class BillingMonthlyClosing(Base):
+    """Fechamento de faturamento por (seller x mês 'YYYY-MM')."""
+    __tablename__ = "billing_monthly_closings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    ref_month = Column(String(7), nullable=False)     # 'YYYY-MM'
+    status = Column(String(10), default="open", nullable=False)   # 'open' | 'closed'
+
+    # Snapshot dos parâmetros do seller no mês (cópia de BillingSellerParams)
+    preco_unitario = Column(Float, default=0.0, nullable=False)
+    min_pedidos = Column(Integer, default=0, nullable=False)
+    manuseio_b2b = Column(Float, default=0.0, nullable=False)
+    valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
+    limite_itens_b2b = Column(Integer, default=0, nullable=False)
+    tipos_caixa_inclusos = Column(String(200), default="", nullable=False)
+    cota_caixas_mes = Column(Integer, default=0, nullable=False)
+    franquia_m3 = Column(Float, default=0.0, nullable=False)
+    preco_m3 = Column(Float, default=0.0, nullable=False)
+    seguro_incluso = Column(Boolean, default=False, nullable=False)
+    aliquota_seguro = Column(Float, default=0.30, nullable=False)
+    armazenagem_inclusa = Column(Boolean, default=False, nullable=False)
+
+    # Dados do mês
+    cubagem_m3 = Column(Float, default=0.0, nullable=False)
+    valor_segurado = Column(Float, default=0.0, nullable=False)
+
+    closed_at = Column(DateTime, nullable=True)
+    closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Cache dos totais da fatura (preenchido ao fechar)
+    t_b2c_min = Column(Float, nullable=True)
+    t_b2b_min = Column(Float, nullable=True)
+    t_seguro = Column(Float, nullable=True)
+    t_armazenagem = Column(Float, nullable=True)
+    t_avulsos = Column(Float, nullable=True)
+    t_subtotal_b2c = Column(Float, nullable=True)
+    t_subtotal_b2b = Column(Float, nullable=True)
+    t_total_geral = Column(Float, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("seller_id", "ref_month", name="uq_billing_closing_seller_month"),
+    )
+
+    seller = relationship("Seller")
+    nf_overrides = relationship("BillingClosingNF", back_populates="closing",
+                                cascade="all, delete-orphan")
+    adjustments = relationship("BillingClosingAdjustment", back_populates="closing",
+                               cascade="all, delete-orphan")
+    lines = relationship("BillingClosingLine", back_populates="closing",
+                         cascade="all, delete-orphan")
+
+
+class BillingClosingNF(Base):
+    """Override por NF dentro de um fechamento (troca de canal, adicional B2B, obs)."""
+    __tablename__ = "billing_closing_nfs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    closing_id = Column(Integer, ForeignKey("billing_monthly_closings.id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    channel_override = Column(String(3), nullable=True)   # 'b2c' | 'b2b' | NULL
+    b2b_adicional = Column(Float, nullable=True)
+    note = Column(String(300), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("closing_id", "order_id", name="uq_billing_closing_nf"),
+    )
+
+    closing = relationship("BillingMonthlyClosing", back_populates="nf_overrides")
+
+
+class BillingClosingAdjustment(Base):
+    """Linha avulsa de um fechamento (motoboy, retrabalho, ressarcimento, frete...)."""
+    __tablename__ = "billing_closing_adjustments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    closing_id = Column(Integer, ForeignKey("billing_monthly_closings.id"), nullable=False)
+    descricao = Column(String(300), default="", nullable=False)
+    obs = Column(String(300), default="", nullable=False)
+    sign = Column(Integer, default=1, nullable=False)     # +1 | -1
+    valor = Column(Float, default=0.0, nullable=False)
+
+    closing = relationship("BillingMonthlyClosing", back_populates="adjustments")
+
+
+class BillingClosingLine(Base):
+    """Snapshot congelado de cada NF ao FECHAR. Descartado ao reabrir."""
+    __tablename__ = "billing_closing_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    closing_id = Column(Integer, ForeignKey("billing_monthly_closings.id"), nullable=False)
+    nf_number = Column(String(20), nullable=True)
+    order_date = Column(Date, nullable=True)
+    imported_at = Column(DateTime, nullable=True)
+    channel = Column(String(3), nullable=False)           # 'b2c' | 'b2b'
+    box = Column(String(50), nullable=True)
+    adic_caixa = Column(Float, default=0.0, nullable=False)
+    manuseio = Column(Float, default=0.0, nullable=False)
+    total = Column(Float, default=0.0, nullable=False)
+    sem_caixa = Column(Boolean, default=False, nullable=False)
+
+    closing = relationship("BillingMonthlyClosing", back_populates="lines")
+
+
+# ============================================================
 # AUDITORIA
 # ============================================================
 

@@ -75,6 +75,12 @@ PERF_INDEXES = [
     # buscar os itens de um pedido varre order_items inteira (8k+ linhas)
     ("ix_order_items_order_id",
      "CREATE INDEX IF NOT EXISTS ix_order_items_order_id ON order_items (order_id)"),
+    # Faturamento reescrito (31/08/2026): a listagem do fechamento filtra
+    # orders por (seller_id, imported_at dentro do mês). Sem este índice a
+    # query varre a tabela orders inteira a cada carga da tela.
+    # ⚠️ trava gravação em `orders` por alguns segundos no 1º boot do deploy.
+    ("ix_orders_seller_imported",
+     "CREATE INDEX IF NOT EXISTS ix_orders_seller_imported ON orders (seller_id, imported_at)"),
 ]
 
 
@@ -169,7 +175,7 @@ def run_light_migrations():
             existing_perf_idx = {
                 r[0] for r in db.execute(text(
                     "SELECT indexname FROM pg_indexes "
-                    "WHERE tablename IN ('stock_movements', 'scanning_logs', 'order_items')"
+                    "WHERE tablename IN ('stock_movements', 'scanning_logs', 'order_items', 'orders')"
                 )).fetchall()
             }
             for idx_name, idx_sql in PERF_INDEXES:
@@ -233,7 +239,7 @@ def run_light_migrations():
 
             # Índices de performance: mesma checagem do ramo PostgreSQL, via PRAGMA.
             existing_perf_idx = set()
-            for _tbl in ("stock_movements", "scanning_logs", "order_items"):
+            for _tbl in ("stock_movements", "scanning_logs", "order_items", "orders"):
                 existing_perf_idx |= {
                     r[1] for r in db.execute(text(f"PRAGMA index_list({_tbl})")).fetchall()
                 }
@@ -262,6 +268,17 @@ def run_light_migrations():
             print(f"[migracao] indice criado: {sql}")
         if index_migrations:
             db.commit()
+
+        # ── Seed idempotente da tabela GLOBAL de adicional por caixa ───────────
+        # A tabela em si é criada por Base.metadata.create_all (init_db). Aqui só
+        # garantimos as 9 chaves com price NULL (= sem adicional) se faltarem.
+        for _bk in ("1", "2", "3", "4", "5", "6", "7", "8", "Própria"):
+            db.execute(text(
+                "INSERT INTO billing_box_prices (box_key, price) "
+                "SELECT :bk, NULL "
+                "WHERE NOT EXISTS (SELECT 1 FROM billing_box_prices WHERE box_key = :bk)"
+            ), {"bk": _bk})
+        db.commit()
 
         # ── Backfill do vínculo componente de kit → produto ────────────────────
         # Preenche apenas onde ainda está NULL e o SKU casa exatamente com um

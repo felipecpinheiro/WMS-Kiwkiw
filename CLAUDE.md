@@ -110,6 +110,17 @@ Repetida no Scanner, no faturamento e no cadastro do seller.
 - Grupo A e cota continuam por cima de tudo; `Saco de Embarque` se comporta como as
   numeradas.
 
+### `15124cfd` — cadastrar a caixa da NF direto da lista de Faturamento
+
+Na coluna **Cx** das listas B2C e B2B, **mês aberto**, a célula virou um `<select>` com as 13
+caixas canônicas. Escolher grava em `Order.box_used` pelo **mesmo endpoint do Scanner**
+(`PATCH /scanning/orders/{id}/box`, `setOrderBox` em [Billing.tsx](frontend/src/pages/Billing.tsx))
+e invalida `['billing-closing', ...]` — o adicional recalcula ao vivo. Sem caixa = borda âmbar.
+Caixa legada fora da lista aparece como opção `"(antigo)"`. Mês fechado é read-only (a linha
+congelada nem tem `order_id`). Só frontend. ⚠️ O endpoint do Scanner **conclui o pedido** se
+todos os itens já estiverem bipados e a caixa era a última pendência — aceitável aqui porque
+as NFs de faturamento de mês passado já estão finalizadas.
+
 **Armadilhas novas:**
 
 | Situação | Armadilha | Como evitar |

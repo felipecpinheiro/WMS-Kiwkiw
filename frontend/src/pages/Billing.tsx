@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from 'react-query';
 import toast from 'react-hot-toast';
 import {
   DollarSign, Save, Download, Lock, Unlock, ArrowLeftRight, List as ListIcon,
-  Plus, X, Settings2, ArrowRight,
+  Plus, X, Settings2,
 } from 'lucide-react';
 import { billingApi, cadastrosApi, scanningApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
@@ -135,11 +135,6 @@ export default function BillingPage() {
     } finally { setBusy(false); }
   };
 
-  const applyForward = async () => {
-    if (dirty) await saveDraft(true);
-    await doAction(() => billingApi.applyForward(Number(sellerId), refMonth),
-      'Parâmetros aplicados aos meses seguintes abertos e ao default do seller');
-  };
   const closeMonth = async () => {
     if (dirty) await saveDraft(true);
     if (!confirm('Fechar o mês congela todos os valores. Continuar?')) return;
@@ -274,7 +269,12 @@ export default function BillingPage() {
 
           {/* PARÂMETROS */}
           <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
-            <h2 className="text-sm font-semibold text-t2 mb-4">Parâmetros de cobrança — {refMonth}</h2>
+            <h2 className="text-sm font-semibold text-t2 mb-1">Parâmetros de cobrança</h2>
+            <p className="text-xs text-t3 mb-4">
+              {isClosed
+                ? `Congelados no fechamento de ${refMonth}.`
+                : 'Estes valores são do seller (mesmos da aba Comercial em Sellers). Alterar aqui vale para todos os meses abertos; fechados ficam congelados.'}
+            </p>
             <div className="grid gap-4 md:grid-cols-3">
               <ParamGroup title="Pedidos B2C">
                 <NumRow label="Nº mínimo de pedidos" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
@@ -329,13 +329,9 @@ export default function BillingPage() {
             <div className="flex items-center gap-3 mt-4 flex-wrap">
               <button onClick={() => saveDraft()} disabled={busy || !dirty}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
-                <Save size={14} /> Salvar rascunho
+                <Save size={14} /> Salvar parâmetros
               </button>
-              <button onClick={applyForward} disabled={busy}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-line text-t1 text-sm font-semibold">
-                <ArrowRight size={14} /> Aplicar aos meses seguintes
-              </button>
-              <span className="text-xs text-t3">Copia só os parâmetros para meses futuros <b>abertos</b> e o default do seller. Fechados não mudam.</span>
+              <span className="text-xs text-t3">Grava no cadastro do seller. Vale para todos os meses abertos.</span>
             </div>
           </section>
 

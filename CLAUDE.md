@@ -39,9 +39,60 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 01/09/2026 (2ª leva) — FONTE ÚNICA de parâmetros de faturamento
+
+**Sem push.** Unifica os parâmetros de cobrança do seller num só registro:
+`billing_seller_params`. A aba **Comercial** de Sellers e o topo do **Faturamento de
+mês ABERTO** passam a ler/gravar **o mesmo registro** — mexeu num, o outro reflete, e
+vale para **todos os meses abertos** ao mesmo tempo.
+
+**O que continua igual:**
+- **Mês FECHADO** congela os 16 campos no snapshot de `billing_monthly_closings` (no
+  `close`, copiando de `billing_seller_params`) e vira read-only. Editar o seller depois
+  **não** muda fatura fechada. **Reabrir** apaga o snapshot e volta a seguir o seller.
+- `billing_monthly_closings` de mês **aberto** guarda só `status`, ajustes avulsos e
+  overrides de NF. As colunas de parâmetro dele **não são lidas enquanto aberto** (só
+  voltam a valer congeladas no fechamento).
+- `billing_seller_box_prices` (preço de caixa por seller) — sem mudança.
+
+**O que mudou:**
+- `PARAM_FIELDS` ganhou **`valor_segurado`** e **`cubagem_m3`** — deixaram de ser override
+  por mês e viraram parâmetro do seller (entram na aba Comercial). Colunas novas em
+  `billing_seller_params` (migração idempotente + **backfill único** do fechamento de
+  `ref_month` mais alto de cada seller, pra não perder o valor segurado já digitado).
+- `adic_produto_b2b` e `franquia_produtos_b2b` **deixaram de ser "só-do-mês"** — a
+  constante `_MONTH_ONLY_PARAMS` e todos os `if f in _MONTH_ONLY_PARAMS: continue` foram
+  **removidos**. `put_seller_params` grava os 16 campos.
+- `prefill_params()` agora é só `return default_params_for_seller(...)` — **acabou o
+  "puxa do mês anterior"**.
+- Endpoint **`POST /billing/closing/{s}/{m}/apply-forward` REMOVIDO** (+ botão "Aplicar
+  aos meses seguintes" e `billingApi.applyForward`). Não faz mais sentido: todo mês aberto
+  já compartilha o mesmo registro.
+- `PUT /billing/closing/{s}/{m}` (rascunho) agora grava os parâmetros em
+  `billing_seller_params` (via `_get_or_create_params`); a linha do `closing` só recebe
+  ajustes/overrides.
+- `_build_payload` ramo mês aberto: `params`/`cubagem`/`valor_segurado` sempre de
+  `default_params_for_seller`.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| `PUT /billing/seller-params` ou `PUT /billing/closing` do front | O schema tem 16 campos e o Pydantic preenche default 0/15 nos ausentes → um PUT parcial **zera** o resto | O front **tem que mandar os 16**. `Sellers.tsx` (`fieldsToParams`) e `Billing.tsx` (`buildBody`) já mandam. Endpoint novo que edite params: idem |
+| Achou que `valor_segurado`/`cubagem` são do mês | Desde 01/09 (2ª leva) são do **seller** — um valor só, sem override por mês | Pra um mês diferente: muda no seller, fecha o mês (congela), volta o valor |
+| Query nova de parâmetro de faturamento | Ler as colunas de `billing_monthly_closings` de um mês **aberto** | Mês aberto: `calc.default_params_for_seller(db, seller_id)`. As colunas do `closing` só valem em mês **fechado** (`params_from_obj(closing)` no ramo `closed`) |
+| Reintrodução de `apply-forward` / `_MONTH_ONLY_PARAMS` / "puxa do mês anterior" | Eram muletas do modelo antigo (dois registros) | Não recriar. Com fonte única não têm função |
+
+---
+
 ## Mudanças Recentes — 01/09/2026
 
 Quatro commits, **sem push** (aguardando o usuário revisar em teste). Tudo em faturamento/caixas.
+
+> ⚠️ **As menções abaixo a "parâmetro SÓ-DO-MÊS", `_MONTH_ONLY_PARAMS`, `apply-forward` e
+> "pré-preenchimento puxa do mês anterior" estão OBSOLETAS** — ver a seção "FONTE ÚNICA de
+> parâmetros de faturamento" logo acima. `adic_produto_b2b` e `franquia_produtos_b2b` hoje
+> são parâmetro normal do seller.
 
 ### `a0d40dab` — toggle de seguro agora significa "cobrar seguro"
 
@@ -153,7 +204,7 @@ as NFs de faturamento de mês passado já estão finalizadas.
 | Situação | Armadilha | Como evitar |
 |---|---|---|
 | `seguro_incluso` no cálculo | O nome diz "incluso" mas desde 01/09 **significa "cobrar"** (ligado = cobra) | Ler o comentário em [billing_calc.py](backend/services/billing_calc.py) `_fatura`. Não "consertar" invertendo de novo |
-| Parâmetro de faturamento novo que é "só do mês" | Se entrar em `PARAM_FIELDS` sem guarda, `put_seller_params`/`apply-forward` gravam no default do seller e um PUT sem o campo zera | Ver `adic_produto_b2b`: está em `PARAM_FIELDS` (pro snapshot/prefill/apply-forward de mês) mas os dois laços que escrevem no **default do seller** pulam ele com `if f == "adic_produto_b2b": continue` |
+| Parâmetro de faturamento novo | ~~"só do mês"~~ não existe mais (fonte única, 01/09 2ª leva). Todo campo em `PARAM_FIELDS` vive em `billing_seller_params` | Basta entrar em `calc.PARAM_FIELDS` + `DEFAULT_PARAMS` + coluna nas 2 tabelas. O front tem que mandar os 16 campos no PUT (Pydantic zera os ausentes) |
 | Caixa nova / opção de caixa em qualquer tela | Escrever a lista à mão divergindo das outras telas | Importar `CANONICAL_BOXES` (`billing_calc.py` no backend, `api.ts` no frontend). Fonte única |
 | Query nova de preço de caixa no faturamento | Usar `_box_prices_dict` (só global) e ignorar o override do seller | Usar `_effective_box_prices(db, seller_id)` — já aplicado no cálculo ao vivo e no fechamento |
 | `parse_grupo_a` com texto legado multi-dígito num token | O split por vírgula + `normaliza_box` pegaria só o 1º número de `"1 2 3"` | A função faz `re.findall(r"\d+")` por parte antes de cair no `normaliza_box` — cobre `"10"` e o legado `"1 2"` |
@@ -195,9 +246,8 @@ Regras que mordem:
 - ⚠️ **NF B2C sem `box_used`** → linha amarela, adicional 0, **não bloqueia** o fechamento.
 - ⚠️ **Mês fechado lê o snapshot** (`billing_closing_lines` + cache), read-only — cancelar um `order`
   depois **não muda** a fatura fechada. Reabrir apaga o snapshot e volta a derivar ao vivo.
-- ⚠️ **`apply-forward`** copia só os **parâmetros** (não cubagem/valor segurado/avulsos) para os meses
-  futuros **abertos** + o default do seller. Fechados e passados não mudam. Exige o rascunho do mês
-  já salvo.
+- ⚠️ ~~`apply-forward`~~ **REMOVIDO em 01/09/2026 (2ª leva)** — ver "FONTE ÚNICA de parâmetros". Com
+  um só registro por seller, não há nada para "aplicar aos meses seguintes".
 - ⚠️ **A tela mostra sempre o último estado SALVO** — edições ficam locais até "Salvar rascunho"
   (`PUT /billing/closing/...`), que persiste e recarrega. O cálculo **não** é duplicado em JS de
   propósito.
@@ -1050,17 +1100,20 @@ de propósito: senão o admin subiria um arquivo e ele sumiria da tela sem deixa
 - **Excluir** (ícone lixeira): mensagem mais forte "não poderá ser reativado pela interface". Produto some mesmo com toggle ativo — a UI nunca mostra botão Reativar para eles, mas o registro permanece no banco para preservar histórico de bipagem
 - **Não há coluna no banco distinguindo os dois**: a separação é puramente de UX. Não tente criar campo `deleted` — é desnecessário e quebraria a auditoria de bipagem
 
-### Aba Comercial de Sellers e parâmetros de faturamento (31/08/2026)
-- A aba **Comercial** em Sellers edita o **default de faturamento do seller** em `billing_seller_params`
-  via `GET/PUT /billing/seller-params/{seller_id}` (`require_manager_or_above`). Nada mais grava em
-  `billing_configs` nem nas colunas `Seller.preco_unitario`/`Seller.manuseio`.
-- Campos: `preco_unitario`, `min_pedidos`, `manuseio_b2b`, `valor_caixa_b2b`, `limite_itens_b2b`,
-  `tipos_caixa_inclusos` (texto), `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`,
-  `aliquota_seguro` (em %, default 0.30), `armazenagem_inclusa`.
-- **`billing_configs` (tabela `BillingConfig`) está MORTA** — permanece só para rollback. Não
-  reintroduzir leitura/escrita nela.
-- Os mesmos parâmetros também são editáveis **por mês** no topo da tela de Faturamento (gravam no
-  snapshot do `billing_monthly_closings`, não no default).
+### Aba Comercial de Sellers e parâmetros de faturamento (31/08 → unificado 01/09/2026)
+- A aba **Comercial** em Sellers e o topo do **Faturamento de mês aberto** editam **o mesmo
+  registro**: `billing_seller_params`, via `GET/PUT /billing/seller-params/{seller_id}`
+  (`require_manager_or_above`) e `PUT /billing/closing/{s}/{m}` (`require_admin`). Fonte única —
+  ver "FONTE ÚNICA de parâmetros de faturamento" no topo. Nada grava em `billing_configs`.
+- Campos (16): `preco_unitario`, `min_pedidos`, `manuseio_b2b`, `valor_caixa_b2b`,
+  `adic_produto_b2b`, `franquia_produtos_b2b`, `limite_itens_b2b`, `tipos_caixa_inclusos` (texto),
+  `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`, `aliquota_seguro` (%, default
+  0.30), `armazenagem_inclusa`, `valor_segurado`, `cubagem_m3`.
+- ⚠️ O front **tem que mandar os 16** no PUT — Pydantic preenche 0/15 nos ausentes e zeraria o
+  resto. `fieldsToParams` (Sellers.tsx) e `buildBody` (Billing.tsx) mandam.
+- **`billing_configs` (tabela `BillingConfig`) está MORTA** — só para rollback. Não reintroduzir.
+- Mês **fechado** lê o snapshot congelado de `billing_monthly_closings` (read-only). `reopen`
+  volta a seguir o seller.
 
 ### Arquivo de Experiência do Seller
 - Endpoint: `POST /cadastros/sellers/{seller_id}/experience-file` (requer manager+)
@@ -1158,7 +1211,7 @@ esses números** (decisão do dono do sistema).
 | `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
-| `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026), admin-only** exceto `seller-params` (manager+). `seller-params` (default do seller), `box-prices` (tabela global de caixa), `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `apply-forward`, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`). Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
+| `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026), admin-only** exceto `seller-params` (manager+). `seller-params` (**fonte única** dos 16 parâmetros — 01/09 2ª leva), `box-prices` (tabela global de caixa), `seller-box-prices/{id}` (preço de caixa por seller), `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |

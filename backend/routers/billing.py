@@ -36,11 +36,10 @@ router = APIRouter(prefix="/billing", tags=["Faturamento"])
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
-# Parâmetros que vivem SÓ no fechamento do mês: entram no snapshot, no
-# pré-preenchimento e no apply-forward para meses futuros, mas NÃO descem para
-# o default do seller (billing_seller_params) — a aba Comercial não os edita e
-# um PUT sem o campo zeraria o valor.
-_MONTH_ONLY_PARAMS = {"adic_produto_b2b", "franquia_produtos_b2b"}
+# Unificação de 01/09/2026: TODO parâmetro de cobrança vive só em
+# `billing_seller_params`. A aba Comercial de Sellers e o Faturamento de mês
+# ABERTO leem/gravam o mesmo registro; mês FECHADO usa o snapshot congelado em
+# `billing_monthly_closings`. Não há mais parâmetro "só do mês".
 
 
 def _check_month(ref_month: str):
@@ -96,12 +95,9 @@ def put_seller_params(
 ):
     _seller_or_404(db, seller_id)
     row = _get_or_create_params(db, seller_id)
-    # adic_produto_b2b é parâmetro só-do-mês (vive no fechamento). Não é gravado
-    # no default do seller — a aba Comercial de Sellers não o edita e um PUT sem
-    # o campo zeraria o valor.
+    # Fonte única: grava TODOS os parâmetros no default do seller. É o mesmo
+    # registro que o Faturamento de mês aberto lê e grava.
     for f in calc.PARAM_FIELDS:
-        if f in _MONTH_ONLY_PARAMS:
-            continue
         setattr(row, f, getattr(body, f))
     _audit(db, current_user, "UPDATE_SELLER_PARAMS", seller_id, body.model_dump())
     db.commit()
@@ -253,14 +249,12 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
         adjustments = _adjustments_list(closing)
         computed = calc.read_frozen(db, closing)
     else:
-        if closing:
-            params = calc.params_from_obj(closing)
-            cubagem = closing.cubagem_m3 or 0.0
-            valor_segurado = closing.valor_segurado or 0.0
-        else:
-            params = calc.prefill_params(db, seller.id, ref_month)
-            cubagem = 0.0
-            valor_segurado = 0.0
+        # Mês aberto: os parâmetros vêm SEMPRE do default do seller (fonte
+        # única). As colunas de parâmetro do `closing`, se a linha existir, só
+        # voltam a valer quando o mês é fechado (snapshot congelado).
+        params = calc.default_params_for_seller(db, seller.id)
+        cubagem = params["cubagem_m3"]
+        valor_segurado = params["valor_segurado"]
         adjustments = _adjustments_list(closing)
         computed = calc.compute_live(
             db, seller.id, ref_month, params, cubagem, valor_segurado,
@@ -319,10 +313,12 @@ def put_closing(
         db.add(closing)
         db.flush()
 
+    # Fonte única: os parâmetros do rascunho vão para o default do seller
+    # (billing_seller_params) — o mesmo registro da aba Comercial. A linha do
+    # `closing` guarda só o que é do mês: ajustes avulsos e overrides de NF.
+    sp = _get_or_create_params(db, seller_id)
     for f in calc.PARAM_FIELDS:
-        setattr(closing, f, getattr(body, f))
-    closing.cubagem_m3 = body.cubagem_m3
-    closing.valor_segurado = body.valor_segurado
+        setattr(sp, f, getattr(body, f))
 
     db.query(models.BillingClosingAdjustment).filter(
         models.BillingClosingAdjustment.closing_id == closing.id
@@ -349,43 +345,9 @@ def put_closing(
     return _build_payload(db, seller, ref_month)
 
 
-@router.post("/closing/{seller_id}/{ref_month}/apply-forward")
-def apply_forward(
-    seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    _check_month(ref_month)
-    _seller_or_404(db, seller_id)
-    src = db.query(models.BillingMonthlyClosing).filter(
-        models.BillingMonthlyClosing.seller_id == seller_id,
-        models.BillingMonthlyClosing.ref_month == ref_month,
-    ).first()
-    if src is None:
-        raise HTTPException(400, "Salve o rascunho deste mês antes de aplicar aos seguintes.")
-    src_params = calc.params_from_obj(src)
-
-    # default do seller (params só-do-mês não descem pro default)
-    row = _get_or_create_params(db, seller_id)
-    for f in calc.PARAM_FIELDS:
-        if f in _MONTH_ONLY_PARAMS:
-            continue
-        setattr(row, f, src_params[f])
-
-    # meses futuros ainda abertos
-    future = db.query(models.BillingMonthlyClosing).filter(
-        models.BillingMonthlyClosing.seller_id == seller_id,
-        models.BillingMonthlyClosing.ref_month > ref_month,
-        models.BillingMonthlyClosing.status == "open",
-    ).all()
-    for c in future:
-        for f in calc.PARAM_FIELDS:
-            setattr(c, f, src_params[f])
-
-    _audit(db, current_user, "APPLY_FORWARD", src.id,
-           {"ref_month": ref_month, "meses_afetados": [c.ref_month for c in future]})
-    db.commit()
-    return {"ok": True, "meses_afetados": [c.ref_month for c in future]}
+# O endpoint `apply-forward` foi removido na unificação de 01/09/2026: com a
+# fonte única, todo mês aberto já lê o mesmo `billing_seller_params` — não há
+# nada para "aplicar aos meses seguintes".
 
 
 @router.post("/closing/{seller_id}/{ref_month}/close")
@@ -404,14 +366,19 @@ def close_month(
         models.BillingMonthlyClosing.ref_month == ref_month,
     ).first()
     if closing is None:
-        # cria a partir do que estiver pré-preenchido
-        params = calc.prefill_params(db, seller_id, ref_month)
         closing = models.BillingMonthlyClosing(seller_id=seller_id, ref_month=ref_month,
-                                               status="open", **params)
+                                               status="open")
         db.add(closing)
         db.flush()
     if closing.status == "closed":
         raise HTTPException(409, "Mês já está fechado.")
+
+    # Snapshot: congela os parâmetros ATUAIS do seller (fonte única) na linha do
+    # fechamento. A partir daqui a fatura desse mês não muda mais se o seller for
+    # editado; reabrir apaga o snapshot e volta a seguir o default do seller.
+    sp = _get_or_create_params(db, seller_id)
+    for f in calc.PARAM_FIELDS:
+        setattr(closing, f, getattr(sp, f))
 
     params = calc.params_from_obj(closing)
     computed = calc.compute_live(

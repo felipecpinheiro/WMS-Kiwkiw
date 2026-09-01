@@ -708,6 +708,10 @@ class BillingSellerParamsIn(BaseModel):
     seguro_incluso: bool = False
     aliquota_seguro: float = 0.30
     armazenagem_inclusa: bool = False
+    # Unificação de 01/09/2026: valor segurado e cubagem viraram parâmetros do
+    # seller (editáveis tanto na aba Comercial quanto no Faturamento do mês aberto).
+    valor_segurado: float = 0.0
+    cubagem_m3: float = 0.0
 
 
 class BillingSellerParamsOut(BillingSellerParamsIn):
@@ -745,8 +749,8 @@ class BillingNFOverrideIn(BaseModel):
 
 
 class BillingClosingDraftIn(BillingSellerParamsIn):
-    cubagem_m3: float = 0.0
-    valor_segurado: float = 0.0
+    # cubagem_m3 e valor_segurado são herdados de BillingSellerParamsIn desde a
+    # unificação de 01/09/2026 — o rascunho do mês grava tudo no default do seller.
     adjustments: List[BillingAdjustmentIn] = []
     nf_overrides: List[BillingNFOverrideIn] = []
 

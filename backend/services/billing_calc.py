@@ -27,12 +27,17 @@ from .. import models
 from ..models import FileType, OrderStatus
 
 
+# Unificação de 01/09/2026: TODOS estes parâmetros vivem só em
+# `billing_seller_params` (fonte única). Mês aberto e a aba Comercial de Sellers
+# leem/gravam o mesmo registro; ao fechar o mês, os valores são copiados para o
+# snapshot em `billing_monthly_closings` e congelados. `valor_segurado` e
+# `cubagem_m3` entraram aqui na mesma virada (deixaram de ser override por mês).
 PARAM_FIELDS = (
     "preco_unitario", "min_pedidos", "manuseio_b2b", "valor_caixa_b2b",
     "adic_produto_b2b", "franquia_produtos_b2b",
     "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
     "franquia_m3", "preco_m3", "seguro_incluso", "aliquota_seguro",
-    "armazenagem_inclusa",
+    "armazenagem_inclusa", "valor_segurado", "cubagem_m3",
 )
 
 DEFAULT_PARAMS = {
@@ -41,7 +46,7 @@ DEFAULT_PARAMS = {
     "limite_itens_b2b": 0,
     "tipos_caixa_inclusos": "", "cota_caixas_mes": 0, "franquia_m3": 0.0,
     "preco_m3": 0.0, "seguro_incluso": False, "aliquota_seguro": 0.30,
-    "armazenagem_inclusa": False,
+    "armazenagem_inclusa": False, "valor_segurado": 0.0, "cubagem_m3": 0.0,
 }
 
 
@@ -130,20 +135,11 @@ def default_params_for_seller(db: Session, seller_id: int) -> dict:
 
 def prefill_params(db: Session, seller_id: int, ref_month: str) -> dict:
     """
-    Pré-preenchimento de um mês novo: o fechamento anterior mais recente
-    (qualquer status); se não houver, o default do seller.
+    Parâmetros de um mês aberto = SEMPRE o default do seller (fonte única desde
+    01/09/2026). Não há mais "puxa do mês anterior": todo mês aberto reflete o
+    registro `billing_seller_params` ao vivo. `ref_month` fica na assinatura só
+    por compatibilidade com os chamadores.
     """
-    prev = (
-        db.query(models.BillingMonthlyClosing)
-        .filter(
-            models.BillingMonthlyClosing.seller_id == seller_id,
-            models.BillingMonthlyClosing.ref_month < ref_month,
-        )
-        .order_by(models.BillingMonthlyClosing.ref_month.desc())
-        .first()
-    )
-    if prev:
-        return params_from_obj(prev)
     return default_params_for_seller(db, seller_id)
 
 

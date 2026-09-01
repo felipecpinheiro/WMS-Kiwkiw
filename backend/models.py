@@ -517,6 +517,11 @@ class BillingSellerParams(Base):
     seguro_incluso = Column(Boolean, default=False, nullable=False)
     aliquota_seguro = Column(Float, default=0.30, nullable=False)     # em %, ex. 0.30 = 0,30%
     armazenagem_inclusa = Column(Boolean, default=False, nullable=False)  # só informativo
+    # Unificação de 01/09/2026: valor segurado e cubagem passaram a ser do seller
+    # (um valor só, sem override por mês). Continuam sendo congelados no snapshot
+    # do fechamento como os demais parâmetros.
+    valor_segurado = Column(Float, default=0.0, nullable=False)
+    cubagem_m3 = Column(Float, default=0.0, nullable=False)
 
     __table_args__ = (UniqueConstraint("seller_id", name="uq_billing_seller_params"),)
 

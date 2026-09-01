@@ -16,13 +16,15 @@ import toast from 'react-hot-toast';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// Faturamento reescrito (31/08/2026): a aba Comercial edita o DEFAULT do seller
-// em `billing_seller_params` (não mais `billing_configs` nem colunas de Seller).
+// Unificação de 01/09/2026: `billing_seller_params` é a fonte única. Esta aba e
+// o topo da tela de Faturamento (mês aberto) editam exatamente o mesmo registro.
 interface BillingFields {
   preco_unitario: string;
   min_pedidos: string;
   manuseio_b2b: string;
   valor_caixa_b2b: string;
+  adic_produto_b2b: string;
+  franquia_produtos_b2b: string;
   limite_itens_b2b: string;
   tipos_caixa_inclusos: string;
   cota_caixas_mes: string;
@@ -31,6 +33,8 @@ interface BillingFields {
   seguro_incluso: boolean;
   aliquota_seguro: string;
   armazenagem_inclusa: boolean;
+  valor_segurado: string;
+  cubagem_m3: string;
 }
 
 interface SellerForm {
@@ -45,9 +49,11 @@ interface SellerForm {
 
 const EMPTY_BILLING: BillingFields = {
   preco_unitario: '', min_pedidos: '', manuseio_b2b: '', valor_caixa_b2b: '',
+  adic_produto_b2b: '', franquia_produtos_b2b: '15',
   limite_itens_b2b: '', tipos_caixa_inclusos: '', cota_caixas_mes: '',
   franquia_m3: '', preco_m3: '', seguro_incluso: false,
   aliquota_seguro: '0.30', armazenagem_inclusa: false,
+  valor_segurado: '', cubagem_m3: '',
 };
 
 const EMPTY: SellerForm = {
@@ -68,11 +74,15 @@ const BILLING_FIELDS: Array<{ label: string; key: keyof BillingFields }> = [
   { label: 'Nº mínimo de pedidos',              key: 'min_pedidos' },
   { label: 'Manuseio B2B (R$)',                 key: 'manuseio_b2b' },
   { label: 'Valor caixa B2B (R$)',              key: 'valor_caixa_b2b' },
+  { label: 'Adicional por produto B2B (R$)',    key: 'adic_produto_b2b' },
+  { label: 'Franquia de produtos B2B (grátis)', key: 'franquia_produtos_b2b' },
   { label: 'É B2B a partir de (itens)',         key: 'limite_itens_b2b' },
   { label: 'Cota de caixas / mês',              key: 'cota_caixas_mes' },
   { label: 'Franquia grátis de cubagem (m³)',   key: 'franquia_m3' },
   { label: 'Preço por m³ adicional (R$)',       key: 'preco_m3' },
   { label: 'Alíquota do seguro (%)',            key: 'aliquota_seguro' },
+  { label: 'Valor segurado (R$)',               key: 'valor_segurado' },
+  { label: 'Cubagem medida (m³)',               key: 'cubagem_m3' },
 ];
 
 const NUM = (v: string, int = false) =>
@@ -83,10 +93,13 @@ function paramsToFields(p: any): BillingFields {
   return {
     preco_unitario: s(p.preco_unitario), min_pedidos: s(p.min_pedidos),
     manuseio_b2b: s(p.manuseio_b2b), valor_caixa_b2b: s(p.valor_caixa_b2b),
+    adic_produto_b2b: s(p.adic_produto_b2b),
+    franquia_produtos_b2b: s(p.franquia_produtos_b2b ?? 15),
     limite_itens_b2b: s(p.limite_itens_b2b), tipos_caixa_inclusos: p.tipos_caixa_inclusos ?? '',
     cota_caixas_mes: s(p.cota_caixas_mes), franquia_m3: s(p.franquia_m3),
     preco_m3: s(p.preco_m3), seguro_incluso: !!p.seguro_incluso,
     aliquota_seguro: s(p.aliquota_seguro), armazenagem_inclusa: !!p.armazenagem_inclusa,
+    valor_segurado: s(p.valor_segurado), cubagem_m3: s(p.cubagem_m3),
   };
 }
 
@@ -94,11 +107,14 @@ function fieldsToParams(b: BillingFields) {
   return {
     preco_unitario: NUM(b.preco_unitario), min_pedidos: NUM(b.min_pedidos, true),
     manuseio_b2b: NUM(b.manuseio_b2b), valor_caixa_b2b: NUM(b.valor_caixa_b2b),
+    adic_produto_b2b: NUM(b.adic_produto_b2b),
+    franquia_produtos_b2b: NUM(b.franquia_produtos_b2b, true),
     limite_itens_b2b: NUM(b.limite_itens_b2b, true),
     tipos_caixa_inclusos: b.tipos_caixa_inclusos || '',
     cota_caixas_mes: NUM(b.cota_caixas_mes, true), franquia_m3: NUM(b.franquia_m3),
     preco_m3: NUM(b.preco_m3), seguro_incluso: b.seguro_incluso,
     aliquota_seguro: NUM(b.aliquota_seguro), armazenagem_inclusa: b.armazenagem_inclusa,
+    valor_segurado: NUM(b.valor_segurado), cubagem_m3: NUM(b.cubagem_m3),
   };
 }
 
@@ -518,8 +534,9 @@ export default function SellersPage() {
             {formTab === 'comercial' && (
               <div className="space-y-4">
                 <p className="text-xs text-t4">
-                  Default de faturamento do seller. O fechamento de cada mês nasce com estes
-                  valores e pode sobrescrevê-los no topo da tela de Faturamento.
+                  Parâmetros de faturamento do seller. São os mesmos que aparecem no topo da
+                  tela de Faturamento — editar aqui ou lá dá no mesmo, e vale para todos os
+                  meses ainda abertos. Meses já fechados ficam congelados.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   {BILLING_FIELDS.map(f => (

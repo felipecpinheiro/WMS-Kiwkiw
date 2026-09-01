@@ -99,6 +99,11 @@ def run_light_migrations():
         # num laço com print em texto puro (ver comentário no laço).
         index_migrations = []
 
+        # Unificação de 01/09/2026: quando as colunas valor_segurado/cubagem_m3
+        # forem recém-criadas em billing_seller_params, roda-se um backfill único
+        # a partir do fechamento mais recente de cada seller (ver mais abaixo).
+        backfill_seller_valores = False
+
         if is_postgres:
             # PostgreSQL: usa information_schema em vez de PRAGMA
             def col_exists(table, column):
@@ -155,6 +160,15 @@ def run_light_migrations():
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN franquia_produtos_b2b "
                         "INTEGER DEFAULT 15 NOT NULL")
+            # Unificação de 01/09/2026: valor segurado e cubagem viraram
+            # parâmetros do seller. Colunas aditivas (default 0) SÓ em
+            # billing_seller_params (a tabela de fechamento já as tinha).
+            for _c in ("valor_segurado", "cubagem_m3"):
+                if not col_exists("billing_seller_params", _c):
+                    index_migrations.append(
+                        f"ALTER TABLE billing_seller_params ADD COLUMN {_c} "
+                        "DOUBLE PRECISION DEFAULT 0 NOT NULL")
+                    backfill_seller_valores = True
 
             # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
             # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
@@ -259,6 +273,15 @@ def run_light_migrations():
                 if "franquia_produtos_b2b" not in _cols:
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN franquia_produtos_b2b INTEGER DEFAULT 15 NOT NULL")
+            # Unificação de 01/09/2026: valor segurado e cubagem viraram
+            # parâmetros do seller. Colunas aditivas SÓ em billing_seller_params.
+            _sp_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(billing_seller_params)")).fetchall()}
+            for _c in ("valor_segurado", "cubagem_m3"):
+                if _c not in _sp_cols:
+                    index_migrations.append(
+                        f"ALTER TABLE billing_seller_params ADD COLUMN {_c} FLOAT DEFAULT 0 NOT NULL")
+                    backfill_seller_valores = True
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:
@@ -295,6 +318,45 @@ def run_light_migrations():
             print(f"[migracao] indice criado: {sql}")
         if index_migrations:
             db.commit()
+
+        # ── Backfill único: valor_segurado / cubagem_m3 do seller ──────────────
+        # Roda só quando as colunas acabaram de ser criadas (unificação de
+        # 01/09/2026). Para cada seller com registro de parâmetros, copia os dois
+        # valores do fechamento de ref_month mais alto que já exista — assim o
+        # valor segurado digitado antes da unificação não se perde. Um só disparo:
+        # depois disso a coluna já existe e o bloco nem entra.
+        if backfill_seller_valores:
+            res_bf = db.execute(text("""
+                UPDATE billing_seller_params AS sp
+                   SET valor_segurado = COALESCE(mc.valor_segurado, 0),
+                       cubagem_m3     = COALESCE(mc.cubagem_m3, 0)
+                  FROM (
+                       SELECT c.seller_id, c.valor_segurado, c.cubagem_m3
+                         FROM billing_monthly_closings c
+                         JOIN (
+                              SELECT seller_id, MAX(ref_month) AS mx
+                                FROM billing_monthly_closings
+                               GROUP BY seller_id
+                         ) t ON t.seller_id = c.seller_id AND t.mx = c.ref_month
+                  ) AS mc
+                 WHERE mc.seller_id = sp.seller_id
+            """) if is_postgres else text("""
+                UPDATE billing_seller_params
+                   SET valor_segurado = COALESCE((
+                           SELECT c.valor_segurado FROM billing_monthly_closings c
+                            WHERE c.seller_id = billing_seller_params.seller_id
+                            ORDER BY c.ref_month DESC LIMIT 1), 0),
+                       cubagem_m3 = COALESCE((
+                           SELECT c.cubagem_m3 FROM billing_monthly_closings c
+                            WHERE c.seller_id = billing_seller_params.seller_id
+                            ORDER BY c.ref_month DESC LIMIT 1), 0)
+                 WHERE EXISTS (
+                           SELECT 1 FROM billing_monthly_closings c
+                            WHERE c.seller_id = billing_seller_params.seller_id)
+            """))
+            db.commit()
+            if res_bf.rowcount:
+                print(f"[migracao] backfill valor_segurado/cubagem: {res_bf.rowcount} seller(s)")
 
         # ── Seed idempotente da tabela GLOBAL de adicional por caixa ───────────
         # A tabela em si é criada por Base.metadata.create_all (init_db). Aqui só

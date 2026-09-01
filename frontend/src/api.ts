@@ -1034,8 +1034,6 @@ export const billingApi = {
     api.get(`/billing/closing/${sellerId}/${refMonth}`),
   saveClosing: (sellerId: number, refMonth: string, body: any) =>
     api.put(`/billing/closing/${sellerId}/${refMonth}`, body),
-  applyForward: (sellerId: number, refMonth: string) =>
-    api.post(`/billing/closing/${sellerId}/${refMonth}/apply-forward`),
   closeMonth: (sellerId: number, refMonth: string) =>
     api.post(`/billing/closing/${sellerId}/${refMonth}/close`),
   reopenMonth: (sellerId: number, refMonth: string) =>

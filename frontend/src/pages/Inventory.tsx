@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from 'react-query';
 import { useForm } from 'react-hook-form';
 import {
   Package, TrendingDown, TrendingUp, Download, Search, Upload, FileUp,
-  X, BarChart2, Calendar, ClipboardPaste, FileSpreadsheet, Pencil, SlidersHorizontal,
+  X, BarChart2, Calendar, ClipboardPaste, FileSpreadsheet, Pencil, Trash2, SlidersHorizontal,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useChartColors } from '../hooks/useChartColors';
@@ -650,6 +650,128 @@ function EditMovementModal({
               <button onClick={handleSave} disabled={saving}
                 className="flex-1 py-2 text-sm bg-violet-600 text-t1 rounded-lg hover:bg-violet-500 disabled:opacity-60 transition">
                 {saving ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Modal de Exclusão de Movimentação (admin + senha) ──────────────────────
+
+function DeleteMovementModal({
+  movement,
+  onClose,
+  onSuccess,
+}: {
+  movement: any;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [phase, setPhase] = useState<'password' | 'confirm'>('password');
+  const [password, setPassword] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const checkPassword = async () => {
+    if (!password.trim()) { toast.error('Informe a senha de supervisão'); return; }
+    setVerifying(true);
+    try {
+      await inventoryApi.verifyPassphrase(password);
+      setPhase('confirm');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      toast.error(status === 403 ? '❌ Senha incorreta. Acesso negado.' : 'Erro ao verificar senha. Tente novamente.');
+      setPassword('');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await inventoryApi.deleteMovement(movement.id, password);
+      toast.success('Movimentação apagada definitivamente.');
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Erro ao apagar');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between p-5 border-b border-line-soft">
+          <h2 className="text-base font-semibold text-t1">
+            {phase === 'password' ? 'Autenticação de Supervisão' : 'Apagar Movimentação'}
+          </h2>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
+        </div>
+
+        {phase === 'password' ? (
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-t3">
+              Informe a senha de supervisão para apagar esta movimentação.
+              A senha é verificada imediatamente — acesso negado se incorreta.
+            </p>
+            <input
+              type="password"
+              name="supervision-passphrase"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !verifying && checkPassword()}
+              placeholder="Senha de supervisão"
+              className={inputCls} style={inputStyle}
+              autoFocus
+              disabled={verifying}
+            />
+            <div className="flex gap-3">
+              <button onClick={onClose} disabled={verifying}
+                className="flex-1 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition disabled:opacity-40">
+                Cancelar
+              </button>
+              <button onClick={checkPassword} disabled={verifying || !password.trim()}
+                className="flex-1 py-2 text-sm bg-amber-600 text-t1 rounded-lg hover:bg-amber-500 transition disabled:opacity-60 flex items-center justify-center gap-2">
+                {verifying
+                  ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Verificando...</>
+                  : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-5 space-y-4">
+            <div className="rounded-lg border border-line-soft bg-surface-2 p-3 text-xs text-t3 space-y-1">
+              <div><span className="text-t4">Data:</span> {movement.movement_date}</div>
+              <div><span className="text-t4">Tipo:</span> {movement.movement_type}</div>
+              <div><span className="text-t4">SKU:</span> <span className="font-mono">{movement.sku}</span></div>
+              <div><span className="text-t4">Produto:</span> {movement.product_name || '—'}</div>
+              <div><span className="text-t4">Quantidade:</span> {movement.quantity}</div>
+              <div><span className="text-t4">NF:</span> {movement.nf_number || '—'}</div>
+              <div><span className="text-t4">Observação:</span> {movement.observation || '—'}</div>
+            </div>
+            <p className="text-xs text-bad">
+              A linha será <strong>apagada permanentemente do banco</strong> e o saldo do SKU
+              será ajustado como se ela nunca tivesse sido lançada. Não há como desfazer.
+            </p>
+            {movement.order_id && (
+              <p className="text-xs text-amber-500">
+                Esta movimentação veio de uma NF. Apagar pode fazer o sistema baixá-la
+                novamente num destravamento futuro.
+              </p>
+            )}
+            <div className="flex gap-3">
+              <button onClick={onClose} className="flex-1 py-2 text-sm border border-line rounded-lg text-t3 hover:bg-surface-2 transition">Cancelar</button>
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex-1 py-2 text-sm bg-bad text-white rounded-lg hover:opacity-90 disabled:opacity-60 transition">
+                {deleting ? 'Apagando...' : 'Apagar definitivamente'}
               </button>
             </div>
           </div>
@@ -1640,6 +1762,7 @@ export default function InventoryPage() {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editMovement, setEditMovement] = useState<any | null>(null);
+  const [deleteMovement, setDeleteMovement] = useState<any | null>(null);
 
   // Datas para filtro de movimentações (últimos 30 dias por padrão, em Brasília)
   const today = todayBrasiliaStr();
@@ -2177,13 +2300,22 @@ export default function InventoryPage() {
                         <td className="px-4 py-3 text-xs text-t4 max-w-[160px] truncate" title={mov.observation}>{mov.observation || '—'}</td>
                         <td className="px-4 py-3">
                           {user?.role === 'admin' && (
-                            <button
-                              onClick={() => setEditMovement(mov)}
-                              className="p-1 rounded hover:bg-surface-2 text-t4 hover:text-violet-300 transition"
-                              title="Editar movimentação"
-                            >
-                              <Pencil size={13} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setEditMovement(mov)}
+                                className="p-1 rounded hover:bg-surface-2 text-t4 hover:text-violet-300 transition"
+                                title="Editar movimentação"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                onClick={() => setDeleteMovement(mov)}
+                                className="p-1 rounded hover:bg-surface-2 text-t4 hover:text-bad transition"
+                                title="Apagar movimentação"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -2209,6 +2341,14 @@ export default function InventoryPage() {
           movement={editMovement}
           onClose={() => setEditMovement(null)}
           onSuccess={() => { setEditMovement(null); invalidate(); }}
+        />
+      )}
+
+      {deleteMovement && (
+        <DeleteMovementModal
+          movement={deleteMovement}
+          onClose={() => setDeleteMovement(null)}
+          onSuccess={() => { setDeleteMovement(null); invalidate(); }}
         />
       )}
 

@@ -720,6 +720,91 @@ def update_movement(
     }
 
 
+@router.delete("/movements/{movement_id}")
+def delete_movement(
+    movement_id: int,
+    body: dict,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Apaga DEFINITIVAMENTE uma movimentação (a linha some de stock_movements,
+    como se nunca tivesse sido lançada). Requer papel admin + senha especial.
+
+    O efeito da movimentação na posição de estoque é DESFEITO: se era Entrada
+    de N, tira N de total_in; se era Saída, tira N de total_out. O saldo é
+    recalculado na hora.
+
+    ⚠️ Apaga a linha inclusive de movimento vinculado a NF (order_id preenchido)
+    — o pedido em si NÃO é tocado. Decisão do dono do sistema, ciente de que uma
+    baixa automática posterior (destravamento) pode reintroduzir o movimento.
+    """
+    passphrase = body.get("passphrase", "")
+    if passphrase != EDIT_PASSPHRASE:
+        raise HTTPException(status_code=403, detail="Senha de edição incorreta")
+
+    movement = db.query(models.StockMovement).filter(
+        models.StockMovement.id == movement_id
+    ).first()
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movimentação não encontrada")
+
+    raw_type = (
+        movement.movement_type.value
+        if hasattr(movement.movement_type, "value")
+        else str(movement.movement_type or "")
+    )
+    type_str = _MT_NORMALIZE.get(raw_type.strip().upper(), raw_type)
+    qty = movement.quantity or 0
+
+    # ── Desfaz o efeito na posição de estoque ───────────────────────────────
+    position = db.query(models.StockPosition).filter(
+        models.StockPosition.seller_id == movement.seller_id,
+        models.StockPosition.sku == movement.sku,
+    ).first()
+    if position:
+        total_in = position.total_in or 0
+        total_out = position.total_out or 0
+        if type_str == models.MovementType.IN.value:
+            total_in -= qty
+        else:
+            total_out -= qty
+        position.total_in = max(0, total_in)
+        position.total_out = max(0, total_out)
+        position.current_stock = (
+            position.initial_stock + position.total_in - position.total_out
+        )
+        position.level = calculate_stock_level(position.current_stock)
+        position.updated_at = now_brasilia()
+
+    # ── Trilha de auditoria: snapshot do que foi apagado ────────────────────
+    detalhe = [
+        f"Exclusão definitiva de movimentação #{movement_id}",
+        f"SKU: {movement.sku}",
+        f"Seller: {movement.seller_id}",
+        f"Tipo: {type_str}",
+        f"Qtd: {qty}",
+        f"Data: {movement.movement_date}",
+        f"NF: {movement.nf_number or '—'}",
+        f"Obs: {movement.observation or '—'}",
+    ]
+    if movement.order_id:
+        detalhe.append(f"MOVIMENTO VINCULADO A NF (order_id={movement.order_id})")
+
+    db.add(models.AuditLog(
+        entity_type="StockMovement",
+        entity_id=movement_id,
+        action="DELETE_MOVEMENT",
+        detail=" | ".join(detalhe),
+        user_id=current_user.id,
+    ))
+
+    db.delete(movement)
+    db.commit()
+
+    return {"deleted": True, "movement_id": movement_id}
+
+
 # ─────────────────────────────────────────────────────────
 # SKU LOOKUP
 # ─────────────────────────────────────────────────────────

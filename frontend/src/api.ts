@@ -771,6 +771,9 @@ export const inventoryApi = {
     api.get<{ found: boolean; sku: string; name?: string; barcode_seller?: string }>('/inventory/sku-lookup', { params: { seller_id: sellerId, sku } }),
   updateMovement: (movementId: number, data: Record<string, any>) =>
     api.put(`/inventory/movements/${movementId}`, data),
+  /** Apaga DEFINITIVAMENTE a linha de movimentação (admin + senha). */
+  deleteMovement: (movementId: number, passphrase: string) =>
+    api.delete(`/inventory/movements/${movementId}`, { data: { passphrase } }),
   /** Verifica a senha de edição imediatamente no backend (sem abrir o formulário). */
   verifyPassphrase: (passphrase: string) =>
     api.post<{ valid: boolean }>('/inventory/verify-passphrase', { passphrase }),

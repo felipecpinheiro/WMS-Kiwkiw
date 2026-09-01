@@ -11,7 +11,7 @@ import {
   Building2, Plus, Pencil, Trash2, X, Check, Store,
   ClipboardList, Upload, ExternalLink, Search, Wrench,
 } from 'lucide-react';
-import { cadastrosApi, billingApi } from '../api';
+import { cadastrosApi, billingApi, CANONICAL_BOXES } from '../api';
 import toast from 'react-hot-toast';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -123,6 +123,8 @@ export default function SellersPage() {
   const [anchorCell, setAnchorCell]   = useState<[number,number]>([0,0]);
   const [expFile, setExpFile]         = useState<File | null>(null);
   const [expUploading, setExpUploading] = useState(false);
+  // preço de caixa por seller (aba "Caixas"): { box_key: valor como string }
+  const [boxPrices, setBoxPrices]     = useState<Record<string, string>>({});
   const [saving, setSaving]           = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -150,11 +152,23 @@ export default function SellersPage() {
   const setBilling = (k: keyof BillingFields, v: any) =>
     setForm(prev => ({ ...prev, billing: { ...prev.billing, [k]: v } }));
 
+  // Grupo A (caixas inclusas) — guardado como lista canônica separada por vírgula
+  // em billing_seller_params.tipos_caixa_inclusos.
+  const grupoASet = new Set(
+    (form.billing.tipos_caixa_inclusos || '').split(',').map(s => s.trim()).filter(Boolean)
+  );
+  const toggleGrupoA = (k: string) => {
+    const s = new Set(grupoASet);
+    s.has(k) ? s.delete(k) : s.add(k);
+    setBilling('tipos_caixa_inclusos', CANONICAL_BOXES.filter(b => s.has(b)).join(','));
+  };
+
   const openCreate = () => {
     setEditId(null);
     setForm(EMPTY);
     setFormTab('basic');
     setExpFile(null);
+    setBoxPrices({});
     setShowModal(true);
   };
 
@@ -162,6 +176,7 @@ export default function SellersPage() {
     setEditId(s.id);
     setFormTab('basic');
     setExpFile(null);
+    setBoxPrices({});
     // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
@@ -184,6 +199,14 @@ export default function SellersPage() {
       setForm(prev => ({ ...prev, billing: paramsToFields(res.data) }));
     } catch {
       // sem params ainda: campos ficam vazios
+    }
+    try {
+      const res = await billingApi.sellerBoxPrices(s.id);
+      const m: Record<string, string> = {};
+      res.data.prices.forEach(p => { m[p.box_key] = p.price == null ? '' : String(p.price); });
+      setBoxPrices(m);
+    } catch {
+      setBoxPrices({});
     }
   };
 
@@ -222,6 +245,12 @@ export default function SellersPage() {
       // Salva o default de faturamento do seller (billing_seller_params)
       if (savedId) {
         await billingApi.saveSellerParams(savedId, fieldsToParams(form.billing) as any);
+        await billingApi.saveSellerBoxPrices(savedId, {
+          prices: CANONICAL_BOXES.map(k => ({
+            box_key: k,
+            price: (boxPrices[k] ?? '').trim() === '' ? null : Number(boxPrices[k]),
+          })),
+        });
       }
 
       // Upload do arquivo de experiência
@@ -504,15 +533,10 @@ export default function SellersPage() {
                       />
                     </div>
                   ))}
-                  <div className="col-span-2">
-                    <label className="block text-xs text-t3 mb-1">Tipos de caixa inclusos (grupo A, ex.: "1,2")</label>
-                    <input
-                      value={form.billing.tipos_caixa_inclusos}
-                      onChange={e => setBilling('tipos_caixa_inclusos', e.target.value)}
-                      className={cls} style={clsStyle} placeholder="1,2"
-                    />
-                  </div>
                 </div>
+                <p className="text-[11px] text-t4">
+                  As caixas inclusas (grupo A) e o preço por caixa deste seller ficam na aba "Caixas".
+                </p>
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="seg" checked={form.billing.seguro_incluso}
@@ -537,13 +561,34 @@ export default function SellersPage() {
             )}
 
             {formTab === 'caixas' && (
-              <div className="grid grid-cols-4 gap-3">
-                {(['caixa1','caixa2','caixa3','caixa4','caixa5','caixa6','caixa7','caixa8'] as const).map((k, i) => (
-                  <div key={k}>
-                    <label className="block text-xs text-t3 mb-1">Caixa {i+1}</label>
-                    <input value={form[k]} onChange={e => set(k, e.target.value)} className={cls} style={clsStyle} placeholder={`c${i+1}`} />
+              <div className="space-y-3">
+                <p className="text-xs text-t4">
+                  Preço adicional por caixa deste seller. Em branco = usa o valor da
+                  tabela global do Faturamento. "Inclusa" = grupo A (sem adicional).
+                </p>
+                <div className="border border-line-soft rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[1fr_120px_90px] gap-2 px-3 py-2 bg-surface-2 text-[10px] uppercase text-t4">
+                    <span>Caixa</span><span className="text-right">Preço (R$)</span><span className="text-center">Inclusa</span>
                   </div>
-                ))}
+                  {CANONICAL_BOXES.map(k => (
+                    <div key={k} className="grid grid-cols-[1fr_120px_90px] gap-2 px-3 py-1.5 items-center border-t border-line-soft">
+                      <span className="text-sm text-t2">{k}</span>
+                      <input
+                        type="number" step="0.01" min="0" placeholder="global"
+                        value={boxPrices[k] ?? ''}
+                        onChange={e => setBoxPrices(m => ({ ...m, [k]: e.target.value }))}
+                        className="text-right border border-line rounded-md px-2 py-1 text-sm bg-surface-2 text-t1"
+                      />
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox" checked={grupoASet.has(k)}
+                          onChange={() => toggleGrupoA(k)}
+                          className="w-4 h-4 accent-violet-500"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

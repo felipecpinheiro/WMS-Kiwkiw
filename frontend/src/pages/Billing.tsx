@@ -14,7 +14,7 @@ import {
   DollarSign, Save, Download, Lock, Unlock, ArrowLeftRight, List as ListIcon,
   Plus, X, Settings2, ArrowRight,
 } from 'lucide-react';
-import { billingApi, cadastrosApi, BillingBoxPrice } from '../api';
+import { billingApi, cadastrosApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
 const brl = (n: number | null | undefined) =>
@@ -274,7 +274,25 @@ export default function BillingPage() {
                 <p className="text-[11px] text-t4 pt-1">0 = nenhuma NF vira B2B sozinha. Fora da regra, use o botão ⇄ na lista.</p>
               </ParamGroup>
               <ParamGroup title="Caixas inclusas">
-                <TextRow label="A · tipos sem adicional" v={draft.params.tipos_caixa_inclusos} onChange={v => setParam('tipos_caixa_inclusos', v)} />
+                <div>
+                  <div className="text-[11px] text-t3 mb-1">A · caixas sem adicional (grupo A)</div>
+                  <div className="flex flex-wrap gap-1">
+                    {CANONICAL_BOXES.map(k => {
+                      const set = new Set(String(draft.params.tipos_caixa_inclusos || '').split(',').map((s: string) => s.trim()).filter(Boolean));
+                      const on = set.has(k);
+                      return (
+                        <button key={k} type="button" disabled={isClosed}
+                          onClick={() => {
+                            on ? set.delete(k) : set.add(k);
+                            setParam('tipos_caixa_inclusos', CANONICAL_BOXES.filter(b => set.has(b)).join(','));
+                          }}
+                          className={'px-1.5 py-0.5 rounded text-[11px] border ' + (on ? 'border-violet-400 text-violet-200 bg-violet-500/20' : 'border-line-soft text-t4')}>
+                          {k}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <NumRow label="B · cota de caixas / mês" v={draft.params.cota_caixas_mes} onChange={v => setParam('cota_caixas_mes', v)} int />
                 <p className="text-[11px] text-t4">Só caixas fora do grupo A consomem a cota B.</p>
               </ParamGroup>
@@ -393,15 +411,6 @@ function NumRow({ label, v, onChange, int }: { label: string; v: number; onChang
       <input type="number" step={int ? '1' : '0.01'} value={v ?? 0}
         onChange={e => onChange(int ? parseInt(e.target.value || '0') : Number(e.target.value))}
         className="w-24 text-right border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1" />
-    </div>
-  );
-}
-function TextRow({ label, v, onChange }: { label: string; v: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex items-center justify-between gap-2 py-1">
-      <span className="text-xs text-t2">{label}</span>
-      <input value={v ?? ''} onChange={e => onChange(e.target.value)}
-        className="w-28 border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1" />
     </div>
   );
 }
@@ -601,7 +610,7 @@ function BoxPricesModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="text-t4"><X size={18} /></button>
         </div>
         <div className="p-5">
-          <p className="text-xs text-t3 mb-3">Adicional cobrado por tamanho de caixa. Vale para todos os sellers. Em branco = sem adicional.</p>
+          <p className="text-xs text-t3 mb-3">Adicional por caixa. Valor padrão — cada seller pode ter o próprio preço na aba "Caixas" do cadastro. Em branco = sem adicional.</p>
           {rows.map((r, i) => (
             <div key={r.box_key} className="flex items-center justify-between py-1.5 border-b border-line-soft last:border-0">
               <span className="font-semibold text-t2">{r.box_key}</span>

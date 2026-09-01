@@ -725,6 +725,10 @@ class BillingBoxPricesIn(BaseModel):
     prices: List[BillingBoxPriceItem]
 
 
+class BillingSellerBoxPricesIn(BaseModel):
+    prices: List[BillingBoxPriceItem]
+
+
 class BillingAdjustmentIn(BaseModel):
     descricao: str = ""
     obs: str = ""

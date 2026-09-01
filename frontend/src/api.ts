@@ -1002,7 +1002,6 @@ export const CANONICAL_BOXES = [
 
 export interface BillingSellerBoxPrices {
   prices: BillingBoxPrice[];      // uma entrada por caixa canônica; price null = usa o global
-  grupo_a: string[];              // caixas inclusas (grupo A)
 }
 
 export const billingApi = {

@@ -134,6 +134,69 @@ def put_box_prices(
     return get_box_prices(current_user, db)
 
 
+# ── preço de caixa por seller (aba "Caixas" do cadastro) ─────────────────────
+
+def _seller_box_prices_dict(db: Session, seller_id: int) -> dict:
+    return {
+        r.box_key: r.price
+        for r in db.query(models.BillingSellerBoxPrice)
+        .filter(models.BillingSellerBoxPrice.seller_id == seller_id).all()
+        if r.price is not None
+    }
+
+
+def _effective_box_prices(db: Session, seller_id: int) -> dict:
+    """Global sobrescrito pelo preço do seller onde houver."""
+    eff = _box_prices_dict(db)
+    eff.update(_seller_box_prices_dict(db, seller_id))
+    return eff
+
+
+@router.get("/seller-box-prices/{seller_id}")
+def get_seller_box_prices(
+    seller_id: int,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    _seller_or_404(db, seller_id)
+    by_key = {
+        r.box_key: r.price
+        for r in db.query(models.BillingSellerBoxPrice)
+        .filter(models.BillingSellerBoxPrice.seller_id == seller_id).all()
+    }
+    return {"prices": [{"box_key": k, "price": by_key.get(k)}
+                       for k in calc.CANONICAL_BOXES]}
+
+
+@router.put("/seller-box-prices/{seller_id}")
+def put_seller_box_prices(
+    seller_id: int,
+    body: schemas.BillingSellerBoxPricesIn,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    _seller_or_404(db, seller_id)
+    rows = {
+        r.box_key: r
+        for r in db.query(models.BillingSellerBoxPrice)
+        .filter(models.BillingSellerBoxPrice.seller_id == seller_id).all()
+    }
+    for item in body.prices:
+        r = rows.get(item.box_key)
+        if item.price is None:
+            if r is not None:
+                db.delete(r)          # sem valor = volta a usar o global
+        elif r is None:
+            db.add(models.BillingSellerBoxPrice(
+                seller_id=seller_id, box_key=item.box_key, price=item.price))
+        else:
+            r.price = item.price
+    _audit(db, current_user, "UPDATE_SELLER_BOX_PRICES", seller_id,
+           {"prices": [i.model_dump() for i in body.prices]})
+    db.commit()
+    return get_seller_box_prices(seller_id, current_user, db)
+
+
 # ── fechamento ───────────────────────────────────────────────────────────────
 
 def _box_prices_dict(db: Session) -> dict:
@@ -175,7 +238,7 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
         )
         .first()
     )
-    box_prices = _box_prices_dict(db)
+    box_prices = _effective_box_prices(db, seller.id)
 
     if closing and closing.status == "closed":
         params = calc.params_from_obj(closing)
@@ -348,7 +411,8 @@ def close_month(
     computed = calc.compute_live(
         db, seller_id, ref_month, params,
         closing.cubagem_m3 or 0.0, closing.valor_segurado or 0.0,
-        _overrides_dict(closing), _adjustments_list(closing), _box_prices_dict(db),
+        _overrides_dict(closing), _adjustments_list(closing),
+        _effective_box_prices(db, seller_id),
     )
     calc.freeze(db, closing, computed)
     closing.status = "closed"

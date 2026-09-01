@@ -533,6 +533,19 @@ class BillingBoxPrice(Base):
     __table_args__ = (UniqueConstraint("box_key", name="uq_billing_box_key"),)
 
 
+class BillingSellerBoxPrice(Base):
+    """Adicional por caixa POR SELLER. Sobrepõe a tabela global onde houver linha;
+    onde não houver, o cálculo usa o valor global."""
+    __tablename__ = "billing_seller_box_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    box_key = Column(String(30), nullable=False)     # chave canônica da caixa
+    price = Column(Float, nullable=True)             # NULL = cai no global
+
+    __table_args__ = (UniqueConstraint("seller_id", "box_key", name="uq_billing_seller_box"),)
+
+
 class BillingMonthlyClosing(Base):
     """Fechamento de faturamento por (seller x mês 'YYYY-MM')."""
     __tablename__ = "billing_monthly_closings"

@@ -52,7 +52,7 @@ e **"Cobrar seguro"** no PDF e Excel ([billing_docs.py](backend/services/billing
 ⚠️ **Nome da coluna `seguro_incluso` foi mantido** (renomear em produção é risco) — só o
 significado, o rótulo e (nada, era teste) mudaram. Sem migração de dados.
 
-### `c07f94c2` — adicional por produto nas NFs B2B (fórmula corrigida em `<próximo commit>`)
+### `c07f94c2` — adicional por produto nas NFs B2B (fórmula corrigida em `c18eec6a`)
 
 Parâmetro `adic_produto_b2b`: cobrado por produto **acima da franquia** em cada NF B2B —
 `adic_produto_b2b × max(0, Σ quantidade dos itens − franquia_produtos_b2b)`. A regra de
@@ -127,7 +127,7 @@ congelada nem tem `order_id`). Só frontend. ⚠️ O endpoint do Scanner **conc
 todos os itens já estiverem bipados e a caixa era a última pendência — aceitável aqui porque
 as NFs de faturamento de mês passado já estão finalizadas.
 
-### `<commit seguinte>` — franquia de produtos B2B + colunas B2C/B2B repontadas
+### `c18eec6a` — franquia de produtos B2B + colunas B2C/B2B repontadas
 
 - **`adic_produto_b2b` agora tem corte:** `× max(0, itens − franquia_produtos_b2b)`.
   `franquia_produtos_b2b` (int, default 15) é **só-do-mês** — entrou em `_MONTH_ONLY_PARAMS`

@@ -39,6 +39,28 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 02/09/2026 — quantidade de itens congelada no fechamento
+
+**Sem push.** Ao fechar o mês, a coluna **Itens** de cada NF sumia da tela (e do
+PDF/Excel): `billing_closing_lines` não guardava a contagem e `read_frozen()` devolvia
+`None`. Os valores em R$ nunca foram afetados — só a contagem.
+
+- Coluna nova **`billing_closing_lines.itens INTEGER` (nullable)**. Migração idempotente
+  em `index_migrations` (print texto puro), Postgres + SQLite.
+- `freeze()` grava `ln["itens"]` (= `order_qty`, soma das qtds da NF) nas linhas B2C e B2B;
+  `read_frozen()` devolve `ln.itens` em vez de `None`.
+- **Backfill dos 9 fechamentos de agosto já existentes:** feito por script one-off
+  (`scratchpad/backfill_itens.py`) que recalcula cada closing com os **parâmetros já
+  congelados na própria linha** (`params_from_obj(closing)`, nunca os do seller atual),
+  confere que cada `total` recalculado bate com o congelado e grava só `itens`. A coluna
+  foi criada em produção via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` antes do backfill;
+  no deploy a migração idempotente vê a coluna e pula.
+- Continua "achatado" no fechado: **Cx B2B**, **Ad.prod** e o **Adic. manual** ainda
+  entram no `total` e aparecem como R$ 0,00 na lista — só a contagem de itens deixou de
+  sumir.
+
+---
+
 ## Mudanças Recentes — 01/09/2026 (2ª leva) — FONTE ÚNICA de parâmetros de faturamento
 
 **Sem push.** Unifica os parâmetros de cobrança do seller num só registro:
@@ -194,7 +216,9 @@ as NFs de faturamento de mês passado já estão finalizadas.
 - **Layout:** B2C = `Cx · Adic. caixa · Adic. · Total`; B2B = `Cx B2B · Ad.prod · Adic. ·
   Total`. `NfList` ramifica por canal; `colSpan` fixo (8 no expandido, 6 no rodapé).
 - `freeze` do B2C dobra o adicional manual no bucket `manuseio` gravado (o `total` já inclui)
-  — mês fechado mostra o B2C achatado, igual o B2B.
+  — mês fechado mostra o B2C achatado, igual o B2B. **(02/09/2026: só a contagem de `itens`
+  passou a ser congelada — ver seção do dia. Cx B2B / Ad.prod / Adic. manual seguem
+  achatados no `total`.)**
 - Coluna `franquia_produtos_b2b INTEGER DEFAULT 15` nas 2 tabelas, migração no laço
   `index_migrations`. Docs: linha "Franquia de produtos B2B" nos parâmetros, coluna "Adic.
   man." na lista B2C.

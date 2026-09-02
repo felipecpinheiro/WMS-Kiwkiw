@@ -346,7 +346,8 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             closing_id=closing.id, nf_number=ln["nf_number"],
             order_date=_parse_date(ln["order_date"]),
             imported_at=_parse_dt(ln["imported_at"]),
-            channel="b2c", box=ln["box"], adic_caixa=ln["adic_caixa"],
+            channel="b2c", box=ln["box"], itens=ln.get("itens"),
+            adic_caixa=ln["adic_caixa"],
             # adicional manual da NF dobrado no bucket manuseio (igual o B2B faz
             # com valor_caixa_b2b); o total já inclui tudo.
             manuseio=r2(ln["manuseio"] + ln.get("adic_manual", 0.0)),
@@ -357,7 +358,8 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             closing_id=closing.id, nf_number=ln["nf_number"],
             order_date=_parse_date(ln["order_date"]),
             imported_at=_parse_dt(ln["imported_at"]),
-            channel="b2b", box=ln["box"], adic_caixa=ln["b2b_adicional"],
+            channel="b2b", box=ln["box"], itens=ln.get("itens"),
+            adic_caixa=ln["b2b_adicional"],
             manuseio=r2(ln["manuseio_b2b"] + ln["valor_caixa_b2b"] + ln["adic_produto"]),
             total=ln["total"], sem_caixa=False,
         ))
@@ -404,12 +406,12 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
             d.update({"adic_caixa": r2(ln.adic_caixa), "adic_manual": 0.0,
                       "b2b_adicional": 0.0, "manuseio": r2(ln.manuseio),
                       "sem_caixa": ln.sem_caixa, "box_norm": normaliza_box(ln.box),
-                      "itens": None, "auto_channel": "b2c"})
+                      "itens": ln.itens, "auto_channel": "b2c"})
             b2c_lines.append(d)
         else:
             d.update({"b2b_adicional": r2(ln.adic_caixa), "manuseio_b2b": r2(ln.manuseio),
                       "valor_caixa_b2b": 0.0, "adic_produto": 0.0,
-                      "itens": None, "auto_channel": "b2b"})
+                      "itens": ln.itens, "auto_channel": "b2b"})
             b2b_lines.append(d)
 
     fatura = {

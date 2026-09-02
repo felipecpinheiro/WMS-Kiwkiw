@@ -170,6 +170,12 @@ def run_light_migrations():
                         "DOUBLE PRECISION DEFAULT 0 NOT NULL")
                     backfill_seller_valores = True
 
+            # Faturamento (02/09/2026): congela a quantidade de itens de cada NF
+            # no snapshot do fechamento. Coluna aditiva nullable.
+            if not col_exists("billing_closing_lines", "itens"):
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
+
             # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
             # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
             # pode dividir transação com nada que use o valor novo (ver CLAUDE.md,
@@ -282,6 +288,12 @@ def run_light_migrations():
                     index_migrations.append(
                         f"ALTER TABLE billing_seller_params ADD COLUMN {_c} FLOAT DEFAULT 0 NOT NULL")
                     backfill_seller_valores = True
+            # Faturamento (02/09/2026): itens da NF congelados no snapshot.
+            _bcl_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(billing_closing_lines)")).fetchall()}
+            if "itens" not in _bcl_cols:
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:

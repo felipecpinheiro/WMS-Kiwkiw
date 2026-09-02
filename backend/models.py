@@ -650,6 +650,7 @@ class BillingClosingLine(Base):
     imported_at = Column(DateTime, nullable=True)
     channel = Column(String(3), nullable=False)           # 'b2c' | 'b2b'
     box = Column(String(50), nullable=True)
+    itens = Column(Integer, nullable=True)                # soma das qtds da NF (congelada)
     adic_caixa = Column(Float, default=0.0, nullable=False)
     manuseio = Column(Float, default=0.0, nullable=False)
     total = Column(Float, default=0.0, nullable=False)

@@ -1045,6 +1045,17 @@ export const billingApi = {
     downloadAuthenticatedFile(`/billing/closing/${sellerId}/${refMonth}/excel`,
       `fatura_${refMonth}.xlsx`),
 
+  // fatura do próprio seller (Portal do Seller, aba "Financeiro")
+  // Escopo pelo token: não há seller_id na URL.
+  myClosing: (refMonth: string) =>
+    api.get(`/billing/my/${refMonth}`),
+  downloadMyClosingPdf: (refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/my/${refMonth}/pdf`,
+      `fatura_${refMonth}.pdf`),
+  downloadMyClosingExcel: (refMonth: string) =>
+    downloadAuthenticatedFile(`/billing/my/${refMonth}/excel`,
+      `fatura_${refMonth}.xlsx`),
+
   // consolidado do mês
   consolidated: (refMonth: string) =>
     api.get(`/billing/consolidated/${refMonth}`),

@@ -11,13 +11,14 @@ import {
   Package, TrendingDown, CheckCircle, Clock, LogOut,
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
-  BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal,
+  BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal, Receipt,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend,
 } from 'recharts';
 import { dashboardApi, inventoryApi, authApi } from '../api';
+import SellerFinanceTab from './SellerFinance';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
@@ -30,7 +31,7 @@ import Logo from '../components/Logo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Tab = 'orders' | 'stock' | 'movements';
+type Tab = 'orders' | 'stock' | 'movements' | 'finance';
 type StockSubTab = 'position' | 'chart';
 type SortDir = 'asc' | 'desc' | null;
 interface SortState { col: string; dir: SortDir }
@@ -345,6 +346,7 @@ export default function SellerPortalPage() {
     { id: 'orders',    label: 'Meus Pedidos',   icon: ClipboardList },
     { id: 'stock',     label: 'Meu Estoque',    icon: Warehouse },
     { id: 'movements', label: 'Movimentações',  icon: List },
+    { id: 'finance',   label: 'Financeiro',     icon: Receipt },
   ];
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -560,8 +562,12 @@ export default function SellerPortalPage() {
               {tab === 'orders'    ? 'Acompanhe o status dos seus pedidos do dia' : ''}
               {tab === 'stock'     ? 'Posição atual — clique em uma linha para ver o gráfico do SKU' : ''}
               {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
+              {tab === 'finance'   ? 'Suas faturas mensais na Kiwkiw' : ''}
             </p>
           </div>
+
+          {/* ── FINANCEIRO ───────────────────────────────────────────────── */}
+          {tab === 'finance' && sellerId && <SellerFinanceTab sellerId={sellerId} />}
 
           {/* ── PEDIDOS ──────────────────────────────────────────────────── */}
           {tab === 'orders' && (

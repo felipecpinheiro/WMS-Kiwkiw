@@ -8,9 +8,13 @@ Fechamento mensal por (seller x mês). Toda a matemática está em
 `billing_configs` e as colunas comerciais de `Seller` NÃO são mais lidas
 nem escritas por este módulo (ficam para rollback).
 
-Permissão: tudo `require_admin`, EXCETO os dois endpoints de
-`seller-params`, usados pela aba "Comercial" do cadastro de Sellers
-(`require_manager_or_above`).
+Permissão: tudo `require_admin`, EXCETO:
+  * os dois endpoints de `seller-params`, usados pela aba "Comercial" do
+    cadastro de Sellers (`require_manager_or_above`);
+  * o bloco `/billing/my/...` (02/09/2026), usado pela aba "Financeiro" do
+    Portal do Seller: `require_authenticated` + `current_user.seller_id`
+    obrigatório. O seller NUNCA informa um `seller_id` — ele vem do token —
+    e o payload devolvido é podado das tarifas do contrato.
 """
 
 import io
@@ -25,7 +29,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..auth import require_manager_or_above, require_admin
+from ..auth import require_manager_or_above, require_admin, require_authenticated
 from .. import models, schemas
 from ..models import FileType, OrderStatus
 from ..timezone_utils import now_brasilia
@@ -449,6 +453,78 @@ def closing_excel(
 ):
     _check_month(ref_month)
     seller = _seller_or_404(db, seller_id)
+    payload = _build_payload(db, seller, ref_month)
+    buf = io.BytesIO(docs.invoice_xlsx_bytes(payload))
+    fname = f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ── portal do seller (aba "Financeiro") ──────────────────────────────────────
+#
+# Escopo pelo TOKEN: não existe parâmetro `seller_id` nestas rotas, então não há
+# como um seller pedir a fatura de outro. Na prática só o role `client` passa —
+# admin/manager/operator têm `seller_id` nulo e caem no 403.
+
+# Campos podados do payload antes de devolver ao seller: são as tarifas do
+# contrato (o "como se calcula"), que ele não deve enxergar no portal.
+_SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a")
+_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c")
+
+
+def _my_seller(db: Session, current_user: models.User) -> models.Seller:
+    if not current_user.seller_id:
+        raise HTTPException(403, "Usuário sem seller vinculado")
+    return _seller_or_404(db, current_user.seller_id)
+
+
+def _strip_for_seller(payload: dict) -> dict:
+    for k in _SELLER_HIDDEN_TOP:
+        payload.pop(k, None)
+    fatura = payload.get("fatura")
+    if isinstance(fatura, dict):
+        for k in _SELLER_HIDDEN_FATURA:
+            fatura.pop(k, None)
+    return payload
+
+
+@router.get("/my/{ref_month}")
+def get_my_closing(
+    ref_month: str,
+    current_user: models.User = Depends(require_authenticated),
+    db: Session = Depends(get_db),
+):
+    _check_month(ref_month)
+    seller = _my_seller(db, current_user)
+    return _strip_for_seller(_build_payload(db, seller, ref_month))
+
+
+@router.get("/my/{ref_month}/pdf")
+def my_closing_pdf(
+    ref_month: str,
+    current_user: models.User = Depends(require_authenticated),
+    db: Session = Depends(get_db),
+):
+    _check_month(ref_month)
+    seller = _my_seller(db, current_user)
+    payload = _build_payload(db, seller, ref_month)
+    buf = io.BytesIO(docs.invoice_pdf_bytes(payload))
+    fname = f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/my/{ref_month}/excel")
+def my_closing_excel(
+    ref_month: str,
+    current_user: models.User = Depends(require_authenticated),
+    db: Session = Depends(get_db),
+):
+    _check_month(ref_month)
+    seller = _my_seller(db, current_user)
     payload = _build_payload(db, seller, ref_month)
     buf = io.BytesIO(docs.invoice_xlsx_bytes(payload))
     fname = f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.xlsx"

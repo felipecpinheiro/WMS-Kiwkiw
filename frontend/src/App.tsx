@@ -24,6 +24,7 @@ import UsersPage from './pages/Users';
 import SellersPage from './pages/Sellers';
 import SellerFixesPage from './pages/SellerFixes';
 import UnitsPage from './pages/Units';
+import ReturnsPage from './pages/Returns';
 import BillingPage from './pages/Billing';
 import AuditPage from './pages/Audit';
 import SettingsPage from './pages/Settings';
@@ -298,6 +299,14 @@ export default function App() {
                 }
               />
               <Route path="units" element={<UnitsPage />} />
+              <Route
+                path="devolucoes"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <ReturnsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="billing"
                 element={

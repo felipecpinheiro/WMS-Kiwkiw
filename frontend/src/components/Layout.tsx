@@ -8,7 +8,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ScanLine, Warehouse, Tag,
   PackagePlus, Box, Users, Building2, DollarSign,
-  ClipboardList, LogOut, Settings, Layers, MoreHorizontal,
+  ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
@@ -32,6 +32,9 @@ const navItems = [
     { to: '/box-algorithm', icon: Box,        label: 'Algoritmo Caixa' },
     { to: '/sellers',       icon: Building2,  label: 'Sellers'         },
     { to: '/units',         icon: Warehouse,  label: 'Unidades'        },
+    // Devoluções fica só para admin e manager (decisão de 02/09/2026) — por
+    // isso NÃO entra no navOperator logo abaixo.
+    { to: '/devolucoes',    icon: Undo2,      label: 'Devoluções'      },
     { to: '/users',         icon: Users,      label: 'Usuários'        },
   ]},
   { group: 'Sistema', items: [

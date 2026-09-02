@@ -1144,3 +1144,51 @@ export const portalApi = {
   movements: (params?: { date_from?: string; date_to?: string; search?: string }) =>
     api.get<any[]>('/portal/movements', { params }),
 };
+
+
+// ============================================================
+// DEVOLUÇÕES
+// ============================================================
+
+/** Uma linha de devolução, no formato que o backend valida e grava. */
+export interface ReturnRow {
+  line?: number;
+  seller_id?: number | null;
+  seller_name?: string;
+  nf_number: string;
+  sku: string;
+  product_name?: string | null;
+  quantity: number | null;
+  returns_stock: boolean | null;
+  reason?: string;
+}
+
+export interface ReturnAnalyzeResult {
+  total: number;
+  rows: ReturnRow[];
+  errors: string[];
+  can_submit: boolean;
+  returning: number;
+  not_returning: number;
+}
+
+export const returnsApi = {
+  /** Baixa o Excel modelo. Precisa do Bearer token — window.open daria 401. */
+  downloadTemplate: () =>
+    downloadAuthenticatedFile('/devolucoes/modelo', 'MODELO_DEVOLUCOES.xlsx'),
+  /** Confere a planilha sem gravar nada. */
+  analyze: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<ReturnAnalyzeResult>('/devolucoes/analyze', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
+  /** Grava. Tudo-ou-nada: 422 com a lista de erros quando alguma linha trava. */
+  submit: (rows: ReturnRow[]) =>
+    api.post<{ total: number; returned_to_stock: number; not_returned: number }>(
+      '/devolucoes/lancar',
+      { rows },
+    ),
+};

@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.database import init_db, get_db, SessionLocal
-from backend.routers import auth, orders, scanning, inventory, products, billing, dashboard, settings as settings_router
+from backend.routers import auth, orders, scanning, inventory, products, billing, dashboard, returns as returns_router, settings as settings_router
 from backend import models
 from backend.auth import hash_password
 
@@ -515,6 +515,7 @@ app.include_router(inventory.router)
 app.include_router(products.router)
 app.include_router(billing.router)
 app.include_router(dashboard.router)
+app.include_router(returns_router.router)
 app.include_router(settings_router.router)
 
 

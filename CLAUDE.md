@@ -39,6 +39,70 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 02/09/2026 — DEVOLUÇÕES (tela nova)
+
+**Sem commit.** Até então, devolução era anotada numa planilha à parte e lançada **na mão**,
+SKU a SKU, pela tela de Estoque (~30 por semana). Agora existe a tela **`/devolucoes`**
+(grupo Cadastros do menu), com **dois caminhos que compartilham a mesma validação e a mesma
+gravação**: subir uma planilha (baixa o modelo, confere na tela, confirma) ou digitar direto
+numa tabelinha.
+
+**Arquivos:** `backend/routers/returns.py` (novo), 1 linha em `main.py` (registro do router),
+`frontend/src/pages/Returns.tsx` (novo), `api.ts` (`returnsApi`), `App.tsx` (rota),
+`Layout.tsx` (item de menu). **Sem tabela, coluna ou migração nova.**
+
+| Endpoint (`require_manager_or_above`) | O quê |
+|---|---|
+| `GET /devolucoes/modelo` | Excel modelo gerado **em memória** (aba `DEVOLUCOES` + aba `INSTRUCOES`). Colunas: `Seller · NF · SKU · Quantidade · Retorna ao estoque · Motivo` |
+| `POST /devolucoes/analyze` | Lê a planilha e devolve linhas normalizadas + erros. **Não grava nada** |
+| `POST /devolucoes/lancar` | Grava. Recebe as linhas da planilha conferida **ou** da tabelinha da tela |
+
+**As regras (todas decididas pelo dono do sistema):**
+- **Linha que RETORNA** → `StockMovement` de **Entrada**, `movement_date = today_brasilia()`
+  (a data do **lançamento**, não a da NF nem a da chegada física — "às vezes demoramos para
+  conferir"), `nature="Devolução"`, observação
+  `DEVOLUÇÃO — NF 123456, 2 un retornaram ao estoque. Lançado por Fulano em 02/09/2026.`
+  Aparece como movimentação normal no Estoque e no Portal do Seller.
+- **Linha que NÃO retorna** → **nenhum movimento**; só um `AuditLog`
+  (`entity_type="Devolucao"`, `action="CREATE"`) com seller/NF/SKU/qtd/motivo. Motivo é
+  **opcional**.
+- **TUDO-OU-NADA:** qualquer linha com problema devolve **422** e **nada** é gravado.
+- **Bloqueiam o lote:** seller não reconhecido (mesmo casamento do import — `trade_name`,
+  `name`, `other_aliases`, só **ativos**), SKU sem produto **ativo** naquele seller, NF vazia,
+  quantidade que não seja inteiro > 0, "Retorna ao estoque" vazio/fora do combinado, e
+  **linhas idênticas**.
+- **"Retorna ao estoque" aceita** `S`/`SIM`/`1`/`X` e `N`/`NAO`/`NÃO`/`0`, sem diferenciar
+  maiúscula nem acento.
+- **NF é obrigatória e é texto livre.** NF que **não existe** no WMS passa normalmente — a
+  devolução pode ser de venda anterior à Kiwkiw ou de outro canal.
+- **Quantidade acima da NF é permitida** de propósito (o cliente devolve 11 un na caixa da NF
+  que trouxe 3 — para o seller o que importa é o produto de volta).
+- O **mesmo SKU pode repetir** na mesma NF (um amassado volta, outro não): a decisão é **por
+  linha**, não por NF.
+
+**Na tela:** o seller e o SKU são **listas** (o SKU busca no **servidor**, 30 por vez), nunca
+digitação livre — e **não dá para cadastrar produto por aqui**. Cada linha nova herda o seller
+e a NF da anterior (o caso comum é vários SKUs da mesma devolução), mas dá para misturar
+sellers no mesmo lote, como na planilha.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Amarrar o movimento de devolução à NF de venda (`order_id`) | `reverse_stock_for_order()` trabalha por **saldo líquido do `order_id`** — cancelar/inativar aquela NF depois **varreria a devolução junto** e o estoque sumiria em silêncio | O movimento nasce **sem `order_id`**, de propósito. A NF fica no `nf_number` e na observação, o que já basta para a tela e para o Portal |
+| Achar que existe trava contra reenvio | **Não existe, por decisão do dono.** Subir o mesmo arquivo 2× lança 2× | Se um dia for pedido, o lugar é um aviso amarelo no `analyze` (nunca um bloqueio: NF pode ter devolução em dias diferentes) |
+| Procurar uma tela de consulta de devoluções | **Não existe, por decisão do dono.** O que voltou é movimentação comum; o que **não** voltou só está na Trilha de Auditoria, misturado com o resto | Filtrar `audit_logs` por `entity_type='Devolucao'` |
+| Painel/dropdown dentro da tabela da tela | A tabela vive num contêiner com **rolagem horizontal**, que **corta** qualquer painel absoluto — os produtos vinham do servidor e simplesmente não apareciam (bug pego só na conferência visual) | A lista de SKU usa `createPortal` + `position: fixed` ancorado no botão, e fecha ao rolar/redimensionar |
+| Confiar só na validação da tela | A tela pode ser burlada e um erro aqui vira **estoque errado** | `POST /devolucoes/lancar` **revalida tudo** com `_validate_rows`, a mesma função do `analyze` |
+
+**Testes:** 102 verificações E2E, 100% verdes em **SQLite e PostgreSQL** (o Postgres é
+obrigatório: `movement_type` é enum nativo lá), mais regressão nas telas antigas (Estoque
+mostra "Entrada" normalizada; Dashboard/Pedidos/Sellers/Produtos/Manuseios/Auditoria em 200) e
+conferência visual ponta a ponta contra banco descartável — que pegou os 2 bugs de tela
+(painel cortado e a conferência sem apontar a linha do erro).
+
+---
+
 ## Mudanças Recentes — 02/09/2026 — quantidade de itens congelada no fechamento
 
 **Sem push.** Ao fechar o mês, a coluna **Itens** de cada NF sumia da tela (e do
@@ -578,6 +642,7 @@ WMS Kiwkiw/
 │   │   ├── products.py      ← Produtos, kits, algoritmo de caixa, sellers, unidades, usuários
 │   │   ├── billing.py       ← Configurações de cobrança, relatório, export Excel
 │   │   ├── dashboard.py     ← Cockpit master e portal do seller
+│   │   ├── returns.py       ← Devoluções: modelo Excel, conferência e lançamento
 │   │   └── settings.py      ← Configurações gerais + controle do folder_watcher
 │   └── services/
 │       ├── order_import.py  ← Importação de Excel de pedidos (lógica principal)
@@ -613,6 +678,7 @@ WMS Kiwkiw/
 │   │       ├── Units.tsx        ← Cadastro de unidades
 │   │       ├── Users.tsx        ← Cadastro de usuários
 │   │       ├── Billing.tsx      ← Faturamento
+│   │       ├── Returns.tsx      ← Devoluções (planilha + lançamento direto)
 │   │       ├── Audit.tsx        ← Auditoria
 │   │       ├── Settings.tsx     ← Configurações do sistema
 │   │       └── SellerPortal.tsx ← Portal somente leitura para o seller (role=client)
@@ -1236,6 +1302,7 @@ esses números** (decisão do dono do sistema).
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026), admin-only** exceto `seller-params` (manager+). `seller-params` (**fonte única** dos 16 parâmetros — 01/09 2ª leva), `box-prices` (tabela global de caixa), `seller-box-prices/{id}` (preço de caixa por seller), `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
+| `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |
@@ -1262,6 +1329,7 @@ esses números** (decisão do dono do sistema).
 | `/sellers` | Sellers.tsx | admin, manager, operator |
 | `/sellers/corrigir` | SellerFixes.tsx | admin, manager (sem item no menu lateral — acessada pelo aviso do Dashboard ou botão em Sellers.tsx) |
 | `/units` | Units.tsx | admin, manager, operator |
+| `/devolucoes` | Returns.tsx | **admin, manager** (não aparece no menu reduzido do operador) |
 | `/billing` | Billing.tsx | **admin** (reescrita de 31/08/2026 — some do menu para manager/operator) |
 | `/audit` | Audit.tsx | admin, manager, operator |
 | `/settings` | Settings.tsx | admin, manager, operator |
@@ -1992,3 +2060,6 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Query nova em `scanning_logs` filtrando por data | Desde 31/08/2026 existe `ix_scanning_logs_timestamp`; **filtro fora de `order_id`/`session_id`/`timestamp` volta a ser Seq Scan** | Conferir com `EXPLAIN ANALYZE`; índice novo entra em `PERF_INDEXES` (`main.py`), idempotente nos dois bancos |
 | Copiar o CSV da aba "Status das NFs" achando que a regra é a mesma | Lá tela e arquivo usam o **mesmo teto** de propósito (vai para o cliente). Na aba Bipagens é o **oposto**: a tela é a amostra e o CSV é o todo | Decidir pelo destino do arquivo. Sem teto, escrever em blocos (`yield_per`) para não materializar dezenas de milhares de linhas na memória |
 | Apertar Deploy no Railway sem olhar o "Details" | As mudanças ficam em espera ("Apply N changes") e o Deploy aplica **tudo** da fila. Em 27/08/2026 havia um serviço `function-bun` (template Bun/Hono, nada a ver com o WMS) prestes a ser criado junto | Abrir *Details*, descartar individualmente o que não é seu, conferir que o rodapé lista só o serviço esperado |
+| Movimento de estoque novo que cite uma NF de venda | Preencher o `order_id` "para ligar as pontas" faz `reverse_stock_for_order()` (que soma o **saldo líquido do `order_id`**) varrer esse movimento junto quando a NF for cancelada/inativada — o estoque some em silêncio | Movimento que **não é** da NF (devolução, ajuste) nasce **sem `order_id`**; o número da NF vai no `nf_number` e na observação, que é o que a tela e o Portal mostram |
+| Painel flutuante (dropdown/autocomplete) dentro de tabela | Contêiner com `overflow-x-auto` **corta** qualquer painel absoluto, sem erro nenhum: os dados chegam do servidor e a lista simplesmente não aparece (aconteceu no seletor de SKU de Devoluções) | `createPortal` + `position: fixed` ancorado no campo, fechando ao rolar/redimensionar. Ver `SkuPicker` em [Returns.tsx](frontend/src/pages/Returns.tsx) |
+| Endpoint novo que grava a partir de uma conferência na tela | Validar só no `analyze` e confiar que o `lancar` recebe o que foi conferido — a chamada pode ser forjada e aqui o erro vira **estoque errado** | As duas rotas passam pela **mesma** função de validação (`_validate_rows` em `returns.py`), e o gravador revalida sempre |

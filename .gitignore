@@ -27,6 +27,8 @@ frontend/dist/
 backend/run_local_teste_hoje.py
 backend/run_local_teste_hoje.bat
 backend/run_local_teste_indices.py
+backend/run_local_reset_billing_access.py
+backend/run_local_wms_kiwkiw_local.py
 .claude/launch.json
 
 # Bateria de performance — protocolo, histórico e relatórios (uso local)

@@ -102,7 +102,7 @@ function BillingAccessGate({ bloqueadoAte, onUnlocked }: { bloqueadoAte: string 
         <div className="mx-auto mb-3 w-12 h-12 rounded-full bg-violet-600/15 flex items-center justify-center">
           <Lock size={22} className="text-violet-400" />
         </div>
-        <h1 className="text-lg font-bold text-t1">Acesso protegido ao Financeiro</h1>
+        <h1 className="text-lg font-bold text-t1">Acesso protegido ao Faturamento</h1>
 
         {blockLabel ? (
           <p className="text-sm text-t3 mt-3">

@@ -39,6 +39,24 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+# ── Acesso protegido ao Financeiro (02/09/2026) ────────────────────────────
+
+class BillingAccessRequestOut(BaseModel):
+    enviado: bool
+    expira_em_seg: int
+
+class BillingAccessVerifyIn(BaseModel):
+    codigo: str
+
+class BillingAccessVerifyOut(BaseModel):
+    liberado_ate: str
+
+class BillingAccessStatusOut(BaseModel):
+    ativo: bool
+    liberado_ate: Optional[str] = None
+    bloqueado_ate: Optional[str] = None
+
+
 # ============================================================
 # USUÁRIOS
 # ============================================================

@@ -35,6 +35,118 @@ type Draft = {
   overrides: Record<number, { channel_override: string | null; b2b_adicional: number | null; note: string | null }>;
 };
 
+const isAccessError = (e: any) => e?.response?.data?.detail === 'acesso_financeiro_requerido';
+
+// ── Acesso Protegido ao Financeiro (02/09/2026) ─────────────────────────────
+// Tela-portão que substitui TODO o conteúdo enquanto a janela de 4h não está
+// liberada. Sem acesso liberado, o resto de BillingPage nem chega a renderizar.
+function useCountdownLabel(targetIso: string | null | undefined, onExpire: () => void) {
+  const [label, setLabel] = useState('');
+  useEffect(() => {
+    if (!targetIso) { setLabel(''); return; }
+    let expired = false;
+    const tick = () => {
+      const diffMs = new Date(targetIso).getTime() - Date.now();
+      if (diffMs <= 0) {
+        setLabel('00:00');
+        if (!expired) { expired = true; onExpire(); }
+        return;
+      }
+      const totalMin = Math.floor(diffMs / 60000);
+      setLabel(`${String(Math.floor(totalMin / 60)).padStart(2, '0')}:${String(totalMin % 60).padStart(2, '0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
+  }, [targetIso]);
+  return label;
+}
+
+function BillingAccessGate({ bloqueadoAte, onUnlocked }: { bloqueadoAte: string | null; onUnlocked: () => void }) {
+  const [step, setStep] = useState<'idle' | 'code'>('idle');
+  const [codigo, setCodigo] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const blockLabel = bloqueadoAte
+    ? new Date(bloqueadoAte).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : null;
+
+  const requestCode = async () => {
+    setBusy(true);
+    try {
+      await billingApi.requestAccessCode();
+      toast.success('Código enviado aos responsáveis');
+      setStep('code');
+      setCodigo('');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Erro ao pedir código');
+    } finally { setBusy(false); }
+  };
+
+  const confirm = async () => {
+    if (!codigo.trim() || busy) return;
+    setBusy(true);
+    try {
+      await billingApi.verifyAccessCode(codigo.trim());
+      toast.success('Acesso liberado por 4 horas');
+      onUnlocked();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || 'Código inválido');
+      setCodigo('');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="p-6 flex items-center justify-center min-h-[60vh]">
+      <div className="bg-surface border border-line rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+        <div className="mx-auto mb-3 w-12 h-12 rounded-full bg-violet-600/15 flex items-center justify-center">
+          <Lock size={22} className="text-violet-400" />
+        </div>
+        <h1 className="text-lg font-bold text-t1">Acesso protegido ao Financeiro</h1>
+
+        {blockLabel ? (
+          <p className="text-sm text-t3 mt-3">
+            Muitas tentativas. Tente de novo às <span className="font-semibold text-t1">{blockLabel}</span>.
+          </p>
+        ) : step === 'idle' ? (
+          <>
+            <p className="text-sm text-t3 mt-3">
+              Confirme um código enviado por e-mail aos responsáveis para ver valores de faturamento.
+            </p>
+            <button onClick={requestCode} disabled={busy}
+              className="mt-5 w-full py-2.5 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
+              {busy ? 'Enviando…' : 'Solicitar código'}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-t3 mt-3">Código enviado aos responsáveis. Vale por 10 minutos.</p>
+            <input
+              type="text" inputMode="numeric" value={codigo}
+              onChange={e => setCodigo(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirm()}
+              placeholder="Código de 6 dígitos"
+              autoFocus
+              disabled={busy}
+              className="mt-4 w-full text-center tracking-[0.3em] text-lg border border-line rounded-lg px-3 py-2.5 bg-surface-2 text-t1 disabled:opacity-60"
+            />
+            <div className="flex gap-2 mt-4">
+              <button onClick={requestCode} disabled={busy}
+                className="flex-1 py-2 rounded-lg border border-line text-t3 text-sm disabled:opacity-50">
+                Reenviar
+              </button>
+              <button onClick={confirm} disabled={busy || !codigo.trim()}
+                className="flex-1 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
+                Confirmar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function draftFromPayload(p: any): Draft {
   const params: Record<string, any> = {};
   PARAM_KEYS.forEach(k => { params[k] = p.params[k]; });
@@ -73,6 +185,11 @@ export default function BillingPage() {
   const [showCfg, setShowCfg] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
+  const accessQ = useQuery(['billing-access'], () => billingApi.accessStatus().then(r => r.data));
+  const access = accessQ.data;
+  const releaseAccess = () => qc.invalidateQueries(['billing-access']);
+  const accessCountdown = useCountdownLabel(access?.ativo ? access.liberado_ate : null, releaseAccess);
+
   const { data: sellers = [] } = useQuery(['sellers', 'billing'], () =>
     cadastrosApi.sellers(false).then(r => r.data));
 
@@ -87,6 +204,13 @@ export default function BillingPage() {
   useEffect(() => {
     if (payload) { setDraft(draftFromPayload(payload)); setDirty(false); setExpanded({}); }
   }, [payload]);
+
+  // Qualquer chamada de billing (não só as ações explícitas acima) pode voltar
+  // 403 "acesso_financeiro_requerido" se a janela expirar no meio do uso —
+  // por exemplo, o refetch automático do react-query ao focar a aba de novo.
+  useEffect(() => {
+    if (isAccessError(closingQ.error)) qc.invalidateQueries(['billing-access']);
+  }, [closingQ.error]);
 
   const setParam = (k: string, v: any) => {
     setDraft(d => d ? { ...d, params: { ...d.params, [k]: v } } : d);
@@ -116,6 +240,7 @@ export default function BillingPage() {
       setDirty(false);
       if (okMsg) toast.success(okMsg);
     } catch (e: any) {
+      if (isAccessError(e)) releaseAccess();
       toast.error(e?.response?.data?.detail || 'Erro ao salvar');
     } finally { setBusy(false); }
   };
@@ -131,6 +256,7 @@ export default function BillingPage() {
       qc.invalidateQueries(['billing-consolidated']);
       toast.success(ok);
     } catch (e: any) {
+      if (isAccessError(e)) releaseAccess();
       toast.error(e?.response?.data?.detail || 'Erro');
     } finally { setBusy(false); }
   };
@@ -191,9 +317,20 @@ export default function BillingPage() {
       qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
       qc.invalidateQueries(['billing-consolidated']);
     } catch (e: any) {
+      if (isAccessError(e)) releaseAccess();
       toast.error(e?.response?.data?.detail || 'Erro ao cadastrar caixa');
     } finally { setBusy(false); }
   };
+
+  // Portão de acesso: substitui TODO o conteúdo da tela enquanto a janela de
+  // 4h não estiver liberada. Fica depois de todos os hooks (regra dos hooks),
+  // mas antes do resto do JSX/lógica de faturamento.
+  if (accessQ.isLoading) {
+    return <div className="p-6 text-sm text-t3">Carregando…</div>;
+  }
+  if (!access?.ativo) {
+    return <BillingAccessGate bloqueadoAte={access?.bloqueado_ate ?? null} onUnlocked={releaseAccess} />;
+  }
 
   const lock = isClosed ? 'opacity-50 pointer-events-none' : '';
 
@@ -203,7 +340,14 @@ export default function BillingPage() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-t1">Faturamento</h1>
-          <p className="text-sm text-t3 mt-0.5">Fechamento mensal por seller</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-sm text-t3">Fechamento mensal por seller</p>
+            {accessCountdown && (
+              <span className="flex items-center gap-1 text-xs text-t3 bg-surface-2 border border-line rounded-full px-2 py-0.5">
+                <Lock size={11} /> Acesso expira em {accessCountdown}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-end gap-2">
           <div>

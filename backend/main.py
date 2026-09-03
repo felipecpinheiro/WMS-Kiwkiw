@@ -14,6 +14,15 @@ Documentação interativa (Swagger):
 import os
 import sys
 import time
+from dotenv import load_dotenv
+
+# Carrega backend/.env ANTES de qualquer outro import do projeto — vários
+# módulos (auth.py, inventory.py, billing_access_mail.py) leem variável de
+# ambiente na hora do import ou da chamada. load_dotenv() nunca sobrescreve
+# uma variável já definida no ambiente real (Railway), então não afeta
+# produção — só preenche o que falta em dev local. Sem o arquivo, é um no-op.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +32,10 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.database import init_db, get_db, SessionLocal
-from backend.routers import auth, orders, scanning, inventory, products, billing, dashboard, returns as returns_router, settings as settings_router
+from backend.routers import (
+    auth, orders, scanning, inventory, products, billing, billing_access,
+    dashboard, returns as returns_router, settings as settings_router,
+)
 from backend import models
 from backend.auth import hash_password
 
@@ -514,6 +526,7 @@ app.include_router(scanning.router)
 app.include_router(inventory.router)
 app.include_router(products.router)
 app.include_router(billing.router)
+app.include_router(billing_access.router)
 app.include_router(dashboard.router)
 app.include_router(returns_router.router)
 app.include_router(settings_router.router)

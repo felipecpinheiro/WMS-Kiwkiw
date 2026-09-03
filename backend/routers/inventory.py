@@ -29,8 +29,20 @@ import os as _os
 
 router = APIRouter(prefix="/inventory", tags=["Estoque"])
 
-# Passphrase de edição de movimentações — configurável via variável de ambiente
-EDIT_PASSPHRASE = _os.environ.get("WMS_EDIT_PASSPHRASE", "k&ksmt$")
+# Passphrase de edição de movimentações — SEMPRE de variável de ambiente
+# (repositório é PÚBLICO). Em produção (Postgres) o app recusa subir sem ela;
+# em dev local (SQLite) cai num valor fixo só de desenvolvimento.
+_DATABASE_URL = _os.environ.get("DATABASE_URL", "")
+_IS_PRODUCTION_DB = _DATABASE_URL.startswith("postgres")
+
+EDIT_PASSPHRASE = _os.environ.get("WMS_EDIT_PASSPHRASE")
+if not EDIT_PASSPHRASE:
+    if _IS_PRODUCTION_DB:
+        raise RuntimeError(
+            "WMS_EDIT_PASSPHRASE não definida. Configure a variável de ambiente "
+            "no serviço antes de subir em produção (Postgres)."
+        )
+    EDIT_PASSPHRASE = "k&ksmt$"  # só dev local
 
 
 # ─────────────────────────────────────────────────────────

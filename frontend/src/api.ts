@@ -1065,7 +1065,21 @@ export const billingApi = {
   downloadConsolidatedZip: (refMonth: string) =>
     downloadAuthenticatedFile(`/billing/consolidated/${refMonth}/pdfs.zip`,
       `faturas_${refMonth}.zip`),
+
+  // acesso protegido ao Financeiro (02/09/2026) — código de 6 dígitos por e-mail,
+  // libera 4h por usuário. Ver Billing.tsx (tela-portão).
+  accessStatus: () => api.get<BillingAccessStatus>('/billing/access/status'),
+  requestAccessCode: () =>
+    api.post<{ enviado: boolean; expira_em_seg: number }>('/billing/access/request'),
+  verifyAccessCode: (codigo: string) =>
+    api.post<{ liberado_ate: string }>('/billing/access/verify', { codigo }),
 };
+
+export interface BillingAccessStatus {
+  ativo: boolean;
+  liberado_ate: string | null;
+  bloqueado_ate: string | null;
+}
 
 
 // ============================================================

@@ -496,6 +496,34 @@ class BillingConfig(Base):
 # dono do sistema — permite rollback sem perder o cadastro antigo).
 # Regras de cálculo: backend/services/billing_calc.py.
 
+class BillingAccessCode(Base):
+    """
+    Acesso protegido ao Financeiro (02/09/2026) — código de 6 dígitos por e-mail,
+    válido 10 min pra digitar, liberando 4h de acesso por usuário.
+
+    Uma linha por código pedido (`code_hash`) OU por acesso concedido via código-mestre
+    (`code_hash=NULL`, `via_master=True`, já nasce com `consumed_at` preenchido — o
+    mestre não passa pelo fluxo de pedido/e-mail, mas o sucesso grava a concessão aqui,
+    que é o que `require_billing_access` e `/status` consultam).
+
+    Rate-limit (1/min, 5/h) e o contador de 5 erros seguidos NÃO têm coluna própria:
+    são derivados de `AuditLog` (entity_type="AcessoFinanceiro"), que já registra cada
+    pedido/acerto/erro/bloqueio — ver `backend/routers/billing_access.py`.
+    """
+    __tablename__ = "billing_access_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=True, index=True)   # SHA-256 hex do código de 6 dígitos
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    expires_at = Column(DateTime, nullable=False)                # created_at + 10 min (prazo pra digitar)
+    consumed_at = Column(DateTime, nullable=True)                # quando o código foi aceito
+    access_expires_at = Column(DateTime, nullable=True)          # consumed_at + 4h (janela liberada)
+    via_master = Column(Boolean, default=False, nullable=False)
+
+    user = relationship("User")
+
+
 class BillingSellerParams(Base):
     """Parâmetros default de faturamento por seller (uma linha por seller)."""
     __tablename__ = "billing_seller_params"

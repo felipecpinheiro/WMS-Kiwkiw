@@ -39,6 +39,86 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 03/09/2026 — Acesso Protegido ao Financeiro + SECRET_KEY/WMS_EDIT_PASSPHRASE por variável de ambiente
+
+**Sem push** (aguardando o dono configurar as variáveis no Railway — ver checklist entregue fora
+deste arquivo). Dois commits locais.
+
+### Acesso Protegido ao Financeiro
+
+Mesmo sendo **admin**, usar `/billing` agora exige confirmar um **código de 6 dígitos enviado por
+e-mail** a uma lista fixa de responsáveis (`WMS_BILLING_APPROVERS`). O acesso liberado dura **4h,
+por usuário** (vale em qualquer navegador/dispositivo onde ele logar dentro da janela). Existe um
+**código-mestre de emergência** (`WMS_BILLING_MASTER_CODE`, opcional — sem ele o app sobe normal e
+só falta o backup).
+
+**Arquivos:** `backend/models.py` (`BillingAccessCode`, tabela nova — nasce pelo `create_all`, sem
+migração), `backend/routers/billing_access.py` (novo — `POST /billing/access/request`,
+`POST /billing/access/verify`, `GET /billing/access/status`), `backend/services/billing_access_mail.py`
+(novo — e-mails via smtplib/STARTTLS; sem `WMS_SMTP_USER`/`PASS` só imprime no console, é o modo
+dev local), `backend/auth.py` (`require_billing_access`), `backend/routers/billing.py` (troca
+`require_admin` → `require_billing_access` nos 11 endpoints que mostram R$ — box-prices, closing,
+close, reopen, pdf, excel, consolidated + excel + pdfs.zip), `backend/schemas.py`, `backend/main.py`
+(registra o router), `frontend/src/api.ts` (`billingApi.accessStatus/requestAccessCode/verifyAccessCode`),
+`frontend/src/pages/Billing.tsx` (tela-portão que substitui todo o conteúdo enquanto a janela de 4h
+não estiver liberada + mini-contador no topo quando liberada).
+
+**Regras (decididas com o dono numa sessão de planejamento anterior):**
+- Código: 6 dígitos, 100000–999999, pode repetir/começar com 0. Vale **10 min pra digitar**. Pedir
+  de novo **não invalida** o(s) anterior(es) — cada um vale até o próprio prazo.
+- Rate-limit de pedido: **1/min e 5/hora, por usuário**. Guardado o hash SHA-256 do código, nunca o
+  número em claro.
+- **5 erros seguidos** (código de e-mail ou mestre, mesmo balde) → bloqueia **15 min** tanto a
+  digitação quanto o pedido de novo código. Zera ao acertar ou depois dos 15 min.
+- Código-mestre: frase longa gerada pelo sistema, um só para a empresa toda, mesma caixa de texto
+  do código de 6 dígitos. Dá as mesmas 4h. Todo uso gera `AuditLog` destacado + e-mail de alerta.
+- `NÃO TRAVA` (decisão do dono, ficam como estavam): `seller-params`/`seller-box-prices`
+  (aba Comercial de Sellers, `require_manager_or_above`) e `/billing/my/...` (Portal do seller).
+- **Rate-limit e o contador de 5 erros são derivados só de `AuditLog`** (`entity_type=
+  "AcessoFinanceiro"`, ações `PEDIDO_CODIGO`/`ACERTO`/`ERRO`/`BLOQUEIO`) — **sem tabela nem coluna
+  de tentativas**, a própria trilha de auditoria pedida na spec já é o dado necessário.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Reutilizar um objeto ORM depois de fechar a `Session` que o carregou | `DetachedInstanceError` — apareceu 3× nos scripts de teste desta feature | Capturar o `.id` (ou outro escalar) num `int` comum logo após a query, nunca reabrir `SessionLocal()` e reusar o objeto antigo |
+| "Zerar" o contador de erros ou o bloqueio manipulando data em SQLite via `datetime('now')` | `datetime('now')` do SQLite é **UTC**; o app compara com `now_brasilia()` (UTC-3) — um "expira 1 min atrás" em UTC pode continuar **3h no futuro** em Brasília e o teste "passa" sem testar nada | Testar via a própria sessão do SQLAlchemy com `now_brasilia() - timedelta(...)`, nunca SQL cru com `datetime('now')` |
+| Tentar destravar a rota `/billing` por completo | O objetivo é travar só os 11 endpoints com R$ — `seller-params`/`seller-box-prices`/`/billing/my` continuam abertos, por decisão do dono | Trocar a dependency só nos 11 endpoints listados acima, nunca no router inteiro |
+
+**Testes:** 68 verificações E2E (+ 4 do cenário "sem `WMS_BILLING_MASTER_CODE`"), **100% verdes em
+SQLite e PostgreSQL** (banco descartável `wms_test_billing_access`, apagado ao final), mais
+conferência visual ponta a ponta (portão, código em modo console, contador, expiração devolve ao
+portão, modo claro/escuro, mobile) contra o banco local (cópia de produção via `/attEstoque`).
+
+### `SECRET_KEY` e `WMS_EDIT_PASSPHRASE` — hardcoded no código, corrigido
+
+Ao mexer em variáveis de ambiente para o item acima, foi encontrado (e corrigido) que
+`backend/auth.py` ainda tinha a `SECRET_KEY` do JWT **fixa em texto puro no código**, num
+repositório **público** — permitindo forjar um token de admin de produção sem senha. O
+`WMS_EDIT_PASSPHRASE` (`inventory.py`) também tinha fallback fixo em vez de exigir a variável.
+⚠️ Uma memória anterior registrava que isso já tinha sido corrigido em 31/08/2026 — **não estava**;
+o registro estava errado (a correção nunca chegou a ser commitada no `main`). Corrigido agora de
+verdade:
+
+- **Em produção (`DATABASE_URL` de Postgres), o app RECUSA subir** sem `SECRET_KEY` e sem
+  `WMS_EDIT_PASSPHRASE` — `RuntimeError` no import, igual ao padrão já usado para `DATABASE_URL`
+  ausente. Falha de boot é visível; chave fraca em produção era silenciosa.
+- **Em dev local (SQLite), cai num valor fixo só de desenvolvimento** — não exige configurar nada
+  pra rodar o projeto na máquina.
+- `backend/main.py` ganhou `load_dotenv()` **logo no topo**, antes de qualquer `from backend...` —
+  `auth.py` e `inventory.py` leem a variável na hora do **import do módulo**, então o `.env`
+  precisa estar carregado antes disso, não dentro do `lifespan`.
+- `backend/.env` (git-ignorado) para dev local + `backend/.env.example` (versionado, sem valores)
+  com todas as variáveis novas.
+- Trocar a `SECRET_KEY` em produção **desloga todo mundo** (tokens de 12h) — combinar horário com
+  o dono antes de aplicar no Railway.
+- Tirar do código não desfaz o vazamento: o valor antigo (`wms-kiwkiw-secret-key-change-in-
+  production-2024`) segue no histórico git público. O que conserta é o valor **novo** no Railway.
+  Decisão: **não** reescrever histórico (quebra clones e não recupera o que já foi indexado).
+
+---
+
 ## Mudanças Recentes — 02/09/2026 — DEVOLUÇÕES (tela nova)
 
 **Sem commit.** Até então, devolução era anotada numa planilha à parte e lançada **na mão**,
@@ -1301,7 +1381,8 @@ esses números** (decisão do dono do sistema).
 | `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
 | `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
-| `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026), admin-only** exceto `seller-params` (manager+). `seller-params` (**fonte única** dos 16 parâmetros — 01/09 2ª leva), `box-prices` (tabela global de caixa), `seller-box-prices/{id}` (preço de caixa por seller), `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
+| `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026).** `seller-params`/`seller-box-prices` (manager+, sem portão), `/billing/my/...` (Portal do seller, sem portão). Os outros 11 — `box-prices`, `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`) — exigem **admin + Acesso Protegido ao Financeiro liberado** (02/09/2026, ver `billing_access`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
+| `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
@@ -1330,7 +1411,7 @@ esses números** (decisão do dono do sistema).
 | `/sellers/corrigir` | SellerFixes.tsx | admin, manager (sem item no menu lateral — acessada pelo aviso do Dashboard ou botão em Sellers.tsx) |
 | `/units` | Units.tsx | admin, manager, operator |
 | `/devolucoes` | Returns.tsx | **admin, manager** (não aparece no menu reduzido do operador) |
-| `/billing` | Billing.tsx | **admin** (reescrita de 31/08/2026 — some do menu para manager/operator) |
+| `/billing` | Billing.tsx | **admin** (reescrita de 31/08/2026 — some do menu para manager/operator). Desde 02/09/2026, mesmo admin cai numa tela-portão até liberar o Acesso Protegido ao Financeiro |
 | `/audit` | Audit.tsx | admin, manager, operator |
 | `/settings` | Settings.tsx | admin, manager, operator |
 | `/manuseios` | Handling.tsx | admin, manager, operator |
@@ -1483,7 +1564,13 @@ Acesse: http://localhost:5173
 |----------|-----------|
 | `DATABASE_URL` | URL do banco (padrão: SQLite local). Prefixo `postgres://` é corrigido para `postgresql://` no código. ⚠️ **Em produção TEM que usar a rede interna do Railway** (`...railway.internal:5432`). Apontar para o proxy público (`*.proxy.rlwy.net`, porta alta) custa ~150ms POR CONSULTA e foi a causa da lentidão crônica até 27/08/2026 — ver a seção "A lentidão crônica NÃO era código". |
 | `ALLOWED_ORIGINS` | CORS (separados por vírgula; `*` = todos) |
-| `WMS_EDIT_PASSPHRASE` | Senha para edição de movimentações de estoque (admin only) |
+| `SECRET_KEY` | Assina o JWT (12h). **Em produção (Postgres) o app recusa subir sem ela** (03/09/2026) — sem valor fixo no código, repositório é público. Trocar desloga todo mundo |
+| `WMS_EDIT_PASSPHRASE` | Senha para edição de movimentações de estoque (admin only). **Em produção o app recusa subir sem ela** (03/09/2026, mesmo motivo do `SECRET_KEY`) |
+| `WMS_BILLING_APPROVERS` | Acesso Protegido ao Financeiro (02/09/2026) — e-mails dos responsáveis que recebem o código de 6 dígitos e os alertas, separados por vírgula |
+| `WMS_BILLING_MASTER_CODE` | Código-mestre de emergência do Acesso ao Financeiro (frase longa, 20+ chars). **Opcional** — vazio = sem backup, mas o app sobe normal e o fluxo por e-mail funciona |
+| `WMS_SMTP_HOST` / `WMS_SMTP_PORT` | Servidor SMTP para o e-mail do código de acesso ao Financeiro. Default `smtp.gmail.com` / `587` |
+| `WMS_SMTP_USER` / `WMS_SMTP_PASS` | Credenciais SMTP (Gmail: usuário + senha de app, não a senha normal da conta). **Vazias = modo console** — não envia, só imprime no log (mecanismo de teste local) |
+| `WMS_SMTP_FROM` | Endereço de remetente do e-mail (nome de exibição fixo "WMS Kiwkiw" no código). Vazio usa `WMS_SMTP_USER` |
 
 ### Frontend
 | Variável | Usado para |

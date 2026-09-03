@@ -10,6 +10,7 @@ Perfis suportados:
   client   → Cliente (seller): somente leitura — estoque e cards de manuseio do seu seller
 """
 
+import os
 from datetime import datetime, timedelta
 from typing import Optional, List
 from jose import JWTError, jwt
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from . import models, schemas
+from .timezone_utils import now_brasilia
 
 # Fix: passlib 1.7.4 incompatível com bcrypt 4.x
 import bcrypt as _bcrypt
@@ -29,8 +31,25 @@ if not hasattr(_bcrypt, '__about__'):
 # ---------------------------------------------------------------------------
 # Configurações de segurança
 # ---------------------------------------------------------------------------
-# Em produção: substitua por variável de ambiente (ex: os.getenv("SECRET_KEY"))
-SECRET_KEY = "wms-kiwkiw-secret-key-change-in-production-2024"
+# SECRET_KEY vem SEMPRE de variável de ambiente (repositório é PÚBLICO — uma
+# chave fixa no código permite forjar token de admin sem senha). Em produção
+# (DATABASE_URL de Postgres) o app RECUSA subir sem ela, de propósito: uma
+# falha de boot é visível; uma chave fraca em produção é silenciosa. Em dev
+# local (SQLite) cai num valor fixo só de desenvolvimento, pra não exigir
+# configuração extra pra rodar o projeto na máquina.
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_IS_PRODUCTION_DB = _DATABASE_URL.startswith("postgres")
+
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    if _IS_PRODUCTION_DB:
+        raise RuntimeError(
+            "SECRET_KEY não definida. Configure a variável de ambiente SECRET_KEY "
+            "no serviço antes de subir em produção (Postgres) — não existe mais "
+            "valor fixo no código."
+        )
+    SECRET_KEY = "wms-kiwkiw-dev-secret-key-local-only"  # só dev local (SQLite)
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 12
 
@@ -205,3 +224,28 @@ require_internal = require_min_role("operator")
 
 # Qualquer usuário autenticado (incluindo client)
 require_authenticated = require_min_role("client")
+
+
+def require_billing_access(
+    db: Session = Depends(get_db),
+    current_user: "models.User" = Depends(require_admin),
+) -> "models.User":
+    """
+    Acesso protegido ao Financeiro (02/09/2026). Além de admin, exige uma
+    janela de 4h liberada (código de 6 dígitos por e-mail ou código-mestre —
+    ver `backend/routers/billing_access.py`). O front reconhece o detail
+    abaixo e volta pro portão de acesso.
+    """
+    row = (
+        db.query(models.BillingAccessCode)
+        .filter(
+            models.BillingAccessCode.user_id == current_user.id,
+            models.BillingAccessCode.consumed_at.isnot(None),
+            models.BillingAccessCode.access_expires_at > now_brasilia(),
+        )
+        .order_by(models.BillingAccessCode.access_expires_at.desc())
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=403, detail="acesso_financeiro_requerido")
+    return current_user

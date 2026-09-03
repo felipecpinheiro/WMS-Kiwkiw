@@ -41,8 +41,16 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ## Mudanças Recentes — 03/09/2026 — Acesso Protegido ao Financeiro + SECRET_KEY/WMS_EDIT_PASSPHRASE por variável de ambiente
 
-**Sem push** (aguardando o dono configurar as variáveis no Railway — ver checklist entregue fora
-deste arquivo). Dois commits locais.
+> ⚠️ **04/09/2026 — TEMPORARIAMENTE DESATIVADO em produção**, a pedido do dono: o envio de e-mail
+> (Resend) ainda estava sendo configurado (modo sandbox) e a equipe precisava usar o Faturamento
+> na hora. `/billing` está de volta a `require_admin` puro, sem pedir código — igual era antes
+> desta feature. Nada foi apagado, só desligado por duas chaves (`Depends(require_admin)` nos 11
+> endpoints de `routers/billing.py` + `ACCESS_GATE_ENABLED = false` em `Billing.tsx`) — ver o
+> comentário no topo de `routers/billing.py` pra reativar. Todo o resto desta seção descreve o
+> comportamento **quando a feature estiver ligada** de novo.
+
+Já foi pra produção (commits além do local — ver git log). Variáveis do Railway já configuradas
+(SMTP trocado por Resend em 03/09, ver seção própria mais abaixo no arquivo).
 
 ### Acesso Protegido ao Financeiro
 

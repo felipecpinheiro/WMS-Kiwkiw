@@ -42,15 +42,23 @@ O sistema digitaliza e controla todo o fluxo de:
 ## Mudanças Recentes — 03/09/2026 — Acesso Protegido ao Financeiro + SECRET_KEY/WMS_EDIT_PASSPHRASE por variável de ambiente
 
 > ⚠️ **04/09/2026 — TEMPORARIAMENTE DESATIVADO em produção**, a pedido do dono: o envio de e-mail
-> (Resend) ainda estava sendo configurado (modo sandbox) e a equipe precisava usar o Faturamento
-> na hora. `/billing` está de volta a `require_admin` puro, sem pedir código — igual era antes
-> desta feature. Nada foi apagado, só desligado por duas chaves (`Depends(require_admin)` nos 11
-> endpoints de `routers/billing.py` + `ACCESS_GATE_ENABLED = false` em `Billing.tsx`) — ver o
-> comentário no topo de `routers/billing.py` pra reativar. Todo o resto desta seção descreve o
-> comportamento **quando a feature estiver ligada** de novo.
+> ainda estava sendo configurado e a equipe precisava usar o Faturamento na hora. `/billing` está
+> de volta a `require_admin` puro, sem pedir código — igual era antes desta feature. Nada foi
+> apagado, só desligado por duas chaves (`Depends(require_admin)` nos 11 endpoints de
+> `routers/billing.py` + `ACCESS_GATE_ENABLED = false` em `Billing.tsx`) — ver o comentário no
+> topo de `routers/billing.py` pra reativar. Todo o resto desta seção descreve o comportamento
+> **quando a feature estiver ligada** de novo.
+>
+> **04/09/2026 (mesmo dia, à tarde) — o transporte de e-mail mudou de novo, pra API do Gmail
+> (OAuth2)** — trocado local, **commit sem push ainda** (o dono revisa antes de subir). Motivo:
+> ele queria mandar de uma conta Gmail pessoal (`felipecspinheiro88@gmail.com`) pra qualquer
+> destinatário, e o Resend só permite isso com domínio próprio verificado (não dá pra "verificar"
+> `gmail.com`). Ver a seção "E-mail: 3ª tentativa" mais abaixo — a versão via Resend (2ª tentativa)
+> **fica documentada como histórico**, não é mais o código atual.
 
-Já foi pra produção (commits além do local — ver git log). Variáveis do Railway já configuradas
-(SMTP trocado por Resend em 03/09, ver seção própria mais abaixo no arquivo).
+Variáveis do Railway configuradas em 03/09 pro Resend (2ª tentativa) — **precisam ser trocadas**
+pelas do Gmail (`WMS_GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN`) antes de reativar a feature de vez;
+ver a tabela de variáveis de ambiente mais abaixo no arquivo.
 
 ### Acesso Protegido ao Financeiro
 
@@ -63,8 +71,8 @@ só falta o backup).
 **Arquivos:** `backend/models.py` (`BillingAccessCode`, tabela nova — nasce pelo `create_all`, sem
 migração), `backend/routers/billing_access.py` (novo — `POST /billing/access/request`,
 `POST /billing/access/verify`, `GET /billing/access/status`), `backend/services/billing_access_mail.py`
-(novo — e-mails via **API HTTP do Resend**, não SMTP — ver "Railway bloqueia SMTP" abaixo; sem
-`WMS_RESEND_API_KEY` só imprime no console, é o modo dev local), `backend/auth.py`
+(novo — e-mails via **API do Gmail (OAuth2)**, não SMTP nem Resend — ver "E-mail: 3ª tentativa"
+abaixo; sem as 3 variáveis `WMS_GMAIL_*` só imprime no console, é o modo dev local), `backend/auth.py`
 (`require_billing_access`), `backend/routers/billing.py` (troca
 `require_admin` → `require_billing_access` nos 11 endpoints que mostram R$ — box-prices, closing,
 close, reopen, pdf, excel, consolidated + excel + pdfs.zip), `backend/schemas.py`, `backend/main.py`
@@ -126,7 +134,59 @@ valer com os aprovadores reais.
 SQLite e PostgreSQL** (banco descartável `wms_test_billing_access`, apagado ao final), mais
 conferência visual ponta a ponta (portão, código em modo console, contador, expiração devolve ao
 portão, modo claro/escuro, mobile) contra o banco local (cópia de produção via `/attEstoque`), mais
-2 envios reais confirmados via API do Resend (código + os 2 tipos de alerta).
+2 envios reais confirmados via API do Resend (código + os 2 tipos de alerta). **(Esta versão via
+Resend foi substituída no mesmo dia — ver seção seguinte. Fica registrada como histórico.)**
+
+### E-mail: 3ª tentativa — API do Gmail (OAuth2), 04/09/2026
+
+**Sem push** (commit local, dono revisa antes). A 2ª tentativa (Resend) funcionava, mas o dono
+queria mandar **de uma conta Gmail pessoal** (`felipecspinheiro88@gmail.com`) **pra qualquer
+destinatário** — e nenhum provedor de e-mail transacional deixa mandar "como se fosse" um
+endereço `@gmail.com`, verificado ou não: só dá pra verificar um domínio que você é dono, e
+`gmail.com` é do Google. Então a combinação "remetente = Gmail pessoal" + "destinatário = qualquer
+um" só existe pela própria **API do Gmail**, com OAuth2.
+
+**O que mudou:** `billing_access_mail.py` reescrito de novo — `_send()` troca o `refresh_token`
+por um `access_token` (`POST https://oauth2.googleapis.com/token`) e manda o e-mail por
+`POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send` (corpo = MIME em
+base64url). Só `urllib`/`email.mime`/`base64` da biblioteca padrão — zero dependência nova, mesma
+decisão de design das duas tentativas anteriores. Variáveis: `WMS_GMAIL_CLIENT_ID`,
+`WMS_GMAIL_CLIENT_SECRET`, `WMS_GMAIL_REFRESH_TOKEN` (as 3 têm que estar setadas, senão cai no
+modo console) + `WMS_MAIL_FROM` (agora é o cabeçalho `From:` completo, ex:
+`"WMS Kiwkiw <felipecspinheiro88@gmail.com>"` — **o endereço tem que ser exatamente o da conta
+que autorizou**, o Gmail recusa remetente diferente; só o nome de exibição pode variar).
+
+**Como o `refresh_token` foi gerado (uma vez, manual, fora do repositório):**
+1. Projeto novo no Google Cloud Console → API do Gmail ativada → tela de consentimento OAuth
+   (Externo, escopo `https://www.googleapis.com/auth/gmail.send`, usuário de teste
+   `felipecspinheiro88@gmail.com`) → credencial "App para computador" (Client ID + Secret).
+2. Script de uso único (fora do repo) sobe um servidor HTTP local (`http://127.0.0.1:8765`,
+   fluxo "loopback" — não precisa registrar a porta no Google, aceita qualquer uma), monta a URL
+   de autorização com `access_type=offline&prompt=consent` (força o Google devolver
+   `refresh_token`, que só vem na primeira autorização ou com `prompt=consent`), abre no
+   navegador, captura o `code` do redirect e troca por tokens.
+3. O `refresh_token` gerado **não expira sozinho** (só se revogado manualmente, ou se o app OAuth
+   ficar 6 meses sem uso) — diferente do app em modo "Teste" no Console, que expira token em 7
+   dias **só se a autorização em si não for renovada**; aqui a troca é feita programaticamente a
+   cada envio, então isso não se aplica da mesma forma. Testado: 3 envios reais (código + os 2
+   alertas) confirmados na caixa de entrada do destinatário de teste.
+
+⚠️ **Usuário de teste da tela de consentimento tem que ser uma conta Google de verdade.** Tentar
+adicionar `lipe-2001@hotmail.com` (Hotmail, não é conta Google) como usuário de teste foi
+recusado pelo próprio Google — usuário de teste é sobre **quem autoriza o envio** (o remetente),
+não sobre quem recebe. Destinatários (`WMS_BILLING_APPROVERS`) não têm essa restrição nem
+precisam estar cadastrados em lugar nenhum do Google Cloud.
+
+⚠️ **Diferente do Resend, a API do Gmail não tem restrição de destinatário nem exige domínio
+verificado** — o preço é a autorização manual inicial (passo 2 acima) e ficar preso a uma conta
+Gmail específica como remetente. Trocar de remetente no futuro = repetir o processo de autorização
+logado na conta nova, só isso, sem mexer em mais nada do código.
+
+**Testes:** os mesmos 3 envios reais confirmados + suíte de 68 verificações E2E rodada de novo
+— as partes de e-mail (pedir código, verificar, código-mestre, os 2 alertas, rate-limit, bloqueio)
+continuam 100% verdes; as 13 que "falham" são só reflexo do portão estar **desligado agora**
+(rollback de 04/09 de manhã, ver o aviso no topo desta seção) — não são regressão da troca de
+transporte de e-mail.
 
 ### `SECRET_KEY` e `WMS_EDIT_PASSPHRASE` — hardcoded no código, corrigido
 
@@ -1605,8 +1665,9 @@ Acesse: http://localhost:5173
 | `WMS_EDIT_PASSPHRASE` | Senha para edição de movimentações de estoque (admin only). **Em produção o app recusa subir sem ela** (03/09/2026, mesmo motivo do `SECRET_KEY`) |
 | `WMS_BILLING_APPROVERS` | Acesso Protegido ao Financeiro (02/09/2026) — e-mails dos responsáveis que recebem o código de 6 dígitos e os alertas, separados por vírgula |
 | `WMS_BILLING_MASTER_CODE` | Código-mestre de emergência do Acesso ao Financeiro (frase longa, 20+ chars). **Opcional** — vazio = sem backup, mas o app sobe normal e o fluxo por e-mail funciona |
-| `WMS_RESEND_API_KEY` | Chave da API do Resend (`https://resend.com`), usada pra enviar o código do Acesso ao Financeiro **por HTTP, não SMTP** (Railway bloqueia SMTP fora do plano Pro — ver "Mudanças Recentes"). **Vazia = modo console** — não envia, só imprime no log (mecanismo de teste local) |
-| `WMS_MAIL_FROM` | Remetente do e-mail (nome de exibição fixo "WMS Kiwkiw" no código). Sem domínio verificado no Resend, tem que ser `onboarding@resend.dev` (sandbox) |
+| `WMS_GMAIL_CLIENT_ID` / `WMS_GMAIL_CLIENT_SECRET` | Credenciais OAuth2 (Google Cloud Console, credencial "App para computador") usadas pra enviar o código do Acesso ao Financeiro **via API do Gmail, não SMTP nem Resend** (ver "E-mail: 3ª tentativa" em "Mudanças Recentes") |
+| `WMS_GMAIL_REFRESH_TOKEN` | Token de longa duração gerado **uma vez, manualmente** (fluxo OAuth2 "installed app", fora do repositório) — não expira sozinho. **Faltando qualquer uma das 3 `WMS_GMAIL_*` = modo console** — não envia, só imprime no log (teste local) |
+| `WMS_MAIL_FROM` | Cabeçalho `From:` completo, ex. `"WMS Kiwkiw <felipecspinheiro88@gmail.com>"`. O endereço **tem que ser exatamente o da conta que autorizou** (Gmail recusa remetente diferente); só o nome de exibição pode variar |
 
 ### Frontend
 | Variável | Usado para |

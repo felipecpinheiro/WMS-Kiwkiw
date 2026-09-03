@@ -4,33 +4,40 @@ WMS Kiwkiw - E-mails do Acesso Protegido ao Financeiro (02/09/2026)
 Só envio. As regras de quando enviar e para quem estão em
 `backend/routers/billing_access.py`.
 
-Envio via API HTTP do Resend (https://resend.com), NÃO via SMTP.
-Motivo (03/09/2026): Railway bloqueia saída em portas de SMTP
-(465/587/2525) fora do plano Pro — confirmado em produção com
-"OSError: Network is unreachable" testado direto no console do Railway.
-A API do Resend é HTTPS (porta 443, sempre liberada), então não esbarra
-nesse bloqueio. Usa só `urllib` (biblioteca padrão) — zero dependência
-nova, mesma decisão de design do smtplib original.
+Envio via **API do Gmail** (OAuth2), não SMTP nem Resend. Histórico
+(04/09/2026): a primeira versão usava `smtplib`/Gmail — funcionava local,
+mas o Railway bloqueia porta de SMTP fora do plano Pro (ver CLAUDE.md,
+"Railway bloqueia SMTP"). A segunda versão trocou pra API HTTP do Resend
+— funcionava, mas o dono queria mandar de uma conta Gmail pessoal
+(`felipecspinheiro88@gmail.com`) pra qualquer destinatário, e o Resend só
+permite isso com um domínio próprio verificado (não dá pra "verificar"
+`gmail.com`, é do Google). A API do Gmail resolve as duas coisas: é HTTPS
+(não esbarra no bloqueio do Railway) e manda de uma conta Gmail de
+verdade pra qualquer destinatário, sem precisar de domínio.
+
+Autorização: fluxo OAuth2 "installed app" feito **uma vez, manualmente**
+(script de uso único, fora do repositório) — gera um `refresh_token` que
+não expira sozinho (só se revogado manualmente ou se o app OAuth ficar
+mais de 6 meses sem uso). As 3 variáveis (`WMS_GMAIL_CLIENT_ID`,
+`WMS_GMAIL_CLIENT_SECRET`, `WMS_GMAIL_REFRESH_TOKEN`) vêm desse processo.
 
 Lê as variáveis de ambiente NA HORA DA CHAMADA (não em constante de
 módulo): evita depender da ordem exata entre `load_dotenv()` (main.py) e
 o import deste módulo, e facilita testar sobrescrevendo o ambiente.
 
-Modo dev/teste: se WMS_RESEND_API_KEY não estiver setada, NÃO tenta
-enviar — só imprime o código e os destinatários no console. É o
-mecanismo de teste local pedido na especificação.
-
-⚠️ Enquanto o domínio não for verificado no Resend, só é possível mandar
-para o e-mail com que a conta do Resend foi criada (modo sandbox) — o
-remetente também fica preso a `onboarding@resend.dev`. Depois de
-verificar um domínio próprio (ex: kiwkiw.com.br), troque WMS_MAIL_FROM
-para um endereço desse domínio; os destinatários deixam de ter restrição.
+Modo dev/teste: se qualquer uma das 3 variáveis do Gmail não estiver
+setada, NÃO tenta enviar — só imprime o código e os destinatários no
+console. É o mecanismo de teste local pedido na especificação.
 """
 
+import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 from ..timezone_utils import now_brasilia
 
@@ -39,13 +46,19 @@ _ROXO = "#7B63E8"
 _VERDE = "#3DD9A4"
 _FUNDO = "#14122A"
 
-RESEND_API_URL = "https://api.resend.com/emails"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 
 
-def _resend_config() -> dict:
+def _gmail_config() -> dict:
     return {
-        "api_key": os.environ.get("WMS_RESEND_API_KEY", ""),
-        "from_addr": os.environ.get("WMS_MAIL_FROM", "onboarding@resend.dev"),
+        "client_id": os.environ.get("WMS_GMAIL_CLIENT_ID", ""),
+        "client_secret": os.environ.get("WMS_GMAIL_CLIENT_SECRET", ""),
+        "refresh_token": os.environ.get("WMS_GMAIL_REFRESH_TOKEN", ""),
+        # Formato completo do cabeçalho From, ex: "WMS Kiwkiw <felipecspinheiro88@gmail.com>".
+        # O endereço TEM que ser o mesmo da conta que autorizou (Gmail recusa
+        # remetente diferente) — só o nome de exibição pode variar.
+        "from_header": os.environ.get("WMS_MAIL_FROM", ""),
     }
 
 
@@ -78,44 +91,61 @@ def _html_shell(title: str, body_html: str) -> str:
 </body></html>"""
 
 
+def _gmail_access_token(cfg: dict) -> str:
+    """Troca o refresh_token por um access_token de curta duração (não é cacheado
+    de propósito — cada envio é raro o bastante pra não valer a complexidade)."""
+    payload = urllib.parse.urlencode({
+        "client_id": cfg["client_id"],
+        "client_secret": cfg["client_secret"],
+        "refresh_token": cfg["refresh_token"],
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        GOOGLE_TOKEN_URL, data=payload, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        tokens = json.loads(resp.read().decode("utf-8"))
+    return tokens["access_token"]
+
+
 def _send(subject: str, html: str, text: str, recipients: list) -> bool:
     """
-    Envia via API do Resend ou, em modo dev sem chave configurada, imprime
-    no console. Deixa a exceção subir pro chamador decidir o que fazer com
-    a falha (ele é quem loga e devolve o 500 genérico pro usuário).
+    Envia via API do Gmail ou, em modo dev sem as 3 variáveis configuradas,
+    imprime no console. Deixa a exceção subir pro chamador decidir o que
+    fazer com a falha (ele é quem loga e devolve o 500 genérico pro usuário).
     """
     if not recipients:
         print(f"[billing_access] WMS_BILLING_APPROVERS vazio — nada a enviar. Assunto: {subject}")
         return False
 
-    cfg = _resend_config()
-    if not cfg["api_key"]:
-        # Modo console (dev local, sem Resend configurado)
-        print(f"[billing_access] (modo console — sem WMS_RESEND_API_KEY configurada)")
+    cfg = _gmail_config()
+    if not (cfg["client_id"] and cfg["client_secret"] and cfg["refresh_token"]):
+        # Modo console (dev local, sem Gmail configurado)
+        print(f"[billing_access] (modo console — sem credenciais do Gmail configuradas)")
         print(f"[billing_access] Assunto: {subject}")
         print(f"[billing_access] Destinatários: {', '.join(recipients)}")
         print(f"[billing_access] Texto:\n{text}")
         return True
 
-    payload = json.dumps({
-        "from": f"WMS Kiwkiw <{cfg['from_addr']}>",
-        "to": recipients,
-        "subject": subject,
-        "html": html,
-        "text": text,
-    }).encode("utf-8")
+    access_token = _gmail_access_token(cfg)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["To"] = ", ".join(recipients)
+    if cfg["from_header"]:
+        msg["From"] = cfg["from_header"]
+    msg.attach(MIMEText(text, "plain", "utf-8"))
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
 
     req = urllib.request.Request(
-        RESEND_API_URL,
-        data=payload,
+        GMAIL_SEND_URL,
+        data=json.dumps({"raw": raw}).encode("utf-8"),
         method="POST",
         headers={
-            "Authorization": f"Bearer {cfg['api_key']}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
-            # O Cloudflare na frente da API do Resend recusa (403, "error
-            # code: 1010") o User-Agent padrão do urllib ("Python-urllib/x.y")
-            # por parecer bot. Um valor comum resolve.
-            "User-Agent": "wms-kiwkiw-billing-access/1.0",
         },
     )
     try:
@@ -123,7 +153,7 @@ def _send(subject: str, html: str, text: str, recipients: list) -> bool:
             resp.read()
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Resend respondeu HTTP {e.code}: {body}") from e
+        raise RuntimeError(f"Gmail API respondeu HTTP {e.code}: {body}") from e
     return True
 
 

@@ -55,8 +55,9 @@ só falta o backup).
 **Arquivos:** `backend/models.py` (`BillingAccessCode`, tabela nova — nasce pelo `create_all`, sem
 migração), `backend/routers/billing_access.py` (novo — `POST /billing/access/request`,
 `POST /billing/access/verify`, `GET /billing/access/status`), `backend/services/billing_access_mail.py`
-(novo — e-mails via smtplib/STARTTLS; sem `WMS_SMTP_USER`/`PASS` só imprime no console, é o modo
-dev local), `backend/auth.py` (`require_billing_access`), `backend/routers/billing.py` (troca
+(novo — e-mails via **API HTTP do Resend**, não SMTP — ver "Railway bloqueia SMTP" abaixo; sem
+`WMS_RESEND_API_KEY` só imprime no console, é o modo dev local), `backend/auth.py`
+(`require_billing_access`), `backend/routers/billing.py` (troca
 `require_admin` → `require_billing_access` nos 11 endpoints que mostram R$ — box-prices, closing,
 close, reopen, pdf, excel, consolidated + excel + pdfs.zip), `backend/schemas.py`, `backend/main.py`
 (registra o router), `frontend/src/api.ts` (`billingApi.accessStatus/requestAccessCode/verifyAccessCode`),
@@ -86,10 +87,38 @@ não estiver liberada + mini-contador no topo quando liberada).
 | "Zerar" o contador de erros ou o bloqueio manipulando data em SQLite via `datetime('now')` | `datetime('now')` do SQLite é **UTC**; o app compara com `now_brasilia()` (UTC-3) — um "expira 1 min atrás" em UTC pode continuar **3h no futuro** em Brasília e o teste "passa" sem testar nada | Testar via a própria sessão do SQLAlchemy com `now_brasilia() - timedelta(...)`, nunca SQL cru com `datetime('now')` |
 | Tentar destravar a rota `/billing` por completo | O objetivo é travar só os 11 endpoints com R$ — `seller-params`/`seller-box-prices`/`/billing/my` continuam abertos, por decisão do dono | Trocar a dependency só nos 11 endpoints listados acima, nunca no router inteiro |
 
+⚠️ **Railway bloqueia SMTP fora do plano Pro (achado em produção, 03/09/2026).** A primeira versão
+do `billing_access_mail.py` usava `smtplib` (Gmail + senha de app) — funcionava perfeito em dev
+local, mas em produção toda chamada a `/billing/access/request` demorava **exatos 15043ms** (o
+timeout que eu tinha configurado) e devolvia 500. Testado direto no **Console** do próprio serviço
+no Railway (`python3 -c "import socket; socket.create_connection(('smtp.gmail.com', 587),
+timeout=5)"`) → `OSError: [Errno 101] Network is unreachable`, **imediato**. Confirmado na
+documentação oficial: Railway bloqueia saída nas portas 465/587/2525 nos planos Free/Trial/Hobby,
+de propósito, anti-spam — só libera no plano **Pro** (e exige reimplantar depois do upgrade).
+
+**Correção:** trocado `smtplib`/SMTP por **API HTTP do Resend** (`https://api.resend.com/emails`,
+POST com `urllib` puro — zero dependência nova, mesma decisão de design). HTTPS (porta 443) não
+esbarra nesse bloqueio, funciona em qualquer plano do Railway. Variáveis mudaram de `WMS_SMTP_*`
+para `WMS_RESEND_API_KEY` + `WMS_MAIL_FROM`.
+
+⚠️ **Cloudflare na frente da API do Resend recusa o User-Agent padrão do `urllib`** (
+`Python-urllib/3.x`) com **403 "error code: 1010"** — parece erro do Resend, mas é bloqueio de bot
+do Cloudflare por causa do cabeçalho. Corrigido mandando um `User-Agent` normal
+(`wms-kiwkiw-billing-access/1.0`) na requisição. Vale pra qualquer chamada HTTP nova que este
+projeto fizer com `urllib` puro — bibliotecas tipo `requests` já mandam um UA mais "normal" e não
+costumam esbarrar nisso.
+
+⚠️ **Modo sandbox do Resend:** sem verificar um domínio próprio (`kiwkiw.com.br`, via DNS), só é
+possível **mandar e-mail pro endereço com que a conta do Resend foi criada**, e o remetente fica
+preso a `onboarding@resend.dev`. `WMS_BILLING_APPROVERS` em teste tem que ser exatamente esse
+e-mail, senão o envio falha. Verificar o domínio é passo separado, pendente, pra quando for pra
+valer com os aprovadores reais.
+
 **Testes:** 68 verificações E2E (+ 4 do cenário "sem `WMS_BILLING_MASTER_CODE`"), **100% verdes em
 SQLite e PostgreSQL** (banco descartável `wms_test_billing_access`, apagado ao final), mais
 conferência visual ponta a ponta (portão, código em modo console, contador, expiração devolve ao
-portão, modo claro/escuro, mobile) contra o banco local (cópia de produção via `/attEstoque`).
+portão, modo claro/escuro, mobile) contra o banco local (cópia de produção via `/attEstoque`), mais
+2 envios reais confirmados via API do Resend (código + os 2 tipos de alerta).
 
 ### `SECRET_KEY` e `WMS_EDIT_PASSPHRASE` — hardcoded no código, corrigido
 
@@ -1568,9 +1597,8 @@ Acesse: http://localhost:5173
 | `WMS_EDIT_PASSPHRASE` | Senha para edição de movimentações de estoque (admin only). **Em produção o app recusa subir sem ela** (03/09/2026, mesmo motivo do `SECRET_KEY`) |
 | `WMS_BILLING_APPROVERS` | Acesso Protegido ao Financeiro (02/09/2026) — e-mails dos responsáveis que recebem o código de 6 dígitos e os alertas, separados por vírgula |
 | `WMS_BILLING_MASTER_CODE` | Código-mestre de emergência do Acesso ao Financeiro (frase longa, 20+ chars). **Opcional** — vazio = sem backup, mas o app sobe normal e o fluxo por e-mail funciona |
-| `WMS_SMTP_HOST` / `WMS_SMTP_PORT` | Servidor SMTP para o e-mail do código de acesso ao Financeiro. Default `smtp.gmail.com` / `587` |
-| `WMS_SMTP_USER` / `WMS_SMTP_PASS` | Credenciais SMTP (Gmail: usuário + senha de app, não a senha normal da conta). **Vazias = modo console** — não envia, só imprime no log (mecanismo de teste local) |
-| `WMS_SMTP_FROM` | Endereço de remetente do e-mail (nome de exibição fixo "WMS Kiwkiw" no código). Vazio usa `WMS_SMTP_USER` |
+| `WMS_RESEND_API_KEY` | Chave da API do Resend (`https://resend.com`), usada pra enviar o código do Acesso ao Financeiro **por HTTP, não SMTP** (Railway bloqueia SMTP fora do plano Pro — ver "Mudanças Recentes"). **Vazia = modo console** — não envia, só imprime no log (mecanismo de teste local) |
+| `WMS_MAIL_FROM` | Remetente do e-mail (nome de exibição fixo "WMS Kiwkiw" no código). Sem domínio verificado no Resend, tem que ser `onboarding@resend.dev` (sandbox) |
 
 ### Frontend
 | Variável | Usado para |

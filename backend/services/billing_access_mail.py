@@ -4,22 +4,33 @@ WMS Kiwkiw - E-mails do Acesso Protegido ao Financeiro (02/09/2026)
 Só envio. As regras de quando enviar e para quem estão em
 `backend/routers/billing_access.py`.
 
-Envio via Gmail/SMTP com a biblioteca padrão (smtplib + STARTTLS) — zero
-dependência nova. Lê as variáveis de ambiente NA HORA DA CHAMADA (não em
-constante de módulo): evita depender da ordem exata entre `load_dotenv()`
-(main.py) e o import deste módulo, e facilita testar sobrescrevendo o
-ambiente por teste.
+Envio via API HTTP do Resend (https://resend.com), NÃO via SMTP.
+Motivo (03/09/2026): Railway bloqueia saída em portas de SMTP
+(465/587/2525) fora do plano Pro — confirmado em produção com
+"OSError: Network is unreachable" testado direto no console do Railway.
+A API do Resend é HTTPS (porta 443, sempre liberada), então não esbarra
+nesse bloqueio. Usa só `urllib` (biblioteca padrão) — zero dependência
+nova, mesma decisão de design do smtplib original.
 
-Modo dev/teste: se WMS_SMTP_USER ou WMS_SMTP_PASS não estiverem setados,
-NÃO tenta SMTP — só imprime o código e os destinatários no console. É o
+Lê as variáveis de ambiente NA HORA DA CHAMADA (não em constante de
+módulo): evita depender da ordem exata entre `load_dotenv()` (main.py) e
+o import deste módulo, e facilita testar sobrescrevendo o ambiente.
+
+Modo dev/teste: se WMS_RESEND_API_KEY não estiver setada, NÃO tenta
+enviar — só imprime o código e os destinatários no console. É o
 mecanismo de teste local pedido na especificação.
+
+⚠️ Enquanto o domínio não for verificado no Resend, só é possível mandar
+para o e-mail com que a conta do Resend foi criada (modo sandbox) — o
+remetente também fica preso a `onboarding@resend.dev`. Depois de
+verificar um domínio próprio (ex: kiwkiw.com.br), troque WMS_MAIL_FROM
+para um endereço desse domínio; os destinatários deixam de ter restrição.
 """
 
+import json
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from typing import Optional
+import urllib.error
+import urllib.request
 
 from ..timezone_utils import now_brasilia
 
@@ -28,14 +39,13 @@ _ROXO = "#7B63E8"
 _VERDE = "#3DD9A4"
 _FUNDO = "#14122A"
 
+RESEND_API_URL = "https://api.resend.com/emails"
 
-def _smtp_config() -> dict:
+
+def _resend_config() -> dict:
     return {
-        "host": os.environ.get("WMS_SMTP_HOST", "smtp.gmail.com"),
-        "port": int(os.environ.get("WMS_SMTP_PORT", "587") or "587"),
-        "user": os.environ.get("WMS_SMTP_USER", ""),
-        "password": os.environ.get("WMS_SMTP_PASS", ""),
-        "from_addr": os.environ.get("WMS_SMTP_FROM", ""),
+        "api_key": os.environ.get("WMS_RESEND_API_KEY", ""),
+        "from_addr": os.environ.get("WMS_MAIL_FROM", "onboarding@resend.dev"),
     }
 
 
@@ -70,35 +80,50 @@ def _html_shell(title: str, body_html: str) -> str:
 
 def _send(subject: str, html: str, text: str, recipients: list) -> bool:
     """
-    Envia (SMTP) ou, em modo dev sem credenciais, imprime no console.
-    Retorna True se "enviou" (de verdade ou via console); deixa a exceção
-    do smtplib subir para o chamador decidir o que fazer com a falha.
+    Envia via API do Resend ou, em modo dev sem chave configurada, imprime
+    no console. Deixa a exceção subir pro chamador decidir o que fazer com
+    a falha (ele é quem loga e devolve o 500 genérico pro usuário).
     """
     if not recipients:
         print(f"[billing_access] WMS_BILLING_APPROVERS vazio — nada a enviar. Assunto: {subject}")
         return False
 
-    cfg = _smtp_config()
-    if not cfg["user"] or not cfg["password"]:
-        # Modo console (dev local, sem SMTP configurado)
-        print(f"[billing_access] (modo console — sem SMTP configurado)")
+    cfg = _resend_config()
+    if not cfg["api_key"]:
+        # Modo console (dev local, sem Resend configurado)
+        print(f"[billing_access] (modo console — sem WMS_RESEND_API_KEY configurada)")
         print(f"[billing_access] Assunto: {subject}")
         print(f"[billing_access] Destinatários: {', '.join(recipients)}")
         print(f"[billing_access] Texto:\n{text}")
         return True
 
-    from_display = f"WMS Kiwkiw <{cfg['from_addr'] or cfg['user']}>"
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = from_display
-    msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(text, "plain", "utf-8"))
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    payload = json.dumps({
+        "from": f"WMS Kiwkiw <{cfg['from_addr']}>",
+        "to": recipients,
+        "subject": subject,
+        "html": html,
+        "text": text,
+    }).encode("utf-8")
 
-    with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as server:
-        server.starttls()
-        server.login(cfg["user"], cfg["password"])
-        server.sendmail(cfg["from_addr"] or cfg["user"], recipients, msg.as_string())
+    req = urllib.request.Request(
+        RESEND_API_URL,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {cfg['api_key']}",
+            "Content-Type": "application/json",
+            # O Cloudflare na frente da API do Resend recusa (403, "error
+            # code: 1010") o User-Agent padrão do urllib ("Python-urllib/x.y")
+            # por parecer bot. Um valor comum resolve.
+            "User-Agent": "wms-kiwkiw-billing-access/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend respondeu HTTP {e.code}: {body}") from e
     return True
 
 

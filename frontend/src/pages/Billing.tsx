@@ -35,6 +35,10 @@ type Draft = {
   overrides: Record<number, { channel_override: string | null; b2b_adicional: number | null; note: string | null }>;
 };
 
+// ⚠️ TEMPORARIAMENTE false (04/09/2026, a pedido do dono) — ver o comentário
+// junto do early-return do portão, mais abaixo, pro contexto completo.
+const ACCESS_GATE_ENABLED = false;
+
 const isAccessError = (e: any) => e?.response?.data?.detail === 'acesso_financeiro_requerido';
 
 // ── Acesso Protegido ao Financeiro (02/09/2026) ─────────────────────────────
@@ -325,11 +329,19 @@ export default function BillingPage() {
   // Portão de acesso: substitui TODO o conteúdo da tela enquanto a janela de
   // 4h não estiver liberada. Fica depois de todos os hooks (regra dos hooks),
   // mas antes do resto do JSX/lógica de faturamento.
-  if (accessQ.isLoading) {
-    return <div className="p-6 text-sm text-t3">Carregando…</div>;
-  }
-  if (!access?.ativo) {
-    return <BillingAccessGate bloqueadoAte={access?.bloqueado_ate ?? null} onUnlocked={releaseAccess} />;
+  //
+  // ⚠️ TEMPORARIAMENTE DESATIVADO (04/09/2026, a pedido do dono) — o envio de
+  // e-mail (Resend) ainda estava sendo configurado e a equipe precisava usar
+  // o Faturamento na hora. O backend também voltou de require_billing_access
+  // pra require_admin nos mesmos 11 endpoints (ver routers/billing.py).
+  // Reativar: virar ACCESS_GATE_ENABLED pra true (e reverter o backend).
+  if (ACCESS_GATE_ENABLED) {
+    if (accessQ.isLoading) {
+      return <div className="p-6 text-sm text-t3">Carregando…</div>;
+    }
+    if (!access?.ativo) {
+      return <BillingAccessGate bloqueadoAte={access?.bloqueado_ate ?? null} onUnlocked={releaseAccess} />;
+    }
   }
 
   const lock = isClosed ? 'opacity-50 pointer-events-none' : '';

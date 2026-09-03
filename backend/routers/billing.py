@@ -8,22 +8,25 @@ Fechamento mensal por (seller x mês). Toda a matemática está em
 `billing_configs` e as colunas comerciais de `Seller` NÃO são mais lidas
 nem escritas por este módulo (ficam para rollback).
 
-Permissão: por padrão `require_billing_access` (admin + acesso ao Financeiro
-liberado — ver "Acesso Protegido ao Financeiro" abaixo), EXCETO:
+Permissão: tudo `require_admin`, EXCETO:
   * os dois endpoints de `seller-params` e os de `seller-box-prices`, usados
-    pela aba "Comercial" do cadastro de Sellers (`require_manager_or_above`,
-    sem o portão — decisão do dono do sistema, 02/09/2026);
+    pela aba "Comercial" do cadastro de Sellers (`require_manager_or_above`);
   * o bloco `/billing/my/...` (02/09/2026), usado pela aba "Financeiro" do
     Portal do Seller: `require_authenticated` + `current_user.seller_id`
     obrigatório. O seller NUNCA informa um `seller_id` — ele vem do token —
     e o payload devolvido é podado das tarifas do contrato.
 
-Acesso Protegido ao Financeiro (02/09/2026): mesmo sendo admin, os 11
-endpoints de valores em R$ (box-prices, closing, close, reopen, pdf, excel,
-consolidated + excel + pdfs.zip) exigem uma janela de 4h liberada por um
-código de 6 dígitos enviado por e-mail (ou o código-mestre de emergência).
-`require_billing_access` (backend/auth.py) checa isso; o fluxo de pedir/
-confirmar o código está em `backend/routers/billing_access.py`.
+⚠️ Acesso Protegido ao Financeiro (02/09/2026) — TEMPORARIAMENTE DESATIVADO
+em 04/09/2026, a pedido do dono: o envio de e-mail (Resend) ainda estava
+sendo configurado e a equipe precisava usar o Faturamento na hora. A
+infraestrutura inteira continua no código (`require_billing_access` em
+backend/auth.py, `backend/routers/billing_access.py`, `BillingAccessCode`
+em models.py, `billing_access_mail.py`, o portão em Billing.tsx) — só a
+dependency dos 11 endpoints com R$ voltou de `require_billing_access` pra
+`require_admin`. Pra reativar: trocar `Depends(require_admin)` de volta pra
+`Depends(require_billing_access)` nesses 11 endpoints (ver git log do commit
+que fez essa troca pra achar as linhas exatas) e reativar `ACCESS_GATE_ENABLED`
+em Billing.tsx.
 """
 
 import io
@@ -38,7 +41,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..auth import require_manager_or_above, require_billing_access, require_authenticated
+from ..auth import require_manager_or_above, require_admin, require_authenticated
 from .. import models, schemas
 from ..models import FileType, OrderStatus
 from ..timezone_utils import now_brasilia
@@ -122,7 +125,7 @@ def put_seller_params(
 
 @router.get("/box-prices")
 def get_box_prices(
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     by_key = {r.box_key: r.price for r in db.query(models.BillingBoxPrice).all()}
@@ -133,7 +136,7 @@ def get_box_prices(
 @router.put("/box-prices")
 def put_box_prices(
     body: schemas.BillingBoxPricesIn,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     by_key = {r.box_key: r for r in db.query(models.BillingBoxPrice).all()}
@@ -296,7 +299,7 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
 @router.get("/closing/{seller_id}/{ref_month}")
 def get_closing(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -308,7 +311,7 @@ def get_closing(
 def put_closing(
     seller_id: int, ref_month: str,
     body: schemas.BillingClosingDraftIn,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -366,7 +369,7 @@ def put_closing(
 @router.post("/closing/{seller_id}/{ref_month}/close")
 def close_month(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -413,7 +416,7 @@ def close_month(
 @router.post("/closing/{seller_id}/{ref_month}/reopen")
 def reopen_month(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -442,7 +445,7 @@ def _ascii(s: str) -> str:
 @router.get("/closing/{seller_id}/{ref_month}/pdf")
 def closing_pdf(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -457,7 +460,7 @@ def closing_pdf(
 @router.get("/closing/{seller_id}/{ref_month}/excel")
 def closing_excel(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -595,7 +598,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
 @router.get("/consolidated/{ref_month}")
 def get_consolidated(
     ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -606,7 +609,7 @@ def get_consolidated(
 @router.get("/consolidated/{ref_month}/excel")
 def consolidated_excel(
     ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -623,7 +626,7 @@ def consolidated_excel(
 @router.get("/consolidated/{ref_month}/pdfs.zip")
 def consolidated_zip(
     ref_month: str,
-    current_user: models.User = Depends(require_billing_access),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)

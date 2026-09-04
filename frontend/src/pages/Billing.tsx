@@ -37,7 +37,7 @@ type Draft = {
 
 // ⚠️ TEMPORARIAMENTE false (04/09/2026, a pedido do dono) — ver o comentário
 // junto do early-return do portão, mais abaixo, pro contexto completo.
-const ACCESS_GATE_ENABLED = false;
+const ACCESS_GATE_ENABLED = true;
 
 const isAccessError = (e: any) => e?.response?.data?.detail === 'acesso_financeiro_requerido';
 

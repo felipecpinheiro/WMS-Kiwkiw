@@ -41,7 +41,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..auth import require_manager_or_above, require_admin, require_authenticated
+from ..auth import require_manager_or_above, require_admin, require_billing_access, require_authenticated
 from .. import models, schemas
 from ..models import FileType, OrderStatus
 from ..timezone_utils import now_brasilia
@@ -125,7 +125,7 @@ def put_seller_params(
 
 @router.get("/box-prices")
 def get_box_prices(
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     by_key = {r.box_key: r.price for r in db.query(models.BillingBoxPrice).all()}
@@ -136,7 +136,7 @@ def get_box_prices(
 @router.put("/box-prices")
 def put_box_prices(
     body: schemas.BillingBoxPricesIn,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     by_key = {r.box_key: r for r in db.query(models.BillingBoxPrice).all()}
@@ -299,7 +299,7 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
 @router.get("/closing/{seller_id}/{ref_month}")
 def get_closing(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -311,7 +311,7 @@ def get_closing(
 def put_closing(
     seller_id: int, ref_month: str,
     body: schemas.BillingClosingDraftIn,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -369,7 +369,7 @@ def put_closing(
 @router.post("/closing/{seller_id}/{ref_month}/close")
 def close_month(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -416,7 +416,7 @@ def close_month(
 @router.post("/closing/{seller_id}/{ref_month}/reopen")
 def reopen_month(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -445,7 +445,7 @@ def _ascii(s: str) -> str:
 @router.get("/closing/{seller_id}/{ref_month}/pdf")
 def closing_pdf(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -460,7 +460,7 @@ def closing_pdf(
 @router.get("/closing/{seller_id}/{ref_month}/excel")
 def closing_excel(
     seller_id: int, ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -598,7 +598,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
 @router.get("/consolidated/{ref_month}")
 def get_consolidated(
     ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -609,7 +609,7 @@ def get_consolidated(
 @router.get("/consolidated/{ref_month}/excel")
 def consolidated_excel(
     ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)
@@ -626,7 +626,7 @@ def consolidated_excel(
 @router.get("/consolidated/{ref_month}/pdfs.zip")
 def consolidated_zip(
     ref_month: str,
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_billing_access),
     db: Session = Depends(get_db),
 ):
     _check_month(ref_month)

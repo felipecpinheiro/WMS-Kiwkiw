@@ -2385,7 +2385,7 @@ def get_interrupted_orders(
 NF_STATUS_MAX_DAYS = 7
 # Teto de linhas. A TELA e o CSV usam o mesmo teto de proposito: o CSV tem
 # que ser exatamente o que o usuario esta vendo antes de mandar pro cliente.
-NF_STATUS_LIMIT = 500
+NF_STATUS_LIMIT = 1500
 
 _NF_STATUS_SITUACAO = {
     "COMPLETED": "1 - FINALIZADA",

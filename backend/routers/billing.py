@@ -631,9 +631,13 @@ def _sellers_for_month(db: Session, ref_month: str) -> list[models.Seller]:
     ids = ids_with_nf | ids_with_closing
     if not ids:
         return []
-    return db.query(models.Seller).filter(models.Seller.id.in_(ids)).order_by(
-        models.Seller.trade_name.asc()
-    ).all()
+    return (
+        db.query(models.Seller)
+        .options(joinedload(models.Seller.unit))
+        .filter(models.Seller.id.in_(ids))
+        .order_by(models.Seller.trade_name.asc())
+        .all()
+    )
 
 
 def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
@@ -641,9 +645,12 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
     for seller in _sellers_for_month(db, ref_month):
         payload = _build_payload(db, seller, ref_month)
         f = payload["fatura"]
+        unit = seller.unit
         rows.append({
             "seller_id": seller.id,
             "seller_name": payload["seller_name"],
+            "unit_id": seller.unit_id,
+            "unit_name": unit.name if unit else None,
             "active": seller.active,
             "nf_count": payload["n_b2c"] + payload["n_b2b"],
             "b2c": f["subtotal_b2c"],
@@ -655,6 +662,13 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
             "status": "fechado" if payload["status"] == "closed"
                       else ("em aberto" if payload["persisted"] else "não iniciado"),
         })
+    # Agrupa por unidade: unidades em ordem alfabética, sellers A–Z dentro de
+    # cada uma; seller sem unidade vai para o fim.
+    rows.sort(key=lambda r: (
+        r["unit_name"] is None,
+        (r["unit_name"] or "").lower(),
+        r["seller_name"].lower(),
+    ))
     return rows
 
 

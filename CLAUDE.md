@@ -105,6 +105,21 @@ de Sellers e no grupo "Contrato" do Faturamento (`Draft.inicio_contrato`, padrã
 
 ⚠️ Migração só em `billing_seller_params` (a de fechamento **não** ganha a coluna — de propósito).
 
+### Consolidado do mês agrupado por unidade
+
+`GET /billing/consolidated/{ref_month}` — cada linha ganhou `unit_id` e `unit_name`
+(`joinedload(Seller.unit)` em `_sellers_for_month`). `_consolidated_rows` ordena por
+**(unidade A–Z, seller A–Z dentro)**; seller sem unidade vai para o fim (`unit_name` NULL).
+
+- **Tela** (`Billing.tsx` `Consolidated`): agrupa as linhas consecutivas por unidade —
+  cabeçalho "UNIDADE X" + sellers indentados + linha **"Subtotal Unidade X"** (só a coluna Total) +
+  **"TOTAL GERAL DO MÊS"** no rodapé (soma de tudo). Sem coluna "Unidade" nas linhas (o cabeçalho
+  já diz).
+- **Excel** (`consolidated_xlsx_bytes`): coluna **"Unidade"** nova (col 1, as demais deslocam);
+  linhas na mesma ordem agrupada; **sem linhas de subtotal** (decisão do dono); a linha de total
+  geral no rodapé que já existia continua.
+- `_build_payload`/cálculo **não mudaram** — só a montagem da lista consolidada.
+
 ### Portão do Financeiro dispensado em ambiente LOCAL
 
 `auth.py` ganhou `_IS_LOCAL_DB` (SQLite **ou** Postgres em `localhost`/`127.0.0.1` — o dev roda

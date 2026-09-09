@@ -810,6 +810,17 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
     billingApi.consolidated(refMonth).then(r => r.data));
   const rows = data?.rows || [];
   const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
+
+  // rows já vem do backend agrupado (unidade A–Z, seller A–Z dentro).
+  const groups: { unit: string; rows: any[] }[] = [];
+  for (const r of rows) {
+    const label = r.unit_name || 'Sem unidade';
+    const last = groups[groups.length - 1];
+    if (last && last.unit === label) last.rows.push(r);
+    else groups.push({ unit: label, rows: [r] });
+  }
+  const grandTotal = rows.reduce((s: number, r: any) => s + (r.total || 0), 0);
+
   return (
     <div className="bg-surface rounded-xl border border-line-soft p-5">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -837,20 +848,44 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             <th className="text-left px-2 py-1.5">Situação</th>
           </tr></thead>
           <tbody>
-            {rows.map((r: any) => (
-              <tr key={r.seller_id} className="border-t border-line-soft hover:bg-surface-2 cursor-pointer"
-                onClick={() => onOpen(r.seller_id)}>
-                <td className="px-2 py-1.5">{r.seller_name}{r.active ? '' : ' (inativo)'}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{r.nf_count}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2c)}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2b)}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{brl(r.seguro)}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{brl(r.armazenagem)}</td>
-                <td className="px-2 py-1.5 text-right font-mono">{brl(r.avulsos)}</td>
-                <td className="px-2 py-1.5 text-right font-mono font-semibold">{brl(r.total)}</td>
-                <td className="px-2 py-1.5">{r.status}</td>
+            {groups.map(g => {
+              const sub = g.rows.reduce((s: number, r: any) => s + (r.total || 0), 0);
+              return (
+                <Fragment key={g.unit}>
+                  <tr className="bg-surface-2">
+                    <td colSpan={9} className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-300">
+                      {g.unit}
+                    </td>
+                  </tr>
+                  {g.rows.map((r: any) => (
+                    <tr key={r.seller_id} className="border-t border-line-soft hover:bg-surface-2 cursor-pointer"
+                      onClick={() => onOpen(r.seller_id)}>
+                      <td className="px-2 py-1.5 pl-4">{r.seller_name}{r.active ? '' : ' (inativo)'}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{r.nf_count}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2c)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.b2b)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.seguro)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.armazenagem)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.avulsos)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono font-semibold">{brl(r.total)}</td>
+                      <td className="px-2 py-1.5">{r.status}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-line-soft font-semibold text-t2">
+                    <td colSpan={7} className="px-2 py-1.5 text-right">Subtotal {g.unit}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-t1">{brl(sub)}</td>
+                    <td></td>
+                  </tr>
+                </Fragment>
+              );
+            })}
+            {!!rows.length && (
+              <tr className="border-t-2 border-line font-bold">
+                <td colSpan={7} className="px-2 py-2 text-right text-t2">TOTAL GERAL DO MÊS</td>
+                <td className="px-2 py-2 text-right font-mono text-t1">{brl(grandTotal)}</td>
+                <td></td>
               </tr>
-            ))}
+            )}
             {!rows.length && <tr><td colSpan={9} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
           </tbody>
         </table>

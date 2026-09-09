@@ -354,8 +354,9 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
     hdr_font = Font(bold=True, color="FFFFFF")
 
     ws.cell(1, 1, f"Consolidado de faturamento — {_month_label(ref_month)}").font = Font(bold=True, size=13)
-    headers = ["Seller", "Ativo", "NFs", "B2C", "B2B", "Seguro", "Armazenagem",
-               "Avulsos", "Total", "Situação"]
+    # `rows` já vem agrupado por unidade (unidade A–Z, seller A–Z dentro).
+    headers = ["Unidade", "Seller", "Ativo", "NFs", "B2C", "B2B", "Seguro",
+               "Armazenagem", "Avulsos", "Total", "Situação"]
     for c, h in enumerate(headers, 1):
         cell = ws.cell(3, c, h)
         cell.fill = hdr_fill
@@ -363,20 +364,21 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
     r = 4
     tot = 0.0
     for row in rows:
-        ws.cell(r, 1, row["seller_name"])
-        ws.cell(r, 2, "Sim" if row["active"] else "Não")
-        ws.cell(r, 3, row["nf_count"])
-        ws.cell(r, 4, row["b2c"])
-        ws.cell(r, 5, row["b2b"])
-        ws.cell(r, 6, row["seguro"])
-        ws.cell(r, 7, row["armazenagem"])
-        ws.cell(r, 8, row["avulsos"])
-        ws.cell(r, 9, row["total"])
-        ws.cell(r, 10, row["status"])
+        ws.cell(r, 1, row.get("unit_name") or "Sem unidade")
+        ws.cell(r, 2, row["seller_name"])
+        ws.cell(r, 3, "Sim" if row["active"] else "Não")
+        ws.cell(r, 4, row["nf_count"])
+        ws.cell(r, 5, row["b2c"])
+        ws.cell(r, 6, row["b2b"])
+        ws.cell(r, 7, row["seguro"])
+        ws.cell(r, 8, row["armazenagem"])
+        ws.cell(r, 9, row["avulsos"])
+        ws.cell(r, 10, row["total"])
+        ws.cell(r, 11, row["status"])
         tot += row["total"]
         r += 1
     ws.cell(r, 1, f"{len(rows)} sellers").font = Font(bold=True)
-    ws.cell(r, 9, round(tot, 2)).font = Font(bold=True)
+    ws.cell(r, 10, round(tot, 2)).font = Font(bold=True)
 
     out = io.BytesIO()
     wb.save(out)

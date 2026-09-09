@@ -753,7 +753,7 @@ export default function HandlingPage() {
             onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
             className={inputCls} style={inputStyle}
           >
-            {isAdmin && <option value="">Todas as unidades</option>}
+            {(isAdmin || isManager) && <option value="">Todas as unidades</option>}
             {(units as any[]).map((u: any) => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}

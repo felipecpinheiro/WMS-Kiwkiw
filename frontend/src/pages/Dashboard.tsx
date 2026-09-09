@@ -1391,7 +1391,7 @@ export default function DashboardPage() {
                 onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
                 className="bg-transparent text-sm text-t2 outline-none"
               >
-                {user.role === 'admin' && <option value="">Todas</option>}
+                {(user.role === 'admin' || user.role === 'manager') && <option value="">Todas</option>}
                 {(units as any[]).map((u: any) => (
                   <option key={u.id} value={u.id}>{u.name}</option>
                 ))}

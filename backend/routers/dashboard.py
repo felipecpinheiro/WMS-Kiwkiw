@@ -154,15 +154,17 @@ def master_dashboard(
     """
     Cockpit gerencial. Mostra o que foi importado no dia `target_date`
     (default = hoje). Pode filtrar por unidade.
-    Manager: restrito automaticamente aos sellers vinculados.
+    Manager: vê todas as unidades, igual admin (decisão de 09/09/2026). O
+    seletor do topo ganhou a opção "Todas"; escolhendo uma unidade específica,
+    o gerente vê a unidade inteira, não só os sellers que atende.
     """
     target = target_date or today_brasilia()
     user_role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
 
-    # ── Sellers do gerente (filtra automaticamente se role=manager) ─
+    # ── Filtro automático por sellers do gerente: DESATIVADO em 09/09/2026 ─
+    # O gerente passou a enxergar todas as unidades (mesmo comportamento do
+    # admin nesta tela). Mantido como lista vazia para não filtrar nada.
     manager_seller_ids: list[int] = []
-    if user_role == "manager":
-        manager_seller_ids = [s.id for s in (current_user.sellers or [])]
 
     # ── Base: orders importados no dia alvo ─────────────────────
     # Filtragem por unidade via seller.unit_id — não usa Order.unit_id
@@ -268,7 +270,7 @@ def master_dashboard(
     units = db.query(models.Unit).filter(models.Unit.active == True).order_by(models.Unit.name).all()
     units_summary = []
     for unit in units:
-        if unit_id and unit_id != unit.id and user_role != "admin":
+        if unit_id and unit_id != unit.id and user_role not in ("admin", "manager"):
             units_summary.append({
                 "unit_id": unit.id, "unit_name": unit.name,
                 "total": 0, "completed": 0, "pct": 0,

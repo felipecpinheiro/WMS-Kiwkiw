@@ -1026,7 +1026,7 @@ client (0) < operator (1) < manager (2) < admin (3)
 | Editar produtos/kits/estoque | ✅ | ✅ (só seus sellers) | ⚠️ parcial | ❌ |
 | Bipar pedidos | ✅ | ✅ | ✅ | ❌ |
 | Interromper pedido | ✅ | ✅ | ✅ | ❌ |
-| Ver dashboard master | ✅ | ✅ (restrito ao grupo) | ❌ | ❌ |
+| Ver dashboard master | ✅ | ✅ (todas as unidades desde 09/09/2026) | ❌ | ❌ |
 | Ver portal do seller | ✅ | ❌ | ❌ | ✅ |
 | Editar configurações | ✅ | ❌ | ❌ | ❌ |
 | Force-complete / cancel lote | ✅ | ❌ | ❌ | ❌ |
@@ -1559,8 +1559,8 @@ esses números** (decisão do dono do sistema).
 ### Dashboard Master — card "Por Unidade"
 - Endpoint `GET /dashboard/master` (`routers/dashboard.py`), bloco `units_summary`
 - Quando o usuário filtra por uma unidade específica no seletor do topo, todos os outros blocos do dashboard (KPIs, checagens, sellers com pedidos, etc.) respeitam esse filtro normalmente
-- **Exceção: role `admin`** — o card "Por Unidade" sempre mostra o resumo completo de **todas** as unidades ativas, independente da unidade selecionada no seletor. Implementado com `and user_role != "admin"` na condição que zera as unidades não selecionadas
-- Para `manager`, o comportamento não muda: só a unidade filtrada (ou os sellers que ele atende) aparece com números; as demais ficam zeradas
+- **Exceção: roles `admin` e `manager`** (gerente incluído em 09/09/2026) — o card "Por Unidade" sempre mostra o resumo completo de **todas** as unidades ativas, independente da unidade selecionada no seletor. Implementado com `and user_role not in ("admin", "manager")` na condição que zera as unidades não selecionadas
+- ⚠️ **09/09/2026:** o gerente deixou de ser restrito automaticamente aos sellers vinculados no `/dashboard/master` — `manager_seller_ids` agora fica **sempre vazio** (era `[s.id for s in current_user.sellers]`). O gerente vê todas as unidades; escolhendo uma unidade específica, vê a unidade inteira, não só os sellers que atende. Mesma mudança em `scanning.py` `session_cards` (o filtro por `my_seller_ids` agora só vale para `operator`). Decisão do dono. **Operador não mudou.**
 
 ---
 
@@ -1860,8 +1860,8 @@ psycopg2-binary>=2.9.9             ← PostgreSQL
 - Inicializada com `user.unit_id` do token se não houver preferência salva
 - Presente em: **Dashboard** e **Manuseios (Handling)**
 - Operador NÃO vê o seletor — está sempre fixo na sua unidade
-- Admin tem opção "Todas" (envia `unit_id=undefined` para a API)
-- Manager não tem opção "Todas" — vê sempre uma unidade específica
+- Admin e **manager** (desde 09/09/2026) têm a opção "Todas" (envia `unit_id=undefined` para a API), no Dashboard e em Manuseios
+- Operador continua sem "Todas" — fixo na sua unidade
 - A mesma chave de localStorage é compartilhada entre Dashboard e Manuseios (mudança em um reflete no outro na próxima carga)
 
 ### Sellers por Unidade no Formulário de Usuário

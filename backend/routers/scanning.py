@@ -2950,8 +2950,10 @@ def session_cards(
 
     # Sellers vinculados ao usuário logado (operador ou gerente).
     # Usado para filtrar cards no nível do servidor — mais seguro que filtrar no frontend.
+    # Gerente deixou de ser restrito aos sellers vinculados em 09/09/2026 —
+    # passou a ver todas as unidades (igual admin). Só o operador continua preso.
     my_seller_ids: list[int] = []
-    if user_role in ("operator", "manager"):
+    if user_role == "operator":
         my_seller_ids = [s.id for s in (current_user.sellers or [])]
 
     # Busca sessões com filtros de data/unidade
@@ -2960,8 +2962,9 @@ def session_cards(
     )
 
     # Filtra sessões:
-    # - Operador/Gerente com sellers vinculados → só sessões que contenham seus sellers
-    # - Admin com unit_id explícito → filtra por sellers da unidade
+    # - Operador com sellers vinculados → só sessões que contenham seus sellers
+    # - Admin/Gerente com unit_id explícito → filtra por sellers da unidade
+    #   (gerente sem unit_id = "Todas": vê tudo, igual admin — 09/09/2026)
     # NÃO usa PickingSession.unit_id pois pode estar desatualizado (importado pelo admin)
     from sqlalchemy import exists as _exists
 

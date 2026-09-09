@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..auth import require_admin
+from ..auth import require_admin, _IS_LOCAL_DB
 from .. import models, schemas
 from ..timezone_utils import now_brasilia
 from ..services import billing_access_mail as mailer
@@ -253,6 +253,9 @@ def access_status(
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    # Dev local (banco em localhost): sem portão — o front recebe "ativo" e /billing abre direto.
+    if _IS_LOCAL_DB:
+        return {"ativo": True, "liberado_ate": None, "bloqueado_ate": None}
     now = now_brasilia()
     active = (
         db.query(models.BillingAccessCode)

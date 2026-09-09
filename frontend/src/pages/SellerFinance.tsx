@@ -274,6 +274,33 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
             </div>
           </div>
 
+          {/* Linhas avulsas — logo abaixo do resumo, pois é onde o cliente vê o total */}
+          {(payload.adjustments || []).length > 0 && (
+            <div className="bg-surface border border-line-soft rounded-2xl p-4 sm:p-5">
+              <h2 className="text-[13px] font-semibold text-t2">Linhas avulsas</h2>
+              <p className="text-[11px] text-t4 mt-0.5 mb-2">Ajustes lançados manualmente pela Kiwkiw.</p>
+              <div>
+                {payload.adjustments.map((a: any, i: number) => (
+                  <div key={i}
+                    className="flex items-center justify-between gap-4 py-2.5 border-b border-line-soft
+                      last:border-b-0 text-[13px]">
+                    <div className="min-w-0">
+                      <div className="text-t2">{a.descricao || '—'}</div>
+                      {a.obs && (
+                        <div className="text-[12px] text-t3 mt-0.5">
+                          <span className="text-t4">motivo: </span>{a.obs}
+                        </div>
+                      )}
+                    </div>
+                    <div className={`font-semibold font-mono whitespace-nowrap ${a.sign < 0 ? 'text-ok' : 'text-t1'}`}>
+                      {a.sign < 0 ? '−' : '+'} {brl(a.valor)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Notas fiscais */}
           <div className="bg-surface border border-line-soft rounded-2xl p-4 sm:p-5">
             <h2 className="text-[13px] font-semibold text-t2">Notas fiscais de saída — {label}</h2>
@@ -284,31 +311,6 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
               <NfList kind="b2c" lines={payload.b2c_lines || []} soma={payload.soma_b2c} />
               <NfList kind="b2b" lines={payload.b2b_lines || []} soma={payload.soma_b2b} />
             </div>
-          </div>
-
-          {/* Linhas avulsas */}
-          <div className="bg-surface border border-line-soft rounded-2xl p-4 sm:p-5">
-            <h2 className="text-[13px] font-semibold text-t2">Linhas avulsas</h2>
-            <p className="text-[11px] text-t4 mt-0.5 mb-2">Ajustes lançados manualmente pela Kiwkiw.</p>
-            {(payload.adjustments || []).length === 0 ? (
-              <div className="py-5 text-center text-[13px] text-t4">Sem linhas avulsas neste mês.</div>
-            ) : (
-              <div>
-                {payload.adjustments.map((a: any, i: number) => (
-                  <div key={i}
-                    className="flex items-center justify-between gap-4 py-2.5 border-b border-line-soft
-                      last:border-b-0 text-[13px]">
-                    <div className="min-w-0">
-                      <div className="text-t2">{a.descricao || '—'}</div>
-                      {a.obs && <div className="text-[12px] text-t4">{a.obs}</div>}
-                    </div>
-                    <div className={`font-semibold font-mono whitespace-nowrap ${a.sign < 0 ? 'text-ok' : 'text-t1'}`}>
-                      {a.sign < 0 ? '−' : '+'} {brl(a.valor)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </>
       )}

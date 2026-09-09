@@ -39,6 +39,14 @@ if not hasattr(_bcrypt, '__about__'):
 # configuração extra pra rodar o projeto na máquina.
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _IS_PRODUCTION_DB = _DATABASE_URL.startswith("postgres")
+# Local = SQLite (sem DATABASE_URL) OU Postgres em localhost. Produção usa
+# sempre o host interno da Railway (...railway.internal), nunca localhost —
+# ver CLAUDE.md, "A lentidão crônica NÃO era código".
+_IS_LOCAL_DB = (
+    not _IS_PRODUCTION_DB
+    or "localhost" in _DATABASE_URL
+    or "127.0.0.1" in _DATABASE_URL
+)
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
@@ -235,7 +243,11 @@ def require_billing_access(
     janela de 4h liberada (código de 6 dígitos por e-mail ou código-mestre —
     ver `backend/routers/billing_access.py`). O front reconhece o detail
     abaixo e volta pro portão de acesso.
+
+    Em dev local (banco em localhost) o portão é dispensado — só admin basta.
     """
+    if _IS_LOCAL_DB:
+        return current_user
     row = (
         db.query(models.BillingAccessCode)
         .filter(

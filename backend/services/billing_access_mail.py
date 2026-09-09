@@ -40,6 +40,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from ..timezone_utils import now_brasilia
+from ..auth import _IS_LOCAL_DB
 
 # Identidade visual Kiwkiw (ver CLAUDE.md — PDF Generator)
 _ROXO = "#7B63E8"
@@ -48,6 +49,10 @@ _FUNDO = "#14122A"
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+
+
+# Em dev local (`_IS_LOCAL_DB` — SQLite ou Postgres em localhost) nunca manda
+# e-mail de verdade, mesmo com as WMS_GMAIL_* no .env: cai sempre no modo console.
 
 
 def _gmail_config() -> dict:
@@ -116,16 +121,18 @@ def _send(subject: str, html: str, text: str, recipients: list) -> bool:
     fazer com a falha (ele é quem loga e devolve o 500 genérico pro usuário).
     """
     if not recipients:
-        print(f"[billing_access] WMS_BILLING_APPROVERS vazio — nada a enviar. Assunto: {subject}")
+        print(f"[billing_access] WMS_BILLING_APPROVERS vazio — nada a enviar. Assunto: {subject}", flush=True)
         return False
 
     cfg = _gmail_config()
-    if not (cfg["client_id"] and cfg["client_secret"] and cfg["refresh_token"]):
-        # Modo console (dev local, sem Gmail configurado)
-        print(f"[billing_access] (modo console — sem credenciais do Gmail configuradas)")
-        print(f"[billing_access] Assunto: {subject}")
-        print(f"[billing_access] Destinatários: {', '.join(recipients)}")
-        print(f"[billing_access] Texto:\n{text}")
+    if _IS_LOCAL_DB or not (cfg["client_id"] and cfg["client_secret"] and cfg["refresh_token"]):
+        # Modo console: sempre em dev local (SQLite), ou em qualquer ambiente
+        # sem as 3 credenciais do Gmail configuradas. flush=True porque o
+        # reloader do uvicorn no Windows bufferiza o stdout do processo-filho.
+        print(f"[billing_access] (modo console — dev local ou sem credenciais do Gmail)", flush=True)
+        print(f"[billing_access] Assunto: {subject}", flush=True)
+        print(f"[billing_access] Destinatários: {', '.join(recipients)}", flush=True)
+        print(f"[billing_access] Texto:\n{text}", flush=True)
         return True
 
     access_token = _gmail_access_token(cfg)

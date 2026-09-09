@@ -39,6 +39,63 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 09/09/2026 — Aba "Dashboard" no Portal do Seller
+
+**Sem migração.** Aba nova (`SellerPortal.tsx`, id `dashboard`) — **primeira do portal, abre
+nela**. Visão consolidada e **somente leitura** do próprio seller. Cada bloco tem o período que
+faz sentido para ele; **não é faturamento** — contagem total, sem classificação B2C/B2B e sem os
+overrides manuais de fechamento.
+
+| Bloco | Período | Fonte |
+|---|---|---|
+| KPIs + status dos pedidos de hoje (barra empilhada) | dia (hoje) | `analytics` |
+| Pedidos por dia | últimos 30 dias (fixo) | `analytics` |
+| NFs por mês | últimos 12 meses (fixo) | `analytics` |
+| Estoque por nível (ALTO/MÉDIO/BAIXO) + ruptura | snapshot | `analytics` (`get_stock_report`) |
+| Prestes a romper (previsão ≤ 15 dias), clicável → modal do SKU | snapshot | `analytics` |
+| Mais vendidos (saídas de estoque) | **de/até + quantidade editáveis** (default 30 d / 10) | `top-skus` |
+
+**Endpoints** (`routers/dashboard.py`, `require`... na verdade `get_current_user` + guarda
+manual `_portal_seller_id`): escopo **sempre pelo `current_user.seller_id`** — não há parâmetro
+`seller_id`, um seller não vê o de outro. Só `client` e `admin` passam (403 p/ operator/manager);
+**sem seller vinculado = 400**.
+
+- `GET /dashboard/seller/analytics` — hoje / 30 d / 12 m / estoque. Uma varredura de ~370 dias de
+  `orders` monta os buckets diário e mensal **em Python** (evita `date_trunc`, que é só Postgres).
+  `func.date()` volta `str` no SQLite e `date` no PG — helper `_as_date` normaliza.
+- `GET /dashboard/seller/top-skus?date_from&date_to&limit` — `limit` travado 1–50 (`Query(ge=1,
+  le=50)` → 422 fora), datas default = hoje-30 d → hoje, inverte se vierem trocadas. Raw SQL em
+  `stock_movements` com `UPPER(CAST(movement_type AS VARCHAR)) IN ('OUT','S','SAIDA','SAÍDA')`
+  (mesmo padrão do `get_stock_report`). Nome do produto do catálogo `products` ativo, com o SKU
+  como fallback.
+
+**Schemas:** `SellerAnalytics`, `SellerTopSkus` (`schemas.py`, campos aninhados como `List[dict]`,
+estilo do `SellerDashboard`). **Sem tabela, migração ou índice novo** — reusa
+`ix_stock_movements_seller_date` e `ix_orders_seller_imported`.
+
+**Frontend:** `frontend/src/pages/SellerDashboard.tsx` (**novo**, `SellerDashboardTab({ sellerId,
+onSelectSku })`, mesmo desenho do `SellerFinance.tsx` — loader próprio, recharts, `useChartColors`);
+`api.ts` (`dashboardApi.sellerAnalytics` / `sellerTopSkus` + tipos); `SellerPortal.tsx`
+(item de menu `LayoutDashboard` na 1ª posição, `Tab` +`'dashboard'`, estado inicial `'dashboard'`,
+`onSelectSku={setSelectedSku}` reaproveita o `SkuDetailModal` que já existia).
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Query nova nesses endpoints citando "pedido" | Seller inativo/cancelado volta a vazar; e a contagem de hoje é por status | Filtro já exclui `CANCELLED`/`INACTIVE`; o escopo é `_portal_seller_id`, nunca um `seller_id` de query |
+| "Somar" o dashboard com a fatura | A contagem aqui é **total**, sem B2C/B2B nem override de fechamento — pode divergir da fatura de propósito | É indicador de volume/operação, não financeiro. Números de R$ só na aba Financeiro (`/billing/my`) |
+| Agrupar mês com `date_trunc` / `strftime` | `date_trunc` é só Postgres; `strftime` é só SQLite | Buckets montados em Python a partir de `func.date()` (+ `_as_date` p/ o retorno divergente) |
+| `limit` do top-skus vindo do front | Sem trava, um `limit` gigante varre tudo | `Query(10, ge=1, le=50)` — 422 fora da faixa |
+
+**Testes:** 35 verificações E2E, 100% verdes em **SQLite e PostgreSQL** (bancos descartáveis) —
+status ignorando cancelado, 30 pontos com dias zerados, 12 buckets mensais, movimento fora da
+janela, `limit` fora da faixa, datas invertidas, isolamento entre sellers, ruptura (inclui SKU
+apertado, exclui folgado e já-rompido), 403/400/escopo, regressão do `/dashboard/seller` antigo.
+`tsc --noEmit` limpo.
+
+---
+
 ## Mudanças Recentes — 09/09/2026 — Cobrança por FAIXA de pedidos (B2C) + portão do Financeiro dispensado em local
 
 **Sem push.** Dois assuntos.

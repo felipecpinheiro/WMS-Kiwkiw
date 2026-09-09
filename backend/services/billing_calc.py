@@ -15,6 +15,7 @@ Nada aqui toca em estoque.
 
 from __future__ import annotations
 
+import json
 import re
 from calendar import monthrange
 from datetime import datetime
@@ -38,6 +39,8 @@ PARAM_FIELDS = (
     "limite_itens_b2b", "tipos_caixa_inclusos", "cota_caixas_mes",
     "franquia_m3", "preco_m3", "seguro_incluso", "aliquota_seguro",
     "armazenagem_inclusa", "valor_segurado", "cubagem_m3",
+    # Cobrança por faixa de pedidos B2C (09/09/2026): toggle + JSON de faixas.
+    "usar_faixas_pedidos", "faixas_pedidos",
 )
 
 DEFAULT_PARAMS = {
@@ -47,6 +50,7 @@ DEFAULT_PARAMS = {
     "tipos_caixa_inclusos": "", "cota_caixas_mes": 0, "franquia_m3": 0.0,
     "preco_m3": 0.0, "seguro_incluso": False, "aliquota_seguro": 0.30,
     "armazenagem_inclusa": False, "valor_segurado": 0.0, "cubagem_m3": 0.0,
+    "usar_faixas_pedidos": False, "faixas_pedidos": "",
 }
 
 
@@ -143,6 +147,50 @@ def prefill_params(db: Session, seller_id: int, ref_month: str) -> dict:
     return default_params_for_seller(db, seller_id)
 
 
+# ── faixa de pedidos B2C ─────────────────────────────────────────────────────
+
+def parse_faixas(txt) -> list[dict]:
+    """JSON de faixas -> lista ordenada por `de`, limpa. Defensivo: lixo -> []."""
+    if not txt:
+        return []
+    try:
+        raw = json.loads(txt) if isinstance(txt, str) else txt
+    except (ValueError, TypeError):
+        return []
+    out: list[dict] = []
+    for item in raw or []:
+        try:
+            de = int(item["de"])
+            ate = int(item["ate"])
+            preco = float(item["preco"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if de < 1 or ate < de or preco < 0:
+            continue
+        out.append({"de": de, "ate": ate, "preco": r2(preco)})
+    out.sort(key=lambda f: f["de"])
+    return out
+
+
+def faixa_para_contagem(n_b2c: int, faixas: list[dict]):
+    """(preco_por_pedido, qtd_cobrada, faixa) para a contagem de NFs B2C.
+
+    - abaixo da 1ª faixa  -> preço da 1ª, qtd = `de` da 1ª (piso)
+    - dentro de uma faixa -> preço dela,  qtd = n_b2c
+    - acima da última     -> preço da última, qtd = n_b2c (todos ao preço da última)
+    - sem faixas          -> (None, n_b2c, None)
+    """
+    if not faixas:
+        return None, n_b2c, None
+    first, last = faixas[0], faixas[-1]
+    if n_b2c < first["de"]:
+        return first["preco"], first["de"], first
+    for f in faixas:
+        if f["de"] <= n_b2c <= f["ate"]:
+            return f["preco"], n_b2c, f
+    return last["preco"], n_b2c, last
+
+
 # ── NFs do mês ───────────────────────────────────────────────────────────────
 
 def list_month_orders(db: Session, seller_id: int, ref_month: str) -> list[models.Order]:
@@ -213,6 +261,17 @@ def compute_live(
         ov = overrides.get(o.id) or {}
         channels[o.id] = classify(o, params, ov.get("channel_override"))
 
+    # Cobrança por faixa de pedidos B2C: a faixa é escolhida pela contagem de
+    # NFs B2C do mês e define o "manuseio" (preço por pedido) de cada NF B2C.
+    n_b2c = sum(1 for ch in channels.values() if ch == "b2c")
+    faixas = (parse_faixas(params.get("faixas_pedidos"))
+              if params.get("usar_faixas_pedidos") else [])
+    faixa_ativa = bool(faixas)
+    if faixa_ativa:
+        preco_b2c, qtd_cobrada_b2c, faixa_sel = faixa_para_contagem(n_b2c, faixas)
+    else:
+        preco_b2c, qtd_cobrada_b2c, faixa_sel = preco_unit, n_b2c, None
+
     # cota B: só NFs B2C, caixa normalizada não-nula e fora do grupo A,
     # na ordem imported_at, id (a lista já vem ordenada assim).
     cota_free: set[int] = set()
@@ -242,7 +301,7 @@ def compute_live(
             else:
                 adic = float(box_prices.get(nb) or 0.0)
             manual_adic = float(ov.get("b2b_adicional") or 0.0)   # adicional manual da NF (genérico)
-            total = preco_unit + adic + manual_adic
+            total = preco_b2c + adic + manual_adic
             soma_b2c += total
             b2c_lines.append({
                 "order_id": o.id,
@@ -255,7 +314,7 @@ def compute_live(
                 "adic_caixa": r2(adic),
                 "adic_manual": r2(manual_adic),
                 "b2b_adicional": r2(manual_adic),
-                "manuseio": r2(preco_unit),
+                "manuseio": r2(preco_b2c),
                 "total": r2(total),
                 "sem_caixa": sem_caixa,
                 "note": ov.get("note") or "",
@@ -286,6 +345,8 @@ def compute_live(
 
     fatura = _fatura(
         params, soma_b2c, soma_b2b, cubagem_m3, valor_segurado, adjustments,
+        n_b2c=n_b2c, preco_b2c=preco_b2c, qtd_cobrada_b2c=qtd_cobrada_b2c,
+        faixa_ativa=faixa_ativa, faixa_sel=faixa_sel,
     )
     return {
         "status": "open",
@@ -300,11 +361,31 @@ def compute_live(
     }
 
 
-def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments) -> dict:
+def _faixa_aplicada_dict(faixa_sel, preco_b2c, n_b2c, qtd_cobrada_b2c):
+    if not faixa_sel:
+        return None
+    return {
+        "de": faixa_sel["de"], "ate": faixa_sel["ate"],
+        "preco": r2(preco_b2c), "n_b2c": n_b2c, "qtd_cobrada": qtd_cobrada_b2c,
+    }
+
+
+def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments,
+            n_b2c=0, preco_b2c=0.0, qtd_cobrada_b2c=None,
+            faixa_ativa=False, faixa_sel=None) -> dict:
     preco_unit = float(params.get("preco_unitario") or 0.0)
     min_ped = int(params.get("min_pedidos") or 0)
-    floor = min_ped * preco_unit
-    b2c_min = max(soma_b2c, floor)
+    if faixa_ativa:
+        # A faixa já embute o piso via `qtd_cobrada` (>= n_b2c só quando abaixo
+        # da 1ª faixa). Os adicionais de caixa/manual continuam por cima.
+        adics_b2c = soma_b2c - n_b2c * preco_b2c
+        floor = (qtd_cobrada_b2c or 0) * preco_b2c
+        b2c_min = floor + adics_b2c
+        min_atingiu_piso = (qtd_cobrada_b2c or 0) > n_b2c
+    else:
+        floor = min_ped * preco_unit
+        b2c_min = max(soma_b2c, floor)
+        min_atingiu_piso = floor > soma_b2c + 0.001
     b2b_min = soma_b2b
     # `seguro_incluso` = "cobrar seguro?": ligado cobra, desligado não cobra.
     # (O nome da coluna foi mantido por compatibilidade; o rótulo na tela é "Cobrar seguro?".)
@@ -328,7 +409,9 @@ def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments) ->
         "total_geral": r2(subtotal_b2c + subtotal_b2b),
         "floor_b2c": r2(floor),
         "soma_real_b2c": r2(soma_b2c),
-        "min_atingiu_piso": floor > soma_b2c + 0.001,
+        "min_atingiu_piso": min_atingiu_piso,
+        "faixa_aplicada": _faixa_aplicada_dict(
+            faixa_sel, preco_b2c, n_b2c, qtd_cobrada_b2c),
         "exc_m3": round(exc_m3, 4),
     }
 
@@ -414,14 +497,28 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
                       "itens": ln.itens, "auto_channel": "b2b"})
             b2b_lines.append(d)
 
+    _n_b2c = len(b2c_lines)
+    _soma_b2c = sum(l["total"] for l in b2c_lines)
+    if getattr(closing, "usar_faixas_pedidos", False):
+        _fx = parse_faixas(getattr(closing, "faixas_pedidos", ""))
+        _preco_b2c, _qtd_cobrada, _faixa_sel = faixa_para_contagem(_n_b2c, _fx)
+        _floor = (_qtd_cobrada or 0) * (_preco_b2c or 0.0)
+        _min_piso = (_qtd_cobrada or 0) > _n_b2c
+        _faixa_ap = _faixa_aplicada_dict(_faixa_sel, _preco_b2c or 0.0, _n_b2c, _qtd_cobrada)
+    else:
+        _floor = (closing.min_pedidos or 0) * (closing.preco_unitario or 0.0)
+        _min_piso = r2(closing.t_b2c_min) > r2(_soma_b2c) + 0.001
+        _faixa_ap = None
+
     fatura = {
         "b2c_min": r2(closing.t_b2c_min), "b2b_min": r2(closing.t_b2b_min),
         "seguro": r2(closing.t_seguro), "armazenagem": r2(closing.t_armazenagem),
         "avulsos": r2(closing.t_avulsos), "subtotal_b2c": r2(closing.t_subtotal_b2c),
         "subtotal_b2b": r2(closing.t_subtotal_b2b), "total_geral": r2(closing.t_total_geral),
-        "floor_b2c": r2((closing.min_pedidos or 0) * (closing.preco_unitario or 0.0)),
-        "soma_real_b2c": r2(sum(l["total"] for l in b2c_lines)),
-        "min_atingiu_piso": r2(closing.t_b2c_min) > r2(sum(l["total"] for l in b2c_lines)) + 0.001,
+        "floor_b2c": r2(_floor),
+        "soma_real_b2c": r2(_soma_b2c),
+        "min_atingiu_piso": _min_piso,
+        "faixa_aplicada": _faixa_ap,
         "exc_m3": round(max(0.0, (closing.cubagem_m3 or 0.0) - (closing.franquia_m3 or 0.0)), 4),
     }
     return {

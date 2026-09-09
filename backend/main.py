@@ -172,6 +172,15 @@ def run_light_migrations():
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN franquia_produtos_b2b "
                         "INTEGER DEFAULT 15 NOT NULL")
+            # Faturamento (09/09/2026): cobrança por faixa de pedidos B2C.
+            for _bt in ("billing_seller_params", "billing_monthly_closings"):
+                if not col_exists(_bt, "usar_faixas_pedidos"):
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN usar_faixas_pedidos "
+                        "BOOLEAN DEFAULT FALSE NOT NULL")
+                if not col_exists(_bt, "faixas_pedidos"):
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
             # parâmetros do seller. Colunas aditivas (default 0) SÓ em
             # billing_seller_params (a tabela de fechamento já as tinha).
@@ -291,6 +300,13 @@ def run_light_migrations():
                 if "franquia_produtos_b2b" not in _cols:
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN franquia_produtos_b2b INTEGER DEFAULT 15 NOT NULL")
+                # Faturamento (09/09/2026): cobrança por faixa de pedidos B2C.
+                if "usar_faixas_pedidos" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN usar_faixas_pedidos BOOLEAN DEFAULT 0 NOT NULL")
+                if "faixas_pedidos" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
             # parâmetros do seller. Colunas aditivas SÓ em billing_seller_params.
             _sp_cols = {r[1] for r in db.execute(

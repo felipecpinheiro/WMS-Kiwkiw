@@ -545,6 +545,11 @@ class BillingSellerParams(Base):
     seguro_incluso = Column(Boolean, default=False, nullable=False)
     aliquota_seguro = Column(Float, default=0.30, nullable=False)     # em %, ex. 0.30 = 0,30%
     armazenagem_inclusa = Column(Boolean, default=False, nullable=False)  # só informativo
+    # Cobrança por faixa de pedidos B2C (09/09/2026). Opcional, por seller.
+    # Ligado -> ignora preco_unitario/min_pedidos e usa a tabela de faixas.
+    # faixas_pedidos = JSON: [{"de":100,"ate":200,"preco":30.0}, ...] (contíguas).
+    usar_faixas_pedidos = Column(Boolean, default=False, nullable=False)
+    faixas_pedidos = Column(Text, default="", nullable=False)
     # Unificação de 01/09/2026: valor segurado e cubagem passaram a ser do seller
     # (um valor só, sem override por mês). Continuam sendo congelados no snapshot
     # do fechamento como os demais parâmetros.
@@ -604,6 +609,9 @@ class BillingMonthlyClosing(Base):
     seguro_incluso = Column(Boolean, default=False, nullable=False)
     aliquota_seguro = Column(Float, default=0.30, nullable=False)
     armazenagem_inclusa = Column(Boolean, default=False, nullable=False)
+    # Cobrança por faixa de pedidos B2C (09/09/2026) — congelada no fechamento.
+    usar_faixas_pedidos = Column(Boolean, default=False, nullable=False)
+    faixas_pedidos = Column(Text, default="", nullable=False)
 
     # Dados do mês
     cubagem_m3 = Column(Float, default=0.0, nullable=False)

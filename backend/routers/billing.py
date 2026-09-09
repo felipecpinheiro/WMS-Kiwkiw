@@ -71,6 +71,45 @@ def _audit(db: Session, user, action: str, entity_id: Optional[int], detail: dic
     ))
 
 
+def _normalize_faixas(raw: str, usar: bool) -> str:
+    """Valida o JSON de faixas de pedidos B2C e devolve a forma canônica.
+
+    Regras: `de`/`ate` inteiros >= 1, `de` <= `ate`, `preco` >= 0, faixas
+    contíguas (a `ate` de uma = `de` da próxima menos 1). Toggle ligado exige
+    ao menos uma faixa. 400 em qualquer violação.
+    """
+    raw = (raw or "").strip()
+    faixas: list[dict] = []
+    if raw:
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, "Faixas de pedidos: JSON inválido.")
+        if not isinstance(data, list):
+            raise HTTPException(400, "Faixas de pedidos: esperado uma lista.")
+        for i, it in enumerate(data, 1):
+            try:
+                de = int(it["de"])
+                ate = int(it["ate"])
+                preco = round(float(it["preco"]) + 1e-9, 2)
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(400, f"Faixas de pedidos: faixa {i} inválida (de / até / preço).")
+            if de < 1 or ate < de or preco < 0:
+                raise HTTPException(400, f"Faixas de pedidos: faixa {i} com valores fora de faixa.")
+            faixas.append({"de": de, "ate": ate, "preco": preco})
+        faixas.sort(key=lambda f: f["de"])
+        for a, b in zip(faixas, faixas[1:]):
+            if b["de"] != a["ate"] + 1:
+                raise HTTPException(
+                    400,
+                    "Faixas de pedidos: têm que ser contíguas — a 'até' de uma "
+                    "faixa deve ser o 'de' da próxima menos 1.",
+                )
+    if usar and not faixas:
+        raise HTTPException(400, "Cobrança por faixa de pedidos ligada, mas nenhuma faixa definida.")
+    return json.dumps(faixas, ensure_ascii=False)
+
+
 def _seller_or_404(db: Session, seller_id: int) -> models.Seller:
     s = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     if not s:
@@ -111,10 +150,12 @@ def put_seller_params(
 ):
     _seller_or_404(db, seller_id)
     row = _get_or_create_params(db, seller_id)
+    faixas_norm = _normalize_faixas(body.faixas_pedidos, body.usar_faixas_pedidos)
     # Fonte única: grava TODOS os parâmetros no default do seller. É o mesmo
     # registro que o Faturamento de mês aberto lê e grava.
     for f in calc.PARAM_FIELDS:
         setattr(row, f, getattr(body, f))
+    row.faixas_pedidos = faixas_norm   # forma canônica (validada acima)
     _audit(db, current_user, "UPDATE_SELLER_PARAMS", seller_id, body.model_dump())
     db.commit()
     db.refresh(row)
@@ -329,12 +370,14 @@ def put_closing(
         db.add(closing)
         db.flush()
 
+    faixas_norm = _normalize_faixas(body.faixas_pedidos, body.usar_faixas_pedidos)
     # Fonte única: os parâmetros do rascunho vão para o default do seller
     # (billing_seller_params) — o mesmo registro da aba Comercial. A linha do
     # `closing` guarda só o que é do mês: ajustes avulsos e overrides de NF.
     sp = _get_or_create_params(db, seller_id)
     for f in calc.PARAM_FIELDS:
         setattr(sp, f, getattr(body, f))
+    sp.faixas_pedidos = faixas_norm
 
     db.query(models.BillingClosingAdjustment).filter(
         models.BillingClosingAdjustment.closing_id == closing.id
@@ -484,7 +527,7 @@ def closing_excel(
 # Campos podados do payload antes de devolver ao seller: são as tarifas do
 # contrato (o "como se calcula"), que ele não deve enxergar no portal.
 _SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a")
-_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c")
+_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c", "faixa_aplicada")
 
 
 def _my_seller(db: Session, current_user: models.User) -> models.Seller:

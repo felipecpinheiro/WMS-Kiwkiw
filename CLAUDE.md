@@ -39,6 +39,63 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 09/09/2026 — Cobrança por FAIXA de pedidos (B2C) + portão do Financeiro dispensado em local
+
+**Sem push.** Dois assuntos.
+
+### Cobrança por faixa de pedidos B2C
+
+Opcional, **por seller**, via toggle **"Cobrança por faixa de pedidos (B2C)"**. Desligado = modelo
+de sempre (`max(soma real, nº mínimo × preço unitário)`). Ligado:
+
+- **Faixa** = lista `{de, até, R$ por pedido}`, **contíguas** (a `até` de uma = `de` da próxima
+  menos 1). Guardada como **JSON num TEXT** (`faixas_pedidos`), não em tabela nova.
+- A **contagem de NFs B2C** do mês escolhe a faixa; o `R$/pedido` dela vale para **todas** as NFs
+  B2C (não é progressivo). Esse preço vira o "manuseio" de cada linha B2C no lugar de
+  `preco_unitario`.
+- **Abaixo da 1ª faixa** → cobra `de_da_1ª × preço_da_1ª` (piso, aciona `min_atingiu_piso`).
+  **Acima da última** → `nº NFs B2C × preço_da_última` (todos ao preço da última, **sem teto**).
+- **Adicional de caixa e adicional manual continuam somando por NF.**
+  `b2c_min = qtd_cobrada × preço_faixa + Σ(adic_caixa + adic_manual das NFs B2C)`.
+- Mês **fechado** congela `usar_faixas_pedidos` + `faixas_pedidos` no snapshot (entram em
+  `PARAM_FIELDS`, o `close` já copia). `read_frozen` recalcula `floor_b2c`/`min_atingiu_piso`/
+  `faixa_aplicada` a partir do snapshot + `len(b2c_lines)`.
+- **Seller não vê a faixa** — `faixa_aplicada` entrou em `_SELLER_HIDDEN_FATURA`. Vê só o valor.
+- PDF/Excel **internos** ganham "Cobrança por faixa" nos parâmetros + "Faixa aplicada: 201–300 ×
+  R$ 25,00" na fatura.
+
+**Arquivos:** `models.py` (`usar_faixas_pedidos` BOOLEAN + `faixas_pedidos` TEXT nas 2 tabelas de
+parâmetro), `main.py` (4 migrações idempotentes em `index_migrations`), `services/billing_calc.py`
+(`parse_faixas`, `faixa_para_contagem`, ramo de faixa em `compute_live`/`_fatura`/`read_frozen`;
+`PARAM_FIELDS`/`DEFAULT_PARAMS` +2), `schemas.py` (`BillingSellerParamsIn` +2),
+`routers/billing.py` (`_normalize_faixas` — validação + forma canônica — em `put_seller_params` e
+`put_closing`; `_SELLER_HIDDEN_FATURA` +`faixa_aplicada`), `services/billing_docs.py`,
+`frontend/src/components/FaixaPedidosEditor.tsx` (**novo**, editor compartilhado), `api.ts`,
+`Billing.tsx` (grupo "Pedidos B2C": toggle esconde Nº mínimo/Preço unitário e mostra o editor),
+`Sellers.tsx` (bloco "Pedidos B2C" na aba Comercial; `preco_unitario`/`min_pedidos` saíram do
+grid genérico `BILLING_FIELDS`).
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Achar que `PARAM_FIELDS` tem 16 campos | São **18** desde 09/09 (`+usar_faixas_pedidos`, `+faixas_pedidos`). O front tem que mandar todos no PUT (Pydantic zera os ausentes) — `PARAM_KEYS` (Billing.tsx), `fieldsToParams`/`paramsToFields` (Sellers.tsx) já mandam | Contar `calc.PARAM_FIELDS`, não a doc antiga |
+| Query nova de "quanto cobrar de B2C" | Ler `min_pedidos × preco_unitario` direto ignora a faixa | O número final é `payload["fatura"]["b2c_min"]`, calculado no backend. Não recalcular em JS |
+| Faixa com buraco / sobreposição | `_normalize_faixas` rejeita com 400; `parse_faixas` (defensivo) cairia em "acima da última" num buraco | Editor do front já auto-preenche `de` = `até`+1 da anterior |
+| Mudar o preço da faixa de um mês fechado | Editar o seller não mexe em mês fechado (snapshot) | Reabrir o mês, ajustar, fechar de novo |
+| `_fatura` com faixa: de onde sai o piso | Não é mais `min_pedidos × preco_unitario` — é `qtd_cobrada × preço_da_faixa` | Ver o ramo `if faixa_ativa` em `_fatura` |
+
+### Portão do Financeiro dispensado em ambiente LOCAL
+
+`auth.py` ganhou `_IS_LOCAL_DB` (SQLite **ou** Postgres em `localhost`/`127.0.0.1` — o dev roda
+contra Postgres local via `/attEstoque`, então SQLite sozinho não bastava). Produção usa sempre
+`...railway.internal`. Quando `_IS_LOCAL_DB`: `require_billing_access` passa direto,
+`GET /billing/access/status` responde `ativo`, e `billing_access_mail._send()` nunca manda e-mail
+(sempre modo console, `flush=True` nos prints — o reloader do uvicorn no Windows bufferiza stdout).
+**Produção intocada** — portão + código de 6 dígitos + e-mail via Gmail seguem iguais.
+
+---
+
 ## Mudanças Recentes — 03/09/2026 — Acesso Protegido ao Financeiro + SECRET_KEY/WMS_EDIT_PASSPHRASE por variável de ambiente
 
 > ⚠️ **04/09/2026 — TEMPORARIAMENTE DESATIVADO em produção**, a pedido do dono: o envio de e-mail
@@ -1372,12 +1429,15 @@ de propósito: senão o admin subiria um arquivo e ele sumiria da tela sem deixa
   registro**: `billing_seller_params`, via `GET/PUT /billing/seller-params/{seller_id}`
   (`require_manager_or_above`) e `PUT /billing/closing/{s}/{m}` (`require_admin`). Fonte única —
   ver "FONTE ÚNICA de parâmetros de faturamento" no topo. Nada grava em `billing_configs`.
-- Campos (16): `preco_unitario`, `min_pedidos`, `manuseio_b2b`, `valor_caixa_b2b`,
-  `adic_produto_b2b`, `franquia_produtos_b2b`, `limite_itens_b2b`, `tipos_caixa_inclusos` (texto),
-  `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`, `aliquota_seguro` (%, default
-  0.30), `armazenagem_inclusa`, `valor_segurado`, `cubagem_m3`.
-- ⚠️ O front **tem que mandar os 16** no PUT — Pydantic preenche 0/15 nos ausentes e zeraria o
-  resto. `fieldsToParams` (Sellers.tsx) e `buildBody` (Billing.tsx) mandam.
+- Campos (**18** desde 09/09/2026): `preco_unitario`, `min_pedidos`, `manuseio_b2b`,
+  `valor_caixa_b2b`, `adic_produto_b2b`, `franquia_produtos_b2b`, `limite_itens_b2b`,
+  `tipos_caixa_inclusos` (texto), `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`,
+  `aliquota_seguro` (%, default 0.30), `armazenagem_inclusa`, `valor_segurado`, `cubagem_m3`,
+  **`usar_faixas_pedidos`** (bool), **`faixas_pedidos`** (JSON `[{"de","ate","preco"}]`, contíguas
+  — ver "Cobrança por FAIXA de pedidos" em Mudanças Recentes 09/09).
+- ⚠️ O front **tem que mandar os 18** no PUT — Pydantic preenche default nos ausentes e zeraria o
+  resto. `fieldsToParams` (Sellers.tsx) e `buildBody` (Billing.tsx) mandam. `faixas_pedidos` é
+  validado e re-serializado em forma canônica por `_normalize_faixas` no router.
 - **`billing_configs` (tabela `BillingConfig`) está MORTA** — só para rollback. Não reintroduzir.
 - Mês **fechado** lê o snapshot congelado de `billing_monthly_closings` (read-only). `reopen`
   volta a seguir o seller.

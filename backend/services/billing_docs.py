@@ -9,6 +9,7 @@ Identidade visual Kiwkiw: roxo #7B63E8.
 """
 
 import io
+import json
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -38,6 +39,26 @@ def brl(n) -> str:
 def _month_label(ref_month: str) -> str:
     y, m = ref_month.split("-")
     return f"{m}/{y}"
+
+
+def _faixas_txt(pr: dict) -> str:
+    """Texto legível das faixas de pedidos B2C ('—' se não usar faixa)."""
+    if not pr.get("usar_faixas_pedidos"):
+        return "—"
+    try:
+        fx = json.loads(pr.get("faixas_pedidos") or "[]")
+    except (ValueError, TypeError):
+        return "—"
+    partes = [f"{f['de']}-{f['ate']}: {brl(f['preco'])}/ped" for f in fx]
+    return " · ".join(partes) or "—"
+
+
+def _faixa_aplicada_txt(fatura: dict) -> str:
+    fa = fatura.get("faixa_aplicada")
+    if not fa:
+        return ""
+    return (f"Faixa aplicada: {fa['de']}-{fa['ate']} pedidos x {brl(fa['preco'])} "
+            f"({fa['n_b2c']} NFs B2C, cobradas {fa['qtd_cobrada']}).")
 
 
 # ── PDF ─────────────────────────────────────────────────────────────────────
@@ -87,6 +108,9 @@ def invoice_pdf_bytes(p: dict) -> bytes:
          "Alíquota do seguro (%)", str(pr["aliquota_seguro"])],
         ["Valor segurado", brl(p["valor_segurado"]),
          "Armazenagem inclusa", "Sim" if pr["armazenagem_inclusa"] else "Não"],
+        ["Cobrança por faixa de pedidos B2C",
+         "Sim" if pr.get("usar_faixas_pedidos") else "Não",
+         "Faixas", _faixas_txt(pr)],
     ]
     el.append(Paragraph("Parâmetros do mês", h2))
     t = Table([[Paragraph(c, cell) for c in r] for r in par_rows],
@@ -128,6 +152,10 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         el.append(Paragraph(
             f"Mínimo mensal B2C: soma real {brl(f['soma_real_b2c'])} &lt; "
             f"piso {brl(f['floor_b2c'])} → cobra-se o maior.", sub))
+    _fa_txt = _faixa_aplicada_txt(f)
+    if _fa_txt:
+        el.append(Spacer(1, 4))
+        el.append(Paragraph(_fa_txt, sub))
 
     # avulsos detalhados
     if p["adjustments"]:
@@ -230,9 +258,15 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Alíquota do seguro (%)", pr["aliquota_seguro"]),
         ("Valor segurado", p["valor_segurado"]),
         ("Armazenagem inclusa", "Sim" if pr["armazenagem_inclusa"] else "Não"),
+        ("Cobrança por faixa de pedidos B2C", "Sim" if pr.get("usar_faixas_pedidos") else "Não"),
+        ("Faixas de pedidos B2C", _faixas_txt(pr)),
     ]:
         ws.cell(r, 1, k)
         ws.cell(r, 2, v)
+        r += 1
+    _fa_txt = _faixa_aplicada_txt(p["fatura"])
+    if _fa_txt:
+        ws.cell(r, 1, _fa_txt)
         r += 1
     r += 1
 

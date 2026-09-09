@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { billingApi, cadastrosApi, scanningApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
+import FaixaPedidosEditor from '../components/FaixaPedidosEditor';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
@@ -27,6 +28,7 @@ const PARAM_KEYS = [
   'adic_produto_b2b', 'franquia_produtos_b2b',
   'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
   'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
+  'usar_faixas_pedidos', 'faixas_pedidos',
 ] as const;
 
 type Draft = {
@@ -442,8 +444,26 @@ export default function BillingPage() {
             </p>
             <div className="grid gap-4 md:grid-cols-3">
               <ParamGroup title="Pedidos B2C">
-                <NumRow label="Nº mínimo de pedidos" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
-                <NumRow label="Preço unitário / manuseio" v={draft.params.preco_unitario} onChange={v => setParam('preco_unitario', v)} />
+                <ToggleRow label="Cobrança por faixa de pedidos"
+                  v={!!draft.params.usar_faixas_pedidos}
+                  onChange={v => setParam('usar_faixas_pedidos', v)} />
+                {draft.params.usar_faixas_pedidos ? (
+                  <>
+                    <p className="text-[11px] text-t4">
+                      O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas.
+                      Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.
+                    </p>
+                    <FaixaPedidosEditor
+                      value={draft.params.faixas_pedidos || '[]'}
+                      onChange={j => setParam('faixas_pedidos', j)}
+                      disabled={isClosed} />
+                  </>
+                ) : (
+                  <>
+                    <NumRow label="Nº mínimo de pedidos" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
+                    <NumRow label="Preço unitário / manuseio" v={draft.params.preco_unitario} onChange={v => setParam('preco_unitario', v)} />
+                  </>
+                )}
               </ParamGroup>
               <ParamGroup title="Pedidos B2B">
                 <NumRow label="Manuseio B2B" v={draft.params.manuseio_b2b} onChange={v => setParam('manuseio_b2b', v)} />
@@ -623,6 +643,12 @@ function FaturaTable({ f }: any) {
       <Row lbl="Armazenagem" c={f.armazenagem} b={null} />
       <Row lbl="Linhas avulsas" c={f.avulsos} b={null} />
       <Row lbl="Subtotal" c={f.subtotal_b2c} b={f.subtotal_b2b} strong />
+      {f.faixa_aplicada && (
+        <div className="px-4 py-2 text-[11px] text-t3 bg-surface-2">
+          Faixa aplicada: {f.faixa_aplicada.de}–{f.faixa_aplicada.ate} pedidos × {brl(f.faixa_aplicada.preco)}
+          {' · '}{f.faixa_aplicada.n_b2c} NFs B2C (cobradas {f.faixa_aplicada.qtd_cobrada})
+        </div>
+      )}
       {f.min_atingiu_piso && (
         <div className="px-4 py-2 text-[11px] text-amber-400 bg-amber-900/15">
           Mínimo B2C: soma real {brl(f.soma_real_b2c)} &lt; piso {brl(f.floor_b2c)} → cobra-se o maior.

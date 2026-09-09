@@ -730,6 +730,10 @@ class BillingSellerParamsIn(BaseModel):
     # seller (editáveis tanto na aba Comercial quanto no Faturamento do mês aberto).
     valor_segurado: float = 0.0
     cubagem_m3: float = 0.0
+    # Cobrança por faixa de pedidos B2C (09/09/2026). faixas_pedidos = JSON:
+    # [{"de":100,"ate":200,"preco":30.0}, ...] (contíguas). Validado no router.
+    usar_faixas_pedidos: bool = False
+    faixas_pedidos: str = ""
 
 
 class BillingSellerParamsOut(BillingSellerParamsIn):

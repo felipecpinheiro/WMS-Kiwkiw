@@ -14,6 +14,7 @@ import {
 import { cadastrosApi, billingApi, CANONICAL_BOXES } from '../api';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
+import FaixaPedidosEditor from '../components/FaixaPedidosEditor';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -37,6 +38,8 @@ interface BillingFields {
   armazenagem_inclusa: boolean;
   valor_segurado: string;
   cubagem_m3: string;
+  usar_faixas_pedidos: boolean;
+  faixas_pedidos: string;   // JSON: [{de,ate,preco}]
 }
 
 interface SellerForm {
@@ -56,6 +59,7 @@ const EMPTY_BILLING: BillingFields = {
   franquia_m3: '', preco_m3: '', seguro_incluso: false,
   aliquota_seguro: '0.30', armazenagem_inclusa: false,
   valor_segurado: '', cubagem_m3: '',
+  usar_faixas_pedidos: false, faixas_pedidos: '',
 };
 
 const EMPTY: SellerForm = {
@@ -71,9 +75,9 @@ const EMPTY: SellerForm = {
 const GRID_ROWS = 10;
 const GRID_COLS = 13;
 
+// preco_unitario / min_pedidos saíram do grid: vivem no bloco "Pedidos B2C"
+// (ligado ao toggle de cobrança por faixa).
 const BILLING_FIELDS: Array<{ label: string; key: keyof BillingFields }> = [
-  { label: 'Preço unitário / manuseio B2C (R$)', key: 'preco_unitario' },
-  { label: 'Nº mínimo de pedidos',              key: 'min_pedidos' },
   { label: 'Manuseio B2B (R$)',                 key: 'manuseio_b2b' },
   { label: 'Valor caixa B2B (R$)',              key: 'valor_caixa_b2b' },
   { label: 'Adicional por produto B2B (R$)',    key: 'adic_produto_b2b' },
@@ -102,6 +106,8 @@ function paramsToFields(p: any): BillingFields {
     preco_m3: s(p.preco_m3), seguro_incluso: !!p.seguro_incluso,
     aliquota_seguro: s(p.aliquota_seguro), armazenagem_inclusa: !!p.armazenagem_inclusa,
     valor_segurado: s(p.valor_segurado), cubagem_m3: s(p.cubagem_m3),
+    usar_faixas_pedidos: !!p.usar_faixas_pedidos,
+    faixas_pedidos: p.faixas_pedidos ?? '',
   };
 }
 
@@ -117,6 +123,8 @@ function fieldsToParams(b: BillingFields) {
     preco_m3: NUM(b.preco_m3), seguro_incluso: b.seguro_incluso,
     aliquota_seguro: NUM(b.aliquota_seguro), armazenagem_inclusa: b.armazenagem_inclusa,
     valor_segurado: NUM(b.valor_segurado), cubagem_m3: NUM(b.cubagem_m3),
+    usar_faixas_pedidos: b.usar_faixas_pedidos,
+    faixas_pedidos: b.faixas_pedidos || '',
   };
 }
 
@@ -546,6 +554,44 @@ export default function SellersPage() {
                   tela de Faturamento — editar aqui ou lá dá no mesmo, e vale para todos os
                   meses ainda abertos. Meses já fechados ficam congelados.
                 </p>
+
+                <div className="border border-line-soft rounded-lg p-3 space-y-2">
+                  <div className="text-[11px] uppercase tracking-wide text-t3 font-semibold">Pedidos B2C</div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="faixatgl" checked={form.billing.usar_faixas_pedidos}
+                      onChange={e => setBilling('usar_faixas_pedidos', e.target.checked)}
+                      className="w-4 h-4 accent-violet-500" />
+                    <label htmlFor="faixatgl" className="text-sm text-t2">Cobrança por faixa de pedidos (B2C)</label>
+                  </div>
+                  {form.billing.usar_faixas_pedidos ? (
+                    <>
+                      <p className="text-[11px] text-t4">
+                        O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas.
+                        Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.
+                        Adicional de caixa e adicional manual continuam somando por NF.
+                      </p>
+                      <FaixaPedidosEditor
+                        value={form.billing.faixas_pedidos || '[]'}
+                        onChange={j => setBilling('faixas_pedidos', j)} />
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-t3 mb-1">Preço unitário / manuseio B2C (R$)</label>
+                        <input type="number" step="0.01" min="0" value={form.billing.preco_unitario}
+                          onChange={e => setBilling('preco_unitario', e.target.value)}
+                          className={cls} style={clsStyle} />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-t3 mb-1">Nº mínimo de pedidos</label>
+                        <input type="number" step="1" min="0" value={form.billing.min_pedidos}
+                          onChange={e => setBilling('min_pedidos', e.target.value)}
+                          className={cls} style={clsStyle} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   {BILLING_FIELDS.map(f => (
                     <div key={f.key}>

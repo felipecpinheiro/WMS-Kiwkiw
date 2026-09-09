@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 /** Converte photo_url relativo (/media/...) para URL absoluta do backend. */
@@ -90,7 +92,7 @@ export default function ProductsPage() {
   }, [searchInput]);
 
   const queryKey = ['products', { page, search, sellerFilter, showInactive }];
-  const { data: productsResp, isFetching } = useQuery(
+  const { data: productsResp, isFetching, isLoading: productsLoading } = useQuery(
     queryKey,
     () => cadastrosApi.products({
       page,
@@ -105,6 +107,7 @@ export default function ProductsPage() {
   const products      = productsResp?.items    ?? [];
   const totalProducts = productsResp?.total    ?? 0;
   const totalPages    = productsResp?.pages    ?? 1;
+  const showFulfillmentLoader = useDelayedLoading(productsLoading, 150);
 
   const { data: meData } = useQuery(
     ['me'],
@@ -446,7 +449,10 @@ export default function ProductsPage() {
       </div>
 
       {/* Tabela de produtos */}
-      <div className="bg-surface rounded-xl border border-line-soft shadow-none overflow-hidden">
+      <div className="bg-surface rounded-xl border border-line-soft shadow-none overflow-hidden relative min-h-[160px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os produtos" />
+        {!productsLoading && (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -523,6 +529,8 @@ export default function ProductsPage() {
             </button>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* ── Modal Edição / Criação Individual ───────────────── */}

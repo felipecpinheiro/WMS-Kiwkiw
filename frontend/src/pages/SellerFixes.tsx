@@ -11,6 +11,8 @@ import { useQuery, useQueryClient } from 'react-query';
 import { Wrench, ArrowLeft } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 export default function SellerFixesPage() {
   const navigate = useNavigate();
@@ -23,6 +25,7 @@ export default function SellerFixesPage() {
     'sellers-without-unit',
     () => cadastrosApi.sellersWithoutUnit().then(r => r.data),
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   const { data: units = [] } = useQuery('units', () => cadastrosApi.units().then(r => r.data));
   const { data: allSellers = [] } = useQuery(
     'sellers-active-for-fixes',
@@ -75,7 +78,9 @@ export default function SellerFixesPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-t4 text-sm">Carregando...</p>
+        <div className="relative min-h-[160px]">
+          <FulfillmentLoader show={showFulfillmentLoader} title="Verificando os sellers" />
+        </div>
       ) : pending.length === 0 ? (
         <div className="bg-ok-soft border border-ok/20 rounded-xl px-4 py-6 text-center text-ok text-sm">
           Nenhuma pendência — todos os sellers ativos têm unidade associada.

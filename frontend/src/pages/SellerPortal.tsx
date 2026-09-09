@@ -28,6 +28,8 @@ import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
 import ThemeToggle from '../components/ThemeToggle';
 import Logo from '../components/Logo';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -226,23 +228,33 @@ export default function SellerPortalPage() {
 
   // ── Dados ──────────────────────────────────────────────────────────────────
 
-  const { data: dashboard } = useQuery(
+  const { data: dashboard, isLoading: dashboardLoading } = useQuery(
     ['seller-dashboard', sellerId, dateFrom, dateTo],
     () => sellerId ? dashboardApi.seller({ seller_id: sellerId, date_from: dateFrom, date_to: dateTo }).then(r => r.data) : null,
     { enabled: !!sellerId, refetchInterval: 60000 },
   );
 
-  const { data: stock = [] } = useQuery(
+  const { data: stock = [], isFetching: stockFetching } = useQuery(
     ['seller-stock', sellerId],
     () => sellerId ? inventoryApi.stock(sellerId).then(r => r.data) : [],
     { enabled: !!sellerId },
   );
 
-  const { data: movements = [] } = useQuery(
+  const { data: movements = [], isFetching: movementsFetching } = useQuery(
     ['seller-movements', sellerId, movDateFrom, movDateTo],
     () => sellerId ? inventoryApi.movements(sellerId, movDateFrom, movDateTo).then(r => r.data) : [],
     { enabled: !!sellerId && tab === 'movements' },
   );
+
+  // Portal do seller: SEMPRE mostra o loader ao trocar de tela ou filtrar
+  // (não só na 1ª carga) — decisão explícita, pra o cliente nunca achar que
+  // travou. Só a query de "orders" usa isLoading puro (ela faz polling de
+  // 60s em segundo plano; isFetching ali piscaria o loader a cada minuto).
+  const activeTabLoading =
+    (tab === 'orders' && dashboardLoading) ||
+    (tab === 'stock' && stockFetching) ||
+    (tab === 'movements' && movementsFetching);
+  const showFulfillmentLoader = useDelayedLoading(activeTabLoading, 150);
 
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
@@ -543,7 +555,8 @@ export default function SellerPortalPage() {
         )}
 
       <main className="flex-1 overflow-y-auto">
-        <div className={isMobile ? 'p-4 space-y-4' : 'p-6 space-y-5'}>
+        <div className={`relative ${isMobile ? 'p-4 space-y-4' : 'p-6 space-y-5'}`}>
+          <FulfillmentLoader show={showFulfillmentLoader} title="Preparando seus dados" />
 
           {/* Aviso de estoque baixo (mobile) — substitui os KPIs fixos da sidebar */}
           {isMobile && lowStockCount > 0 && (

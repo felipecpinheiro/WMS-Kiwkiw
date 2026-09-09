@@ -3,7 +3,7 @@
  * Centraliza todas as chamadas HTTP para o backend FastAPI.
  */
 
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosError, AxiosProgressEvent } from 'axios';
 
 // URL base da API (configurável via variável de ambiente)
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -812,7 +812,7 @@ export const inventoryApi = {
   /** Bulk upload de posição de estoque multi-seller (admin) — otimizado para 1M+ linhas */
   bulkStockUpload: (
     formData: FormData,
-    onUploadProgress?: (e: { loaded: number; total: number }) => void,
+    onUploadProgress?: (e: AxiosProgressEvent) => void,
   ) =>
     api.post<{
       ok: boolean;

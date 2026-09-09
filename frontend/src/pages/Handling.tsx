@@ -11,6 +11,8 @@ import {
   CheckCheck, Ban, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -597,6 +599,7 @@ export default function HandlingPage() {
     }).then(r => r.data),
     { refetchInterval: 30000 }
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   // localCards permite atualizações optimistas (cancelar remove imediatamente, force-complete atualiza status)
   const [localCards, setLocalCards] = useState<SessionCard[]>([]);
   // ⚠️ A dependência é o `data` cru do react-query, que é estável entre renders.
@@ -787,22 +790,16 @@ export default function HandlingPage() {
       </div>
 
       {/* Kanban */}
-      {isLoading ? (
-        <div className="grid grid-cols-3 gap-4">
-          {[0, 1, 2].map(i => (
-            <div key={i} className="space-y-3">
-              <div className="h-10 bg-surface-2/60 rounded-xl animate-pulse" />
-              {[0, 1, 2].map(j => <div key={j} className="h-40 bg-surface/60 rounded-2xl animate-pulse" />)}
-            </div>
-          ))}
-        </div>
-      ) : (
+      <div className="relative min-h-[320px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os manuseios" />
+        {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
           <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
           <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
           <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
         </div>
-      )}
+        )}
+      </div>
 
       {!isLoading && filtered.length === 0 && (
         <div className="text-center py-20 text-t5">

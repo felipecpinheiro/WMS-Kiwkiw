@@ -18,6 +18,8 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from '../components/BottomSheet';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ─── Utilitários ─────────────────────────────────────────────
 
@@ -736,11 +738,12 @@ export default function OrdersPage() {
     () => scanningApi.sessions().then(r => r.data),
   );
 
-  const { data: orders = [], refetch: refetchOrders } = useQuery(
+  const { data: orders = [], isLoading: ordersLoading, refetch: refetchOrders } = useQuery(
     ['orders', search, statusFilter],
     () => ordersApi.list({ search, status: statusFilter || undefined, limit: 1000 }).then(r => r.data),
     { keepPreviousData: true },
   );
+  const showFulfillmentLoader = useDelayedLoading(ordersLoading, 150);
 
   const handleSessionConfigSave = async (
     sessionId: number,
@@ -1099,7 +1102,9 @@ export default function OrdersPage() {
           )}
         </div>
 
-        {isMobile ? (
+        <div className="relative min-h-[160px]">
+          <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os pedidos" />
+          {!ordersLoading && (isMobile ? (
           <div className="p-3 space-y-2">
             {paginated.map(order => (
               <OrderCard
@@ -1144,7 +1149,8 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
-        )}
+        ))}
+        </div>
 
         <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
           {sorted.length} pedido(s) exibido(s)

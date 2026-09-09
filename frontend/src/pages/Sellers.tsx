@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { cadastrosApi, billingApi, CANONICAL_BOXES } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -148,9 +150,10 @@ export default function SellersPage() {
   // por isso pede activeOnly=false explicitamente. Ver CLAUDE.md.
   // Chave própria pelo mesmo motivo do Faturamento: lista completa não divide
   // cache com a chave 'sellers' (só ativos). O prefixo preserva os invalidates.
-  const { data: sellers = [] } = useQuery(['sellers', 'all'], () =>
+  const { data: sellers = [], isLoading: sellersLoading } = useQuery(['sellers', 'all'], () =>
     cadastrosApi.sellers(false).then(r => r.data)
   );
+  const showFulfillmentLoader = useDelayedLoading(sellersLoading, 150);
   const { data: units = [] } = useQuery('units', () =>
     cadastrosApi.units().then(r => r.data)
   );
@@ -403,7 +406,10 @@ export default function SellersPage() {
           style={clsStyle} />
       </div>
 
-      <div className="bg-surface rounded-xl border border-line-soft overflow-x-auto">
+      <div className="bg-surface rounded-xl border border-line-soft overflow-x-auto relative min-h-[160px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os sellers" />
+        {!sellersLoading && (
+        <>
         <table className="w-full">
           <thead>
             <tr className="bg-surface-2 border-b border-line-soft">
@@ -463,6 +469,8 @@ export default function SellersPage() {
           </tbody>
         </table>
         <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">{filtered.length} seller(s)</div>
+        </>
+        )}
       </div>
 
       {/* ── Modal Edição ──────────────────────────────────────── */}

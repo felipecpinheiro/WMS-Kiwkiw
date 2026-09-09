@@ -11,6 +11,8 @@ import { useQuery, useQueryClient } from 'react-query';
 import { Link2, ArrowLeft, Plus } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 export default function KitFixesPage() {
   const navigate = useNavigate();
@@ -25,6 +27,7 @@ export default function KitFixesPage() {
     ['kit-unlinked', sellerFilter],
     () => cadastrosApi.kitUnlinkedComponents(sellerFilter || undefined).then(r => r.data),
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
 
   // Produtos do seller da linha que está sendo resolvida
@@ -123,7 +126,9 @@ export default function KitFixesPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-t4 text-sm">Carregando...</p>
+        <div className="relative min-h-[160px]">
+          <FulfillmentLoader show={showFulfillmentLoader} title="Verificando os componentes" />
+        </div>
       ) : pending.length === 0 ? (
         <div className="bg-ok-soft border border-ok/20 rounded-xl px-4 py-6 text-center text-ok text-sm">
           Nenhuma pendência — todos os componentes de kit estão ligados a um produto cadastrado.

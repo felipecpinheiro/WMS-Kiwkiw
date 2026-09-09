@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { billingApi, cadastrosApi, scanningApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const brl = (n: number | null | undefined) =>
   'R$ ' + (Number(n ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -204,6 +206,7 @@ export default function BillingPage() {
   );
   const payload = closingQ.data;
   const isClosed = payload?.status === 'closed';
+  const showFulfillmentLoader = useDelayedLoading(!!sellerId && closingQ.isFetching, 150);
 
   useEffect(() => {
     if (payload) { setDraft(draftFromPayload(payload)); setDirty(false); setExpanded({}); }
@@ -403,7 +406,13 @@ export default function BillingPage() {
         </div>
       )}
 
-      {tab === 'seller' && sellerId && payload && draft && (
+      {tab === 'seller' && sellerId && closingQ.isFetching && (
+        <div className="relative min-h-[300px]">
+          <FulfillmentLoader show={showFulfillmentLoader} title="Preparando o fechamento" />
+        </div>
+      )}
+
+      {tab === 'seller' && sellerId && !closingQ.isFetching && payload && draft && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
             <span className={`text-xs font-semibold px-3 py-1 rounded-full ${isClosed ? 'bg-teal-900/30 text-teal-400' : 'bg-amber-900/30 text-amber-400'}`}>
@@ -739,9 +748,10 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMo
 }
 
 function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: number) => void }) {
-  const { data } = useQuery(['billing-consolidated', refMonth], () =>
+  const { data, isLoading } = useQuery(['billing-consolidated', refMonth], () =>
     billingApi.consolidated(refMonth).then(r => r.data));
   const rows = data?.rows || [];
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   return (
     <div className="bg-surface rounded-xl border border-line-soft p-5">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -753,7 +763,9 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Todos os PDFs</button>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto relative min-h-[160px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando o consolidado" />
+        {!isLoading && (
         <table className="w-full text-[12px]">
           <thead><tr className="text-[10px] uppercase text-t4">
             <th className="text-left px-2 py-1.5">Seller</th>
@@ -784,6 +796,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             {!rows.length && <tr><td colSpan={9} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

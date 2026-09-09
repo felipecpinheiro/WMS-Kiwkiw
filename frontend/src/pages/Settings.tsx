@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { settingsApi, authApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import {
   Settings, FolderOpen, Bot, Play, Square, RefreshCw,
   CheckCircle2, XCircle, Clock, FileSpreadsheet, AlertTriangle,
@@ -56,7 +58,8 @@ function WatcherPanel() {
     onSuccess: () => { toast.success('Watcher parado'); qc.invalidateQueries('watcher-status'); },
   });
 
-  if (isLoading) return <p className="text-xs text-t4 animate-pulse">Carregando status...</p>;
+  const showWatcherLoader = useDelayedLoading(isLoading, 150);
+  if (isLoading) return <div className="relative min-h-[140px]"><FulfillmentLoader show={showWatcherLoader} title="Preparando o watcher" /></div>;
   if (!status)   return null;
 
   const running = status.running;
@@ -198,6 +201,7 @@ export default function SettingsPage() {
     'app-settings',
     () => settingsApi.getAll().then(r => r.data)
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [initialized, setInitialized] = useState(false);
@@ -259,9 +263,8 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 text-center text-t4 animate-pulse">
-        <Settings size={32} className="mx-auto mb-3" />
-        <p>Carregando configuracoes...</p>
+      <div className="relative min-h-[420px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando as configurações" />
       </div>
     );
   }

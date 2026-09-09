@@ -21,6 +21,8 @@ import {
 import toast from 'react-hot-toast';
 import { cadastrosApi, returnsApi, ReturnRow, ReturnAnalyzeResult } from '../api';
 import PageHeader from '../components/PageHeader';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const inputCls =
   'w-full px-2.5 py-1.5 border border-line rounded-lg text-sm text-t2 outline-none focus:ring-2 focus:ring-violet-500 placeholder-t5';
@@ -199,7 +201,8 @@ function SkuPicker({
 export default function ReturnsPage() {
   const qc = useQueryClient();
 
-  const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  const { data: sellers = [], isLoading: sellersLoading } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  const showFulfillmentLoader = useDelayedLoading(sellersLoading, 150);
   const sellerName = useMemo(() => {
     const map: Record<number, string> = {};
     (sellers as any[]).forEach(s => { map[s.id] = s.trade_name || s.name; });
@@ -341,7 +344,8 @@ export default function ReturnsPage() {
         icon={<Undo2 size={18} />}
       />
 
-      <div className="p-6 space-y-6">
+      <div className="p-6 space-y-6 relative">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando devoluções" />
 
         {/* ── Planilha ───────────────────────────────────────────────────── */}
         <section className="bg-surface rounded-2xl border border-line-soft p-5 space-y-4">

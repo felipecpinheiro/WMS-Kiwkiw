@@ -19,6 +19,8 @@ import {
 } from 'recharts';
 import { inventoryApi, cadastrosApi, authApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -1550,9 +1552,9 @@ function BulkStockUploadModal({ onClose, onSuccess }: { onClose: () => void; onS
       const { inventoryApi } = await import('../api');
       const res = await inventoryApi.bulkStockUpload(form, (e) => {
         // Progresso real do envio do arquivo (upload HTTP)
-        if (e.total > 0) setUploadPct(Math.round((e.loaded / e.total) * 100));
+        if (e.total && e.total > 0) setUploadPct(Math.round((e.loaded / e.total) * 100));
         // Quando chega em 100% o servidor ainda está processando
-        if (e.loaded >= e.total) setPhase('processing');
+        if (e.total && e.loaded >= e.total) setPhase('processing');
       });
       setResult(res.data);
       setPhase(res.data.ok ? 'success' : 'errors');
@@ -1800,6 +1802,7 @@ export default function InventoryPage() {
     () => inventoryApi.stock(sellerId!).then(r => r.data),
     { enabled: !!sellerId }
   );
+  const showStockLoader = useDelayedLoading(loadingStock, 150);
 
   // Movimentações
   const { data: movements = [], isLoading: loadingMov } = useQuery(
@@ -1807,6 +1810,7 @@ export default function InventoryPage() {
     () => inventoryApi.movements(sellerId!, dateFrom, dateTo).then(r => r.data),
     { enabled: !!sellerId }
   );
+  const showMovLoader = useDelayedLoading(loadingMov, 150);
 
   const invalidate = () => {
     qc.invalidateQueries(['stock', sellerId]);
@@ -2038,8 +2042,8 @@ export default function InventoryPage() {
             })()}
 
             {loadingStock ? (
-              <div className="flex items-center justify-center py-16">
-                <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              <div className="relative min-h-[220px]">
+                <FulfillmentLoader show={showStockLoader} title="Preparando o estoque" />
               </div>
             ) : isMobile ? (
               <div className="space-y-2">
@@ -2241,8 +2245,8 @@ export default function InventoryPage() {
             </div>
 
             {loadingMov ? (
-              <div className="flex items-center justify-center py-16">
-                <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              <div className="relative min-h-[220px]">
+                <FulfillmentLoader show={showMovLoader} title="Preparando as movimentações" />
               </div>
             ) : (
               <div className="rounded-xl border border-line-soft overflow-hidden">

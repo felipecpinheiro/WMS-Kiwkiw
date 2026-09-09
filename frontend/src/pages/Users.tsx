@@ -15,6 +15,8 @@ import { useQuery, useQueryClient } from 'react-query';
 import { Plus, Pencil, UserX, UserCheck, X, Check, Shield, User, ChevronDown, KeyRound } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ---------------------------------------------------------------------------
 // Configuração dos perfis
@@ -171,6 +173,7 @@ export default function UsersPage() {
     () => cadastrosApi.users({ active_only: false }).then(r => r.data),
     { enabled: isAdmin },
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   const { data: units = [] } = useQuery('units', () => cadastrosApi.units().then(r => r.data));
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
 
@@ -300,9 +303,9 @@ export default function UsersPage() {
       </div>
 
       {/* Grid de usuários */}
-      {isLoading ? (
-        <div className="text-center text-t4 py-12">Carregando...</div>
-      ) : (
+      <div className="relative min-h-[220px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os usuários" />
+        {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {users.map((u: any) => {
             const roleConf = ROLE_CONFIG[u.role] ?? {
@@ -411,7 +414,8 @@ export default function UsersPage() {
             </div>
           )}
         </div>
-      )}
+        )}
+      </div>
 
       {/* ------------------------------------------------------------------ */}
       {/* Modal                                                               */}

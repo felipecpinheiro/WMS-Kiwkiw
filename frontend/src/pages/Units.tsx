@@ -8,6 +8,8 @@ import { useQuery, useQueryClient } from 'react-query';
 import { Building2, Pencil, Trash2, X, Plus, Users, MapPin, Phone, User } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const inputCls =
   'w-full px-3 py-2 border border-line rounded-lg text-sm text-t2 outline-none focus:ring-2 focus:ring-violet-500 placeholder-t5';
@@ -40,8 +42,9 @@ export default function UnitsPage() {
   const [sellerUnitName, setSellerUnitName] = useState('');
   const [selectedSellerIds, setSelectedSellerIds] = useState<number[]>([]);
 
-  const { data: units = [] } = useQuery('units', () => cadastrosApi.units().then(r => r.data));
+  const { data: units = [], isLoading: unitsLoading } = useQuery('units', () => cadastrosApi.units().then(r => r.data));
   const { data: allSellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
+  const showFulfillmentLoader = useDelayedLoading(unitsLoading, 150);
 
   const openNew = () => { setForm(EMPTY); setEditId(null); setShowModal(true); };
   const openEdit = (u: any) => {
@@ -137,7 +140,11 @@ export default function UnitsPage() {
       </div>
 
       {/* Cards de unidades */}
-      {(units as any[]).length === 0 ? (
+      {unitsLoading ? (
+        <div className="relative min-h-[220px]">
+          <FulfillmentLoader show={showFulfillmentLoader} title="Preparando as unidades" />
+        </div>
+      ) : (units as any[]).length === 0 ? (
         <div className="bg-surface border border-dashed border-line rounded-xl p-12 text-center">
           <Building2 size={36} className="text-t5 mx-auto mb-3" />
           <p className="text-t4 text-sm">Nenhuma unidade cadastrada</p>

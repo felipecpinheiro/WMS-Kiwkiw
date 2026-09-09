@@ -20,6 +20,8 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 import { todayBrasiliaStr } from '../timezone';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useChartColors } from '../hooks/useChartColors';
 
@@ -729,6 +731,7 @@ export default function DashboardPage() {
     // comitar, sem a operadora precisar navegar entre telas pra conferir.
     { refetchInterval: uploading ? 3000 : 60000 },
   );
+  const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
 
   // Warning: sellers ativos sem unidade associada — PDFs caem em SEM_UNIDADE
   const { data: sellersWithoutUnit = [] } = useQuery(
@@ -1237,11 +1240,8 @@ export default function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-t4 text-sm">Carregando dashboard...</p>
-        </div>
+      <div className="relative h-full min-h-[420px]">
+        <FulfillmentLoader show={showFulfillmentLoader} title="Preparando seu dashboard" />
       </div>
     );
   }

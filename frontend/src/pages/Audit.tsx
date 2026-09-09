@@ -17,6 +17,8 @@ import toast from 'react-hot-toast';
 import { scanningApi, cadastrosApi } from '../api';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ── Mapa de ícone/cor por tipo de entidade (aba Sistema) ─────────────────────
 const ENTITY_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -107,6 +109,7 @@ function ScanAuditTab() {
   const total        = data?.total ?? 0;
   const totalPages   = data?.total_pages ?? 1;
   const currentPage  = data?.page ?? page;
+  const showScanLoader = useDelayedLoading(isLoading, 150);
 
   const { data: users = [] } = useQuery('users', () => cadastrosApi.users().then(r => r.data), { enabled: isAdmin });
 
@@ -307,7 +310,7 @@ function ScanAuditTab() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={10} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
+                <tr><td colSpan={10}><div className="relative min-h-[160px]"><FulfillmentLoader show={showScanLoader} title="Preparando as bipagens" /></div></td></tr>
               ) : rows.length > 0 ? rows.map((l: any, i: number) => (
                 <tr key={l.id ?? i} className={`border-b border-line-soft hover:bg-surface-2 ${l.is_error ? 'bg-bad-soft' : l.is_interrupted ? 'bg-warn-soft' : ''}`}>
                   <td className="py-2 px-3 text-xs font-mono text-t3 whitespace-nowrap">{l.timestamp}</td>
@@ -403,6 +406,7 @@ function InterruptedOrdersTab() {
     }).then(r => r.data),
     { keepPreviousData: true }
   );
+  const showInterruptedLoader = useDelayedLoading(isLoading, 150);
 
   const { data: units = [] } = useQuery('units-audit', () => cadastrosApi.units().then(r => r.data));
   const { data: sellers = [] } = useQuery(['sellers', 'all'], () => cadastrosApi.sellers(false).then(r => r.data));
@@ -496,7 +500,7 @@ function InterruptedOrdersTab() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={7} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
+                <tr><td colSpan={7}><div className="relative min-h-[160px]"><FulfillmentLoader show={showInterruptedLoader} title="Preparando os interrompidos" /></div></td></tr>
               ) : filtered.length > 0 ? filtered.map((l: any, i: number) => (
                 <tr key={i} className="border-b border-line-soft hover:bg-surface-2 bg-warn-soft">
                   <td className="py-2 px-3 text-xs font-mono text-t3 whitespace-nowrap">{l.timestamp}</td>
@@ -567,6 +571,7 @@ function NfStatusTab() {
   );
 
   const rows: any[] = data?.rows ?? [];
+  const showNfStatusLoader = useDelayedLoading(isLoading, 150);
 
   const handleExport = async () => {
     if (!canQuery) return;
@@ -675,7 +680,7 @@ function NfStatusTab() {
                   </p>
                 </td></tr>
               ) : isLoading ? (
-                <tr><td colSpan={13} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
+                <tr><td colSpan={13}><div className="relative min-h-[160px]"><FulfillmentLoader show={showNfStatusLoader} title="Preparando o status das NFs" /></div></td></tr>
               ) : rows.length > 0 ? rows.map((r: any) => {
                 const st = situacaoStyle(r.situacao || '');
                 return (
@@ -734,6 +739,7 @@ function SystemAuditTab() {
     }).then(r => r.data),
     { keepPreviousData: true }
   );
+  const showSystemLoader = useDelayedLoading(isLoading, 150);
 
   const { data: users = [] } = useQuery('users-audit', () => cadastrosApi.users().then(r => r.data));
 
@@ -836,7 +842,7 @@ function SystemAuditTab() {
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={5} className="text-center py-10 text-sm text-t4">Carregando...</td></tr>
+                <tr><td colSpan={5}><div className="relative min-h-[160px]"><FulfillmentLoader show={showSystemLoader} title="Preparando o log do sistema" /></div></td></tr>
               ) : filtered.length > 0 ? filtered.map((l: any, i: number) => {
                 const cfg = ENTITY_CONFIG[l.entity_type] ?? {};
                 const actionCls = ACTION_COLOR[l.action] ?? 'bg-surface-2 text-t3 border-line';

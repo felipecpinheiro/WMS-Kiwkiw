@@ -11,6 +11,8 @@ import { format } from 'date-fns';
 import { Plus, Pencil, Trash2, X, Check, Package, ChevronDown, ChevronUp, ClipboardList, History, Link2, AlertTriangle, Search, Upload } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // 11 é o que a planilha de tratamento comporta e um kit real usa todos (ZAYAZ
 // "thefullselfcarekit"). Com o limite antigo de 10 o 11º componente era descartado
@@ -55,7 +57,8 @@ export default function KitsPage() {
     useState<Record<string, number | 'skip' | 'reactivate'>>({});
   const [importing, setImporting] = useState(false);
 
-  const { data: kits = [] } = useQuery('kits', () => cadastrosApi.kits().then(r => r.data));
+  const { data: kits = [], isLoading: kitsLoading } = useQuery('kits', () => cadastrosApi.kits().then(r => r.data));
+  const showFulfillmentLoader = useDelayedLoading(kitsLoading, 150);
   const { data: unlinked = [] } = useQuery(
     'kit-unlinked',
     () => cadastrosApi.kitUnlinkedComponents().then(r => r.data),
@@ -295,7 +298,11 @@ export default function KitsPage() {
       </div>
 
       <div className="space-y-3">
-        {filteredKits.length === 0 && (
+        {kitsLoading ? (
+          <div className="relative min-h-[160px]">
+            <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os kits" />
+          </div>
+        ) : filteredKits.length === 0 && (
           <div className="bg-surface border border-dashed border-line rounded-xl p-10 text-center">
             <Package size={32} className="text-t5 mx-auto mb-2" />
             <p className="text-sm text-t4">
@@ -303,7 +310,7 @@ export default function KitsPage() {
             </p>
           </div>
         )}
-        {filteredKits.map((k: any) => (
+        {!kitsLoading && filteredKits.map((k: any) => (
           <div key={k.id} className="bg-surface rounded-xl border border-line-soft shadow-none">
             <div className="p-4 flex items-center gap-3">
               <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">

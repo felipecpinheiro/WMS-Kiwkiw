@@ -9,6 +9,8 @@ import { useQuery, useQueryClient } from 'react-query';
 import { Calculator, Check } from 'lucide-react';
 import { cadastrosApi } from '../api';
 import toast from 'react-hot-toast';
+import FulfillmentLoader from '../components/FulfillmentLoader';
+import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const MAX_ROWS = 15;
 
@@ -28,10 +30,11 @@ export default function BoxAlgorithmPage() {
   const [saving, setSaving] = useState(false);
 
   const { data: sellers = [] } = useQuery('sellers', () => cadastrosApi.sellers().then(r => r.data));
-  const { data: rules = [] } = useQuery(['box-rules', sellerId], () =>
+  const { data: rules = [], isLoading: rulesLoading } = useQuery(['box-rules', sellerId], () =>
     sellerId ? cadastrosApi.boxRules(sellerId).then(r => r.data) : Promise.resolve([]),
     { enabled: !!sellerId }
   );
+  const showFulfillmentLoader = useDelayedLoading(rulesLoading, 150);
 
   // Build matrix from rules when seller or rules change
   useEffect(() => {
@@ -136,7 +139,9 @@ export default function BoxAlgorithmPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto relative min-h-[160px]">
+            <FulfillmentLoader show={showFulfillmentLoader} title="Preparando a matriz" />
+            {!rulesLoading && (
             <table className="text-xs border-collapse">
               <thead>
                 <tr className="bg-surface-2">
@@ -204,6 +209,7 @@ export default function BoxAlgorithmPage() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
 
           <div className="p-3 bg-surface-2 border-t border-line-soft flex items-center gap-3">

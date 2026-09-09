@@ -35,6 +35,7 @@ type Draft = {
   params: Record<string, any>;
   cubagem_m3: number;
   valor_segurado: number;
+  inicio_contrato: string;   // 'YYYY-MM' ou '' — metadado do aviso de reajuste
   adjustments: { descricao: string; obs: string; sign: number; valor: number }[];
   overrides: Record<number, { channel_override: string | null; b2b_adicional: number | null; note: string | null }>;
 };
@@ -177,6 +178,7 @@ function draftFromPayload(p: any): Draft {
     params,
     cubagem_m3: p.cubagem_m3 ?? 0,
     valor_segurado: p.valor_segurado ?? 0,
+    inicio_contrato: p.inicio_contrato ?? '',
     adjustments: (p.adjustments || []).map((a: any) => ({ ...a })),
     overrides,
   };
@@ -228,11 +230,15 @@ export default function BillingPage() {
   const setField = (k: 'cubagem_m3' | 'valor_segurado', v: number) => {
     setDraft(d => d ? { ...d, [k]: v } : d); setDirty(true);
   };
+  const setInicioContrato = (v: string) => {
+    setDraft(d => d ? { ...d, inicio_contrato: v } : d); setDirty(true);
+  };
 
   const buildBody = (d: Draft | null) => {
     if (!d) return null;
     const overrides = Object.entries(d.overrides).map(([oid, o]) => ({ order_id: Number(oid), ...o }));
     return { ...d.params, cubagem_m3: d.cubagem_m3, valor_segurado: d.valor_segurado,
+      inicio_contrato: d.inicio_contrato,
       adjustments: d.adjustments, nf_overrides: overrides };
   };
 
@@ -423,6 +429,20 @@ export default function BillingPage() {
             {dirty && <span className="text-xs text-amber-400">alterações não salvas</span>}
           </div>
 
+          {payload.reajuste_alerta && (
+            <div className="rounded-xl border-2 border-red-500 bg-red-600/20 px-5 py-4 text-red-200 flex items-start gap-3">
+              <span className="text-2xl leading-none">⚠️</span>
+              <div>
+                <div className="font-bold text-base text-red-100">REAJUSTE — {payload.seller_name}</div>
+                <p className="text-sm mt-0.5">
+                  Este cliente completa <b>{payload.reajuste_alerta.anos} ano(s)</b> de contrato neste mês
+                  (início em {payload.reajuste_alerta.mes_inicio.slice(5, 7)}/{payload.reajuste_alerta.mes_inicio.slice(0, 4)}).
+                  Revise os valores antes de fechar.
+                </p>
+              </div>
+            </div>
+          )}
+
           {isClosed && (
             <div className="flex items-center justify-between gap-3 bg-teal-900/20 border border-teal-700 rounded-xl px-4 py-3 text-sm text-teal-300">
               <span className="flex items-center gap-2"><Lock size={15} />
@@ -443,6 +463,18 @@ export default function BillingPage() {
                 : 'Estes valores são do seller (mesmos da aba Comercial em Sellers). Alterar aqui vale para todos os meses abertos; fechados ficam congelados.'}
             </p>
             <div className="grid gap-4 md:grid-cols-3">
+              <ParamGroup title="Contrato">
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-xs text-t2">Mês de início do contrato</span>
+                  <input type="month" value={draft.inicio_contrato || ''}
+                    disabled={isClosed}
+                    onChange={e => setInicioContrato(e.target.value)}
+                    className="text-right border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1 disabled:opacity-50" />
+                </div>
+                <p className="text-[11px] text-t4">
+                  Aparece um aviso de reajuste sempre que o mês do Faturamento cair no aniversário do contrato.
+                </p>
+              </ParamGroup>
               <ParamGroup title="Pedidos B2C">
                 <ToggleRow label="Cobrança por faixa de pedidos"
                   v={!!draft.params.usar_faixas_pedidos}

@@ -110,6 +110,14 @@ def _normalize_faixas(raw: str, usar: bool) -> str:
     return json.dumps(faixas, ensure_ascii=False)
 
 
+def _normalize_inicio_contrato(raw: str) -> str:
+    """Vazio, ou 'YYYY-MM' com mês 01–12. Qualquer outra coisa → 400."""
+    v = (raw or "").strip()
+    if v and not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", v):
+        raise HTTPException(400, "Mês de início do contrato deve ser 'AAAA-MM'.")
+    return v
+
+
 def _seller_or_404(db: Session, seller_id: int) -> models.Seller:
     s = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     if not s:
@@ -151,11 +159,13 @@ def put_seller_params(
     _seller_or_404(db, seller_id)
     row = _get_or_create_params(db, seller_id)
     faixas_norm = _normalize_faixas(body.faixas_pedidos, body.usar_faixas_pedidos)
+    inicio_norm = _normalize_inicio_contrato(body.inicio_contrato)
     # Fonte única: grava TODOS os parâmetros no default do seller. É o mesmo
     # registro que o Faturamento de mês aberto lê e grava.
     for f in calc.PARAM_FIELDS:
         setattr(row, f, getattr(body, f))
     row.faixas_pedidos = faixas_norm   # forma canônica (validada acima)
+    row.inicio_contrato = inicio_norm  # metadado, fora de PARAM_FIELDS
     _audit(db, current_user, "UPDATE_SELLER_PARAMS", seller_id, body.model_dump())
     db.commit()
     db.refresh(row)
@@ -299,6 +309,12 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
     )
     box_prices = _effective_box_prices(db, seller.id)
 
+    # Metadado do aviso de reajuste — vive só em billing_seller_params, nunca no
+    # snapshot; o alerta é sempre calculado ao vivo contra o ref_month exibido.
+    sp_row = db.query(models.BillingSellerParams).filter(
+        models.BillingSellerParams.seller_id == seller.id).first()
+    inicio_contrato = (getattr(sp_row, "inicio_contrato", "") or "") if sp_row else ""
+
     if closing and closing.status == "closed":
         params = calc.params_from_obj(closing)
         cubagem = closing.cubagem_m3 or 0.0
@@ -333,6 +349,8 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
         "adjustments": adjustments,
         "box_prices": [{"box_key": k, "price": v} for k, v in box_prices.items()],
         "grupo_a": sorted(calc.parse_grupo_a(params.get("tipos_caixa_inclusos") or "")),
+        "inicio_contrato": inicio_contrato,
+        "reajuste_alerta": calc.reajuste_alerta(inicio_contrato, ref_month),
         **computed,
     }
 
@@ -371,6 +389,7 @@ def put_closing(
         db.flush()
 
     faixas_norm = _normalize_faixas(body.faixas_pedidos, body.usar_faixas_pedidos)
+    inicio_norm = _normalize_inicio_contrato(body.inicio_contrato)
     # Fonte única: os parâmetros do rascunho vão para o default do seller
     # (billing_seller_params) — o mesmo registro da aba Comercial. A linha do
     # `closing` guarda só o que é do mês: ajustes avulsos e overrides de NF.
@@ -378,6 +397,7 @@ def put_closing(
     for f in calc.PARAM_FIELDS:
         setattr(sp, f, getattr(body, f))
     sp.faixas_pedidos = faixas_norm
+    sp.inicio_contrato = inicio_norm
 
     db.query(models.BillingClosingAdjustment).filter(
         models.BillingClosingAdjustment.closing_id == closing.id
@@ -526,7 +546,7 @@ def closing_excel(
 
 # Campos podados do payload antes de devolver ao seller: são as tarifas do
 # contrato (o "como se calcula"), que ele não deve enxergar no portal.
-_SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a")
+_SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a", "inicio_contrato", "reajuste_alerta")
 _SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c", "faixa_aplicada")
 
 

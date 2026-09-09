@@ -40,6 +40,7 @@ interface BillingFields {
   cubagem_m3: string;
   usar_faixas_pedidos: boolean;
   faixas_pedidos: string;   // JSON: [{de,ate,preco}]
+  inicio_contrato: string;  // 'YYYY-MM' ou '' — só para o aviso de reajuste
 }
 
 interface SellerForm {
@@ -59,7 +60,7 @@ const EMPTY_BILLING: BillingFields = {
   franquia_m3: '', preco_m3: '', seguro_incluso: false,
   aliquota_seguro: '0.30', armazenagem_inclusa: false,
   valor_segurado: '', cubagem_m3: '',
-  usar_faixas_pedidos: false, faixas_pedidos: '',
+  usar_faixas_pedidos: false, faixas_pedidos: '', inicio_contrato: '',
 };
 
 const EMPTY: SellerForm = {
@@ -108,6 +109,7 @@ function paramsToFields(p: any): BillingFields {
     valor_segurado: s(p.valor_segurado), cubagem_m3: s(p.cubagem_m3),
     usar_faixas_pedidos: !!p.usar_faixas_pedidos,
     faixas_pedidos: p.faixas_pedidos ?? '',
+    inicio_contrato: p.inicio_contrato ?? '',
   };
 }
 
@@ -125,6 +127,7 @@ function fieldsToParams(b: BillingFields) {
     valor_segurado: NUM(b.valor_segurado), cubagem_m3: NUM(b.cubagem_m3),
     usar_faixas_pedidos: b.usar_faixas_pedidos,
     faixas_pedidos: b.faixas_pedidos || '',
+    inicio_contrato: b.inicio_contrato || '',
   };
 }
 
@@ -554,6 +557,16 @@ export default function SellersPage() {
                   tela de Faturamento — editar aqui ou lá dá no mesmo, e vale para todos os
                   meses ainda abertos. Meses já fechados ficam congelados.
                 </p>
+
+                <div className="border border-line-soft rounded-lg p-3">
+                  <label className="block text-xs text-t3 mb-1">Mês de início do contrato</label>
+                  <input type="month" value={form.billing.inicio_contrato}
+                    onChange={e => setBilling('inicio_contrato', e.target.value)}
+                    className={cls} style={clsStyle} />
+                  <p className="text-[11px] text-t4 mt-1">
+                    Gera um aviso de reajuste na tela de Faturamento quando o mês bater com o aniversário do contrato.
+                  </p>
+                </div>
 
                 <div className="border border-line-soft rounded-lg p-3 space-y-2">
                   <div className="text-[11px] uppercase tracking-wide text-t3 font-semibold">Pedidos B2C</div>

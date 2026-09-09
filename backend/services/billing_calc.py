@@ -77,6 +77,23 @@ def prev_ref_month(ref_month: str) -> str:
     return f"{year:04d}-{mon:02d}"
 
 
+_RM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def reajuste_alerta(inicio_contrato: str, ref_month: str) -> Optional[dict]:
+    """Aviso de reajuste: dispara quando `ref_month` cai no MESMO mês do ano em
+    que o contrato começou, num ano posterior. Devolve {mes_inicio, anos} ou None.
+    """
+    inicio = (inicio_contrato or "").strip()
+    if not _RM_RE.match(inicio) or not _RM_RE.match(ref_month or ""):
+        return None
+    iy, im = int(inicio[:4]), int(inicio[5:7])
+    ry, rm = int(ref_month[:4]), int(ref_month[5:7])
+    if rm != im or ry <= iy:
+        return None
+    return {"mes_inicio": inicio, "anos": ry - iy}
+
+
 # ── caixas ───────────────────────────────────────────────────────────────────
 
 # Lista canônica — repetida em todo o sistema (Scanner, faturamento, cadastro

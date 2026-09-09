@@ -85,6 +85,26 @@ grid genérico `BILLING_FIELDS`).
 | Mudar o preço da faixa de um mês fechado | Editar o seller não mexe em mês fechado (snapshot) | Reabrir o mês, ajustar, fechar de novo |
 | `_fatura` com faixa: de onde sai o piso | Não é mais `min_pedidos × preco_unitario` — é `qtd_cobrada × preço_da_faixa` | Ver o ramo `if faixa_ativa` em `_fatura` |
 
+### Aviso de reajuste — mês de início do contrato
+
+Campo novo **`billing_seller_params.inicio_contrato`** (`VARCHAR(7)`, `'YYYY-MM'` ou vazio) —
+**metadado, NÃO entra em `PARAM_FIELDS` nem no snapshot do fechamento**. Editável na aba Comercial
+de Sellers e no grupo "Contrato" do Faturamento (`Draft.inicio_contrato`, padrão de
+`cubagem_m3`/`valor_segurado`: campo à parte no draft, `buildBody` manda explícito).
+
+- `billing_calc.reajuste_alerta(inicio_contrato, ref_month)` (pura): devolve
+  `{"mes_inicio", "anos"}` quando o **mês** do `ref_month` == mês do início **e** o ano é
+  posterior; senão `None`. `_build_payload` chama isso **ao vivo** (mês aberto e fechado) e põe
+  `inicio_contrato` + `reajuste_alerta` no topo do payload.
+- `routers/billing.py` `_normalize_inicio_contrato` valida (vazio ou `YYYY-MM` mês 01–12 → senão
+  400); grava explícito em `put_seller_params` e `put_closing`, **fora** do laço de `PARAM_FIELDS`.
+- **Escondido do seller** — `inicio_contrato` e `reajuste_alerta` entraram em `_SELLER_HIDDEN_TOP`.
+- Frontend: banner **vermelho, borda 2px, ⚠️** no topo do fechamento (`Billing.tsx`) quando
+  `payload.reajuste_alerta`. **Não trava** o `close`. Sem mudança em PDF/Excel, consolidado ou
+  portal.
+
+⚠️ Migração só em `billing_seller_params` (a de fechamento **não** ganha a coluna — de propósito).
+
 ### Portão do Financeiro dispensado em ambiente LOCAL
 
 `auth.py` ganhou `_IS_LOCAL_DB` (SQLite **ou** Postgres em `localhost`/`127.0.0.1` — o dev roda

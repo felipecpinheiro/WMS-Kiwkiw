@@ -531,6 +531,11 @@ class BillingSellerParams(Base):
     id = Column(Integer, primary_key=True, index=True)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
 
+    # Metadado (09/09/2026): mês em que o cliente entrou na Kiwkiw ('YYYY-MM').
+    # NÃO entra no cálculo nem no snapshot do fechamento — serve só para o aviso
+    # de reajuste na tela de Faturamento quando o mês bate com o aniversário.
+    inicio_contrato = Column(String(7), default="", nullable=False)
+
     preco_unitario = Column(Float, default=0.0, nullable=False)       # preço unitário / manuseio B2C
     min_pedidos = Column(Integer, default=0, nullable=False)          # nº mínimo de pedidos B2C
     manuseio_b2b = Column(Float, default=0.0, nullable=False)

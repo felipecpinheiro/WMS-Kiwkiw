@@ -734,6 +734,9 @@ class BillingSellerParamsIn(BaseModel):
     # [{"de":100,"ate":200,"preco":30.0}, ...] (contíguas). Validado no router.
     usar_faixas_pedidos: bool = False
     faixas_pedidos: str = ""
+    # Metadado (09/09/2026): mês de início do contrato ('YYYY-MM' ou vazio).
+    # Não entra no cálculo — só no aviso de reajuste. Validado no router.
+    inicio_contrato: str = ""
 
 
 class BillingSellerParamsOut(BillingSellerParamsIn):

@@ -181,6 +181,12 @@ def run_light_migrations():
                 if not col_exists(_bt, "faixas_pedidos"):
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
+            # Faturamento (09/09/2026): mês de início do contrato do seller
+            # (metadado do aviso de reajuste — só em billing_seller_params).
+            if not col_exists("billing_seller_params", "inicio_contrato"):
+                index_migrations.append(
+                    "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
+                    "VARCHAR(7) DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
             # parâmetros do seller. Colunas aditivas (default 0) SÓ em
             # billing_seller_params (a tabela de fechamento já as tinha).
@@ -307,6 +313,10 @@ def run_light_migrations():
                 if "faixas_pedidos" not in _cols:
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
+                if _bt == "billing_seller_params" and "inicio_contrato" not in _cols:
+                    index_migrations.append(
+                        "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
+                        "VARCHAR(7) DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
             # parâmetros do seller. Colunas aditivas SÓ em billing_seller_params.
             _sp_cols = {r[1] for r in db.execute(

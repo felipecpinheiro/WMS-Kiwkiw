@@ -993,6 +993,9 @@ export interface BillingSellerParams {
   // [{"de":100,"ate":200,"preco":30}, ...] (contíguas).
   usar_faixas_pedidos?: boolean;
   faixas_pedidos?: string;
+  // Metadado (09/09/2026): mês de início do contrato ('YYYY-MM' ou vazio).
+  // Só alimenta o aviso de reajuste — não entra no cálculo.
+  inicio_contrato?: string;
 }
 
 export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
@@ -1001,7 +1004,7 @@ export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
   limite_itens_b2b: 0, tipos_caixa_inclusos: '', cota_caixas_mes: 0,
   franquia_m3: 0, preco_m3: 0, seguro_incluso: false, aliquota_seguro: 0.30,
   armazenagem_inclusa: false,
-  usar_faixas_pedidos: false, faixas_pedidos: '',
+  usar_faixas_pedidos: false, faixas_pedidos: '', inicio_contrato: '',
 };
 
 export interface BillingBoxPrice { box_key: string; price: number | null }

@@ -15,9 +15,9 @@ import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case, or_, text
 
 from ..database import get_db
 from ..auth import get_current_user
@@ -754,4 +754,215 @@ def seller_dashboard(
         "completion_rate": completion_rate,
         "recent_orders": orders_list,
         "stock_alerts": stock_alerts,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ABA "DASHBOARD" DO PORTAL DO SELLER (09/09/2026)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Escopo SEMPRE pelo seller do token (current_user.seller_id). Não existe
+# parâmetro seller_id nestas rotas — um seller não consulta o de outro. Só o
+# role `client` (e `admin`, para conferência) passa; sem seller vinculado = 400.
+#
+# NÃO é faturamento: a contagem de pedidos/NFs é o total do período, sem
+# classificação B2C/B2B e sem os overrides manuais de fechamento.
+
+_PORTAL_DASH_ROLES = ("client", "admin")
+
+# saídas de estoque tolerando rótulos legados (IN/OUT vs Entrada/Saída).
+# CAST obrigatório: movement_type é ENUM nativo no PostgreSQL.
+_OUT_LABELS_SQL = "UPPER(CAST(movement_type AS VARCHAR)) IN ('OUT','S','SAIDA','SAÍDA')"
+
+
+def _portal_seller_id(current_user: models.User) -> int:
+    role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    if role not in _PORTAL_DASH_ROLES:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    if not current_user.seller_id:
+        raise HTTPException(status_code=400, detail="Usuário sem seller associado")
+    return current_user.seller_id
+
+
+@router.get("/seller/analytics", response_model=schemas.SellerAnalytics)
+def seller_dashboard_analytics(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Blocos da aba Dashboard do portal com janelas fixas:
+      - status dos pedidos de hoje
+      - pedidos por dia (últimos 30 dias)
+      - NFs por mês (últimos 12 meses)
+      - resumo de estoque + SKUs prestes a romper (previsão <= 15 dias)
+    """
+    seller_id = _portal_seller_id(current_user)
+    from ..services.stock_manager import get_stock_report
+
+    today = today_brasilia()
+    S = models.OrderStatus
+    excl = (
+        models.Order.status != S.CANCELLED,
+        models.Order.status != S.INACTIVE,
+    )
+
+    # ── Hoje: contagem por status ────────────────────────────────────────
+    today_rows = dict(
+        db.query(models.Order.status, func.count(models.Order.id))
+        .filter(
+            models.Order.seller_id == seller_id,
+            func.date(models.Order.imported_at) == today,
+            *excl,
+        )
+        .group_by(models.Order.status)
+        .all()
+    )
+    today_total          = sum(today_rows.values())
+    today_completed      = today_rows.get(S.COMPLETED, 0)
+    today_in_preparation = today_rows.get(S.SCANNING, 0)
+    today_interrupted    = today_rows.get(S.INTERRUPTED, 0)
+    today_pending        = today_total - today_completed - today_in_preparation - today_interrupted
+
+    # ── Uma varredura de ~370 dias monta os dois buckets ────────────────
+    day_from = today - timedelta(days=370)
+    per_day_rows = (
+        db.query(func.date(models.Order.imported_at), func.count(models.Order.id))
+        .filter(
+            models.Order.seller_id == seller_id,
+            func.date(models.Order.imported_at) >= day_from,
+            *excl,
+        )
+        .group_by(func.date(models.Order.imported_at))
+        .all()
+    )
+
+    def _as_date(v):
+        if isinstance(v, str):
+            return date.fromisoformat(v[:10])
+        return v
+
+    per_day = {}
+    for k, v in per_day_rows:
+        if k is None:
+            continue
+        per_day[_as_date(k)] = int(v or 0)
+
+    orders_per_day = [
+        {"date": (today - timedelta(days=i)).isoformat(),
+         "count": per_day.get(today - timedelta(days=i), 0)}
+        for i in range(29, -1, -1)
+    ]
+
+    # 12 meses (mês corrente inclusive), do mais antigo para o mais recente
+    months = []
+    y, m = today.year, today.month
+    for _ in range(12):
+        months.append((y, m))
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    months.reverse()
+    month_totals = {ym: 0 for ym in months}
+    for d, c in per_day.items():
+        if (d.year, d.month) in month_totals:
+            month_totals[(d.year, d.month)] += c
+    nfs_per_month = [
+        {"month": f"{yy:04d}-{mm:02d}", "count": month_totals[(yy, mm)]}
+        for (yy, mm) in months
+    ]
+
+    # ── Estoque ─────────────────────────────────────────────────────────
+    report = get_stock_report(seller_id, db)
+    summary = {"alto": 0, "medio": 0, "baixo": 0, "ruptura": 0, "total_skus": len(report)}
+    rupture = []
+    for r in report:
+        cur = r.get("current_stock") or 0
+        lvl = (r.get("level") or "").upper()
+        if cur <= 0:
+            summary["ruptura"] += 1
+        if lvl == "ALTO":
+            summary["alto"] += 1
+        elif lvl in ("MÉDIO", "MEDIO"):
+            summary["medio"] += 1
+        else:
+            summary["baixo"] += 1
+        dp = r.get("days_projection")
+        if cur > 0 and dp is not None and dp <= 15:
+            rupture.append({
+                "sku": r.get("sku"),
+                "product_name": r.get("product_name"),
+                "current_stock": cur,
+                "days_remaining": dp,
+            })
+    rupture.sort(key=lambda x: x["days_remaining"])
+
+    return {
+        "seller_id": seller_id,
+        "today": {
+            "date": today.isoformat(),
+            "total": today_total,
+            "completed": today_completed,
+            "in_preparation": today_in_preparation,
+            "interrupted": today_interrupted,
+            "pending": today_pending,
+        },
+        "orders_per_day": orders_per_day,
+        "nfs_per_month": nfs_per_month,
+        "stock_summary": summary,
+        "rupture_soon": rupture[:25],
+    }
+
+
+@router.get("/seller/top-skus", response_model=schemas.SellerTopSkus)
+def seller_dashboard_top_skus(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = Query(10, ge=1, le=50),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """SKUs mais vendidos (saídas de estoque) do seller no período. Default = últimos 30 dias."""
+    seller_id = _portal_seller_id(current_user)
+
+    end = date_to or today_brasilia()
+    start = date_from or (end - timedelta(days=30))
+    if start > end:
+        start, end = end, start
+
+    rows = db.execute(
+        text(f"""
+            SELECT sku, SUM(quantity) AS total
+            FROM stock_movements
+            WHERE seller_id = :sid
+              AND {_OUT_LABELS_SQL}
+              AND movement_date >= :start
+              AND movement_date <= :end
+            GROUP BY sku
+            ORDER BY total DESC
+            LIMIT :lim
+        """),
+        {"sid": seller_id, "start": str(start), "end": str(end), "lim": limit},
+    ).fetchall()
+
+    skus = [r.sku for r in rows]
+    names = {}
+    if skus:
+        names = {
+            p.sku: p.name
+            for p in db.query(models.Product).filter(
+                models.Product.seller_id == seller_id,
+                models.Product.sku.in_(skus),
+                models.Product.active == True,
+            ).all()
+        }
+
+    return {
+        "seller_id": seller_id,
+        "date_from": start,
+        "date_to": end,
+        "limit": limit,
+        "rows": [
+            {"sku": r.sku, "product_name": names.get(r.sku, r.sku), "total_out": int(r.total or 0)}
+            for r in rows
+        ],
     }

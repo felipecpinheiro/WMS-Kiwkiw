@@ -468,7 +468,37 @@ export const dashboardApi = {
     api.get('/dashboard/seller', { params }),
   availableDates: (limit = 30) =>
     api.get<string[]>('/dashboard/available-dates', { params: { limit } }),
+
+  // Aba "Dashboard" do portal do seller (escopo pelo token, sem seller_id)
+  sellerAnalytics: () =>
+    api.get<SellerAnalytics>('/dashboard/seller/analytics'),
+  sellerTopSkus: (params?: { date_from?: string; date_to?: string; limit?: number }) =>
+    api.get<SellerTopSkus>('/dashboard/seller/top-skus', { params }),
 };
+
+export interface SellerAnalytics {
+  seller_id: number;
+  today: {
+    date: string;
+    total: number;
+    completed: number;
+    in_preparation: number;
+    interrupted: number;
+    pending: number;
+  };
+  orders_per_day: { date: string; count: number }[];
+  nfs_per_month: { month: string; count: number }[];
+  stock_summary: { alto: number; medio: number; baixo: number; ruptura: number; total_skus: number };
+  rupture_soon: { sku: string; product_name: string; current_stock: number; days_remaining: number }[];
+}
+
+export interface SellerTopSkus {
+  seller_id: number;
+  date_from: string;
+  date_to: string;
+  limit: number;
+  rows: { sku: string; product_name: string; total_out: number }[];
+}
 
 
 // ============================================================

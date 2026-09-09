@@ -654,6 +654,25 @@ class SellerDashboard(BaseModel):
     stock_alerts: List[dict]
 
 
+class SellerAnalytics(BaseModel):
+    """Aba Dashboard do portal do seller — janelas fixas (hoje / 30d / 12m / estoque)."""
+    seller_id: int
+    today: dict
+    orders_per_day: List[dict]
+    nfs_per_month: List[dict]
+    stock_summary: dict
+    rupture_soon: List[dict]
+
+
+class SellerTopSkus(BaseModel):
+    """SKUs mais vendidos (saídas) do seller no período — aba Dashboard do portal."""
+    seller_id: int
+    date_from: date
+    date_to: date
+    limit: int
+    rows: List[dict]
+
+
 # ============================================================
 # BULK IMPORT / SCANNING AUXILIARES
 # ============================================================

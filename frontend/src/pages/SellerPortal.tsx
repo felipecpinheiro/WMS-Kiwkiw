@@ -12,6 +12,7 @@ import {
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
   BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal, Receipt,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -19,6 +20,7 @@ import {
 } from 'recharts';
 import { dashboardApi, inventoryApi, authApi } from '../api';
 import SellerFinanceTab from './SellerFinance';
+import SellerDashboardTab from './SellerDashboard';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
@@ -33,7 +35,7 @@ import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Tab = 'orders' | 'stock' | 'movements' | 'finance';
+type Tab = 'dashboard' | 'orders' | 'stock' | 'movements' | 'finance';
 type StockSubTab = 'position' | 'chart';
 type SortDir = 'asc' | 'desc' | null;
 interface SortState { col: string; dir: SortDir }
@@ -210,7 +212,7 @@ export default function SellerPortalPage() {
 
   const today = todayBrasiliaStr();
 
-  const [tab, setTab] = useState<Tab>('orders');
+  const [tab, setTab] = useState<Tab>('dashboard');
   const [search, setSearch] = useState('');
   const [exportingStock, setExportingStock] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
@@ -355,6 +357,7 @@ export default function SellerPortalPage() {
   // ── Nav da sidebar ─────────────────────────────────────────────────────────
 
   const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'dashboard', label: 'Dashboard',      icon: LayoutDashboard },
     { id: 'orders',    label: 'Meus Pedidos',   icon: ClipboardList },
     { id: 'stock',     label: 'Meu Estoque',    icon: Warehouse },
     { id: 'movements', label: 'Movimentações',  icon: List },
@@ -572,12 +575,18 @@ export default function SellerPortalPage() {
               {navItems.find(n => n.id === tab)?.label}
             </h1>
             <p className="text-sm text-t4 mt-0.5">
+              {tab === 'dashboard' ? 'Visão geral da sua operação e do seu estoque' : ''}
               {tab === 'orders'    ? 'Acompanhe o status dos seus pedidos do dia' : ''}
               {tab === 'stock'     ? 'Posição atual — clique em uma linha para ver o gráfico do SKU' : ''}
               {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
               {tab === 'finance'   ? 'Suas faturas mensais na Kiwkiw' : ''}
             </p>
           </div>
+
+          {/* ── DASHBOARD ────────────────────────────────────────────────── */}
+          {tab === 'dashboard' && sellerId && (
+            <SellerDashboardTab sellerId={sellerId} onSelectSku={setSelectedSku} />
+          )}
 
           {/* ── FINANCEIRO ───────────────────────────────────────────────── */}
           {tab === 'finance' && sellerId && <SellerFinanceTab sellerId={sellerId} />}

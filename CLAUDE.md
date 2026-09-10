@@ -39,6 +39,68 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 10/09/2026 — Portal do Seller: gráficos, filtros de Estoque/Movimentações e janela de render
+
+**Só frontend** (`frontend/src/pages/SellerPortal.tsx` + `SellerDashboard.tsx`). **Sem backend,
+sem `api.ts`, sem migração** — tudo opera sobre os payloads que já vinham completos.
+
+### Aba Dashboard (`SellerDashboard.tsx`)
+- Blocos "Pedidos por dia" → **"Pedidos por Dia"** e "NFs por mês" → **"Pedidos por Mês"** (só
+  rótulo; o gráfico sempre contou pedido, não NF classificada). Tooltip e nome da barra do 2º
+  também passaram de "NFs" para "Pedidos".
+- `<Tooltip cursor={{ fill: cc.grid, fillOpacity: 0.35 }}>` nos dois gráficos + no gráfico do
+  `SkuDetailModal` (`SellerPortal.tsx`) — o realce atrás da barra sob o mouse usava o cinza-claro
+  padrão do recharts (`#ccc`), que no tema escuro virava um bloco quase branco.
+
+### Aba Movimentações — renderização capada + filtros
+- ⚠️ **A lista é renderizada capada:** `movShown = filteredMovements.slice(0, movVisible)`,
+  `movVisible` começa em **3000** (`MOV_PAGE`) e sobe de 3k em 3k via `IntersectionObserver`
+  (`rootMargin: 600px`) numa sentinela no fim da lista. Um seller da Purpose tinha **73k
+  movimentos em 1 ano** e montar todas as `<tr>`/cards travava a aba. **Busca, filtros e
+  ordenação continuam operando sobre `filteredMovements` inteiro** — só o que é pintado é
+  limitado. `movVisible` volta a 3000 sempre que qualquer filtro/ordenação/aba muda (um
+  `useEffect` com todos eles nas deps). A chamada ainda traz as 73k linhas — o gargalo era o
+  render, não o fetch (decisão do dono: não paginar no servidor por enquanto).
+- **Período padrão: 90 dias** (era 1 ano). Variável `defaultMovFrom` (era `oneYearAgo`).
+- Filtros novos, todos client-side no `filteredMovements`: **presets** de período (Hoje/7d/30d/
+  90d/12m/Tudo — "Tudo" = `2015-01-01`), **Natureza** (dropdown montado de `Array.from(new
+  Set(movements.map(m => m.nature)))` — some quando não há valores), **Com/Sem NF** (chips sobre
+  `nf_number`), **Qtd ≥ N**, **NF nº** (campo próprio, `String(nf_number).startsWith(x)`).
+  `movFiltersActive` / `clearMovFilters` centralizam o "tem filtro?" e o "Limpar" (desktop e a
+  folha "Filtros" do mobile).
+
+### Aba Meu Estoque — filtros + ordenação
+- **Barra de controles nova** acima da tabela (vale desktop **e mobile** — o mobile não tinha
+  ordenação nenhuma):
+  - Dropdown **Ordenar por** (`STOCK_SORT_OPTIONS`): grava direto no estado `sort` `{col, dir}`,
+    inclui **Giro** (`avg_daily_sales_60d`, que já vinha no payload de `/inventory/stock/{id}`).
+    No desktop os cabeçalhos `SortTh` continuam funcionando; combinação que não bate com nenhuma
+    opção mostra "Personalizado (cabeçalho)".
+  - Chips **Nível** (ALTO/MÉDIO/BAIXO, multi), **Situação** (Com saldo · Em ruptura ≤ 0),
+    **Previsão** (≤7/≤15/≤30/Sem previsão, escolha única sobre `days_remaining`), **Status**
+    (`forecast_status`: Baixo/Médio/Alto/Sem Saídas 60d, multi).
+- ⚠️ **Comparador de `filteredStock` mudou:** `null`/`''` (ex.: `days_remaining` de SKU sem
+  saída) vão **sempre pro fim**, independente da direção — antes `?? ''` misturava com números e
+  a ordenação por previsão ficava sem sentido. E a comparação numérica agora exige
+  `typeof a === 'number' && typeof b === 'number'` nos dois lados.
+- Rodapé (desktop e mobile): **"X de Y SKUs"**.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Achar que os filtros do portal vão ao servidor | São **todos client-side** sobre o payload já carregado (`filteredStock`/`filteredMovements`). O fetch de Movimentações ainda traz o período inteiro | Filtro novo entra no `useMemo` correspondente + nas deps; se for de Movimentações, entra também nas deps do `useEffect` que reseta `movVisible` |
+| Mexer na lista de Movimentações e iterar `filteredMovements` direto | Volta a montar 73k linhas e trava | Iterar `movShown`. A sentinela `movSentinelRef` só existe quando `movHasMore` |
+| `Chip` ativo com `text-t1` | `bg-violet-600 + text-t1` dá contraste 2,8:1 no modo claro (armadilha já conhecida) | O componente `Chip` usa `text-white` quando ativo |
+| Ordenar Estoque por coluna que pode ser `null` | `days_remaining`/`avg_daily_sales_60d` nulos furam a ordenação | O comparador de `filteredStock` já joga nulo/vazio pro fim antes de comparar |
+| `Array.from(new Set(...))` de `nature` num seller sem dados | dropdown de Natureza vazio confunde | Renderizado só quando `movNatures.length > 0` (desktop e mobile) |
+
+**Testes:** `tsc --noEmit` limpo; conferência visual no app local (tema claro e escuro, sem erro
+no console) — layout das barras de filtro, toggle de chip, período padrão de 90 d confirmado.
+**Não validado contra dados de um seller real** (login admin não tem `seller_id`).
+
+---
+
 ## Mudanças Recentes — 09/09/2026 — Aba "Dashboard" no Portal do Seller
 
 **Sem migração.** Aba nova (`SellerPortal.tsx`, id `dashboard`) — **primeira do portal, abre

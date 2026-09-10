@@ -158,7 +158,7 @@ export default function SellerDashboardTab({
           </Card>
 
           {/* ── Bloco 2 — Pedidos por dia (30d) ──────────────────────────── */}
-          <Card title="Pedidos por dia" subtitle="Últimos 30 dias, por data de importação">
+          <Card title="Pedidos por Dia" subtitle="Últimos 30 dias, por data de importação">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={data.orders_per_day} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
@@ -166,6 +166,7 @@ export default function SellerDashboardTab({
                   interval={isMobile ? 5 : 3} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: cc.axisText }} />
                 <Tooltip
+                  cursor={{ fill: cc.grid, fillOpacity: 0.35 }}
                   labelFormatter={(v) => dd(String(v))}
                   formatter={(v) => [v, 'Pedidos']}
                   contentStyle={{ fontSize: 12, borderRadius: 8, background: cc.tooltipBg, border: `1px solid ${cc.tooltipBorder}`, color: cc.tooltipText }} />
@@ -175,7 +176,7 @@ export default function SellerDashboardTab({
           </Card>
 
           {/* ── Bloco 3 — NFs por mês (12m) ──────────────────────────────── */}
-          <Card title="NFs por mês" subtitle="Comparativo dos últimos 12 meses">
+          <Card title="Pedidos por Mês" subtitle="Comparativo dos últimos 12 meses">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={data.nfs_per_month} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
@@ -183,10 +184,11 @@ export default function SellerDashboardTab({
                   interval={0} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: cc.axisText }} />
                 <Tooltip
+                  cursor={{ fill: cc.grid, fillOpacity: 0.35 }}
                   labelFormatter={(v) => mmm(String(v))}
-                  formatter={(v) => [v, 'NFs']}
+                  formatter={(v) => [v, 'Pedidos']}
                   contentStyle={{ fontSize: 12, borderRadius: 8, background: cc.tooltipBg, border: `1px solid ${cc.tooltipBorder}`, color: cc.tooltipText }} />
-                <Bar dataKey="count" name="NFs" fill="#8b7bf0" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="count" name="Pedidos" fill="#8b7bf0" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Card>

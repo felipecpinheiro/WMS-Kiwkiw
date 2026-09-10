@@ -4,7 +4,7 @@
  * aba de Movimentações e aba de Pedidos.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -51,6 +51,41 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   interrupted: { label: 'Interrompido',         cls: 'bg-warn-soft text-warn' },
   cancelled:   { label: 'Cancelado',            cls: 'bg-bad-soft text-bad' },
 };
+
+// ─── Opções de ordenação / filtro do Estoque ──────────────────────────────────
+
+const STOCK_SORT_OPTIONS: { value: string; label: string; col: string; dir: SortDir }[] = [
+  { value: 'default',    label: 'Padrão (SKU)',              col: '',                    dir: null   },
+  { value: 'produto',    label: 'Produto (A–Z)',             col: 'product_name',        dir: 'asc'  },
+  { value: 'saldo_desc', label: 'Saldo (maior → menor)',     col: 'current_stock',       dir: 'desc' },
+  { value: 'saldo_asc',  label: 'Saldo (menor → maior)',     col: 'current_stock',       dir: 'asc'  },
+  { value: 'giro_desc',  label: 'Giro (maior → menor)',      col: 'avg_daily_sales_60d', dir: 'desc' },
+  { value: 'giro_asc',   label: 'Giro (menor → maior)',      col: 'avg_daily_sales_60d', dir: 'asc'  },
+  { value: 'previsao',   label: 'Previsão (mais urgente)',   col: 'days_remaining',      dir: 'asc'  },
+  { value: 'entradas',   label: 'Entradas (maior)',          col: 'total_in',            dir: 'desc' },
+  { value: 'saidas',     label: 'Saídas (maior)',            col: 'total_out',           dir: 'desc' },
+];
+
+const STOCK_LEVELS = ['ALTO', 'MÉDIO', 'BAIXO'];
+const STOCK_FORECASTS = ['Baixo', 'Médio', 'Alto', 'Sem Saídas 60d'];
+
+// ─── Chip de filtro ───────────────────────────────────────────────────────────
+
+function Chip({ active, onClick, children }: {
+  active: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition whitespace-nowrap
+        ${active
+          ? 'bg-violet-600 border-violet-500 text-white'
+          : 'bg-surface-2 border-line text-t3 hover:text-t1 hover:border-line-strong'}`}
+    >
+      {children}
+    </button>
+  );
+}
 
 // ─── Header de coluna com sort ────────────────────────────────────────────────
 
@@ -146,7 +181,7 @@ function SkuDetailModal({
                     <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
                     <XAxis dataKey="date" tick={{ fontSize: 10, fill: chartColors.axisText }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 10, fill: chartColors.axisText }} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, background: chartColors.tooltipBg, border: `1px solid ${chartColors.tooltipBorder}`, color: chartColors.tooltipText }} />
+                    <Tooltip cursor={{ fill: chartColors.grid, fillOpacity: 0.35 }} contentStyle={{ fontSize: 12, borderRadius: 8, background: chartColors.tooltipBg, border: `1px solid ${chartColors.tooltipBorder}`, color: chartColors.tooltipText }} />
                     <Legend iconSize={10} wrapperStyle={{ fontSize: 11, color: chartColors.legendText }} />
                     <Bar dataKey="saidas"   name="Saídas"   fill={chartColors.bad} radius={[3, 3, 0, 0]} />
                     <Bar dataKey="entradas" name="Entradas" fill={chartColors.brand} radius={[3, 3, 0, 0]} />
@@ -219,14 +254,40 @@ export default function SellerPortalPage() {
   const [dateFrom, setDateFrom] = useState(today);
   const [dateTo, setDateTo]     = useState(today);
   const [sort, setSort] = useState<SortState>({ col: '', dir: null });
-  // Filtro de datas para movimentações
-  const oneYearAgo = (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 1); return d.toISOString().slice(0,10); })();
-  const [movDateFrom, setMovDateFrom] = useState(oneYearAgo);
+  // Filtros do Estoque (client-side, sobre o payload que já vem completo)
+  const [stkLevels,   setStkLevels]   = useState<string[]>([]);
+  const [stkSituacao, setStkSituacao] = useState<'' | 'com' | 'ruptura'>('');
+  const [stkPrevisao, setStkPrevisao] = useState<'' | '7' | '15' | '30' | 'sem'>('');
+  const [stkForecast, setStkForecast] = useState<string[]>([]);
+  // Filtro de datas para movimentações — padrão 90 dias (os presets cobrem o resto)
+  const defaultMovFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0,10); })();
+  const [movDateFrom, setMovDateFrom] = useState(defaultMovFrom);
   const [movDateTo,   setMovDateTo]   = useState(today);
   const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
+  const [movNature,  setMovNature]  = useState('');
+  const [movNfMode,  setMovNfMode]  = useState<'' | 'com' | 'sem'>('');
+  const [movMinQty,  setMovMinQty]  = useState('');
+  const [movNf,      setMovNf]      = useState('');
   const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
   const [movFiltersOpen, setMovFiltersOpen] = useState(false);
+
+  const setMovPreset = (days: number | 'all') => {
+    setMovDateTo(today);
+    if (days === 'all') { setMovDateFrom('2015-01-01'); return; }
+    const d = new Date(); d.setDate(d.getDate() - days);
+    setMovDateFrom(d.toISOString().slice(0, 10));
+  };
+  const toggleIn = (arr: string[], v: string) =>
+    arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
+  // Movimentações: renderização capada — pinta só as primeiras N linhas e
+  // revela mais 3k a cada vez que o rodapé entra em vista. Um seller com ~1 ano
+  // de histórico pode ter dezenas de milhares de movimentos; montar todas as
+  // <tr>/cards de uma vez travava a aba. Busca, filtro e ordenação continuam
+  // operando sobre o conjunto completo (filteredMovements) — só a exibição é limitada.
+  const MOV_PAGE = 3000;
+  const [movVisible, setMovVisible] = useState(MOV_PAGE);
+  const movSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // ── Dados ──────────────────────────────────────────────────────────────────
 
@@ -304,19 +365,43 @@ export default function SellerPortalPage() {
   };
 
   const filteredStock: any[] = useMemo(() => {
-    const f = (stock as any[]).filter(s =>
-      !search ||
-      s.sku.toLowerCase().includes(search.toLowerCase()) ||
-      (s.product_name ?? '').toLowerCase().includes(search.toLowerCase()),
-    );
+    const q = search.toLowerCase();
+    const f = (stock as any[]).filter(s => {
+      if (q &&
+        !s.sku.toLowerCase().includes(q) &&
+        !(s.product_name ?? '').toLowerCase().includes(q)) return false;
+      if (stkLevels.length && !stkLevels.includes(s.level)) return false;
+      const saldo = s.current_stock ?? s.final_stock ?? 0;
+      if (stkSituacao === 'com' && saldo <= 0) return false;
+      if (stkSituacao === 'ruptura' && saldo > 0) return false;
+      const dr = s.days_remaining;
+      if (stkPrevisao === 'sem' && dr != null) return false;
+      if (stkPrevisao === '7'  && !(dr != null && dr <= 7))  return false;
+      if (stkPrevisao === '15' && !(dr != null && dr <= 15)) return false;
+      if (stkPrevisao === '30' && !(dr != null && dr <= 30)) return false;
+      if (stkForecast.length && !stkForecast.includes(s.forecast_status)) return false;
+      return true;
+    });
     if (!sort.col || !sort.dir) return f;
     return [...f].sort((a, b) => {
-      const av = a[sort.col] ?? '';
-      const bv = b[sort.col] ?? '';
-      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), 'pt-BR');
+      const av = a[sort.col];
+      const bv = b[sort.col];
+      const an = av == null || av === '';
+      const bn = bv == null || bv === '';
+      if (an && bn) return 0;
+      if (an) return 1;          // nulos/vazios sempre no fim, independe da direção
+      if (bn) return -1;
+      const cmp = typeof av === 'number' && typeof bv === 'number'
+        ? av - bv
+        : String(av).localeCompare(String(bv), 'pt-BR');
       return sort.dir === 'asc' ? cmp : -cmp;
     });
-  }, [stock, search, sort]);
+  }, [stock, search, sort, stkLevels, stkSituacao, stkPrevisao, stkForecast]);
+
+  const stockFiltersActive =
+    !!stkLevels.length || !!stkSituacao || !!stkPrevisao || !!stkForecast.length;
+  const stockSortValue =
+    STOCK_SORT_OPTIONS.find(o => o.col === sort.col && o.dir === sort.dir)?.value ?? 'custom';
 
   // ── Movimentações filtradas ────────────────────────────────────────────────
 
@@ -333,6 +418,21 @@ export default function SellerPortalPage() {
     }
     // filtro tipo
     if (movTypeFilter) list = list.filter(m => m.movement_type === movTypeFilter);
+    // natureza
+    if (movNature) list = list.filter(m => m.nature === movNature);
+    // com / sem NF
+    if (movNfMode === 'com') list = list.filter(m => !!m.nf_number);
+    if (movNfMode === 'sem') list = list.filter(m => !m.nf_number);
+    // quantidade mínima
+    if (movMinQty) {
+      const min = Number(movMinQty);
+      if (!Number.isNaN(min)) list = list.filter(m => Number(m.quantity) >= min);
+    }
+    // NF (casa o começo do número)
+    if (movNf.trim()) {
+      const nf = movNf.trim();
+      list = list.filter(m => String(m.nf_number ?? '').startsWith(nf));
+    }
     // sort
     list = [...list].sort((a, b) => {
       const dir = movSort.dir === 'asc' ? 1 : -1;
@@ -342,7 +442,45 @@ export default function SellerPortalPage() {
       return String(va).localeCompare(String(vb)) * dir;
     });
     return list;
-  }, [movements, search, movTypeFilter, movSort]);
+  }, [movements, search, movTypeFilter, movNature, movNfMode, movMinQty, movNf, movSort]);
+
+  const movNatures = useMemo(
+    () => Array.from(new Set((movements as any[]).map(m => m.nature).filter(Boolean))).sort(),
+    [movements],
+  );
+  const movFiltersActive =
+    !!movTypeFilter || !!movNature || !!movNfMode || !!movMinQty || !!movNf.trim() ||
+    movDateFrom !== defaultMovFrom || movDateTo !== today;
+  const clearMovFilters = () => {
+    setMovTypeFilter(''); setMovNature(''); setMovNfMode(''); setMovMinQty(''); setMovNf('');
+    setMovDateFrom(defaultMovFrom); setMovDateTo(today);
+  };
+
+  const movShown = filteredMovements.slice(0, movVisible);
+  const movHasMore = movVisible < filteredMovements.length;
+
+  // Volta a janela ao início sempre que o recorte muda (senão o usuário
+  // continuaria vendo a fatia antiga depois de filtrar/ordenar/trocar de aba).
+  useEffect(() => {
+    setMovVisible(MOV_PAGE);
+  }, [search, movTypeFilter, movNature, movNfMode, movMinQty, movNf, movDateFrom, movDateTo, movSort, tab]);
+
+  // Carrega mais 3k quando o rodapé da lista se aproxima da viewport.
+  useEffect(() => {
+    if (tab !== 'movements' || !movHasMore) return;
+    const el = movSentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setMovVisible(v => Math.min(v + MOV_PAGE, filteredMovements.length));
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [tab, movHasMore, filteredMovements.length]);
 
   const completionPct  = dashboard?.completion_rate ?? 0;
   const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
@@ -713,6 +851,52 @@ export default function SellerPortalPage() {
                 )}
               </div>
 
+              {/* Ordenação + filtros (desktop e mobile) */}
+              <div className="flex flex-col gap-2.5 bg-surface/60 border border-line-soft rounded-xl px-3.5 py-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-t4 uppercase tracking-wide">Ordenar</span>
+                  <select
+                    value={stockSortValue}
+                    onChange={e => {
+                      const o = STOCK_SORT_OPTIONS.find(x => x.value === e.target.value);
+                      if (o) setSort({ col: o.col, dir: o.dir });
+                    }}
+                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t1 outline-none focus:ring-2 focus:ring-violet-500"
+                  >
+                    {stockSortValue === 'custom' && <option value="custom">Personalizado (cabeçalho)</option>}
+                    {STOCK_SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold text-t4 uppercase tracking-wide mr-0.5">Nível</span>
+                  {STOCK_LEVELS.map(lv => (
+                    <Chip key={lv} active={stkLevels.includes(lv)} onClick={() => setStkLevels(a => toggleIn(a, lv))}>{lv}</Chip>
+                  ))}
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <Chip active={stkSituacao === 'com'}     onClick={() => setStkSituacao(v => v === 'com' ? '' : 'com')}>Com saldo</Chip>
+                  <Chip active={stkSituacao === 'ruptura'} onClick={() => setStkSituacao(v => v === 'ruptura' ? '' : 'ruptura')}>Em ruptura</Chip>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold text-t4 uppercase tracking-wide mr-0.5">Previsão</span>
+                  {([['7', '≤ 7 dias'], ['15', '≤ 15 dias'], ['30', '≤ 30 dias'], ['sem', 'Sem previsão']] as const).map(([v, l]) => (
+                    <Chip key={v} active={stkPrevisao === v} onClick={() => setStkPrevisao(x => x === v ? '' : v)}>{l}</Chip>
+                  ))}
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <span className="text-[11px] font-semibold text-t4 uppercase tracking-wide mr-0.5">Status</span>
+                  {STOCK_FORECASTS.map(fc => (
+                    <Chip key={fc} active={stkForecast.includes(fc)} onClick={() => setStkForecast(a => toggleIn(a, fc))}>{fc}</Chip>
+                  ))}
+                  {stockFiltersActive && (
+                    <button
+                      onClick={() => { setStkLevels([]); setStkSituacao(''); setStkPrevisao(''); setStkForecast([]); }}
+                      className="text-[11px] text-t4 hover:text-bad underline ml-1"
+                    >
+                      Limpar filtros
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {isMobile ? (
                 <div className="space-y-2">
                   {filteredStock.length > 0 ? filteredStock.map((s: any) => {
@@ -756,7 +940,7 @@ export default function SellerPortalPage() {
                     <p className="text-center text-sm text-t4 py-10">Nenhum produto no estoque</p>
                   )}
                   {filteredStock.length > 0 && (
-                    <p className="text-xs text-t4 text-center pt-1">{filteredStock.length} SKU(s) — toque para ver o gráfico</p>
+                    <p className="text-xs text-t4 text-center pt-1">{filteredStock.length} de {(stock as any[]).length} SKU(s) — toque para ver o gráfico</p>
                   )}
                 </div>
               ) : (
@@ -827,7 +1011,7 @@ export default function SellerPortalPage() {
                 </table>
                 <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4 flex items-center gap-2">
                   <BarChart2 size={11} className="text-violet-400" />
-                  {filteredStock.length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar · Previsão baseada na média dos últimos 60 dias
+                  {filteredStock.length} de {(stock as any[]).length} SKU(s) — clique numa linha para ver o gráfico · Cabeçalhos para ordenar · Previsão baseada na média dos últimos 60 dias
                 </div>
               </div>
               )}
@@ -857,7 +1041,7 @@ export default function SellerPortalPage() {
                   >
                     <SlidersHorizontal size={13} />
                     Filtros
-                    {(movTypeFilter || movDateFrom !== oneYearAgo || movDateTo !== today) && (
+                    {movFiltersActive && (
                       <span className="absolute -top-1.5 -right-1.5 w-2.5 h-2.5 rounded-full bg-violet-500" />
                     )}
                   </button>
@@ -887,22 +1071,67 @@ export default function SellerPortalPage() {
                 <span className="text-xs text-t4 ml-auto">{filteredMovements.length} registros</span>
               </div>
 
-              {/* Filtro de datas das movimentações (desktop; no mobile fica na folha "Filtros") */}
+              {/* Filtros das movimentações (desktop; no mobile fica na folha "Filtros") */}
               {!isMobile && (
-              <div className="flex gap-3 flex-wrap items-center bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
-                <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
-                <span className="text-xs text-t4">De</span>
-                <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
-                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
-                <span className="text-xs text-t4">até</span>
-                <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
-                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
+              <div className="flex flex-col gap-2.5 bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
+                {/* Presets + datas */}
+                <div className="flex gap-2 flex-wrap items-center">
+                  <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
+                  {([['Hoje', 0], ['7d', 7], ['30d', 30], ['90d', 90], ['12m', 365], ['Tudo', 'all']] as const).map(([l, v]) => (
+                    <Chip key={l} active={false} onClick={() => setMovPreset(v)}>{l}</Chip>
+                  ))}
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
+                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
+                  <span className="text-xs text-t4">até</span>
+                  <input type="date" value={movDateTo} onChange={e => setMovDateTo(e.target.value)}
+                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2" />
+                </div>
+                {/* Natureza + NF + quantidade */}
+                <div className="flex gap-2 flex-wrap items-center">
+                  {movNatures.length > 0 && (
+                    <select
+                      value={movNature}
+                      onChange={e => setMovNature(e.target.value)}
+                      className="border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+                    >
+                      <option value="">Todas as naturezas</option>
+                      {movNatures.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  )}
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <Chip active={movNfMode === 'com'} onClick={() => setMovNfMode(v => v === 'com' ? '' : 'com')}>Com NF</Chip>
+                  <Chip active={movNfMode === 'sem'} onClick={() => setMovNfMode(v => v === 'sem' ? '' : 'sem')}>Sem NF</Chip>
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <input
+                    value={movNf}
+                    onChange={e => setMovNf(e.target.value)}
+                    placeholder="NF nº"
+                    inputMode="numeric"
+                    className="w-28 border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-t4">Qtd ≥</span>
+                    <input
+                      value={movMinQty}
+                      onChange={e => setMovMinQty(e.target.value.replace(/[^\d]/g, ''))}
+                      placeholder="0"
+                      inputMode="numeric"
+                      className="w-16 border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+                    />
+                  </div>
+                  {movFiltersActive && (
+                    <button onClick={clearMovFilters} className="text-[11px] text-t4 hover:text-bad underline ml-1">
+                      Limpar filtros
+                    </button>
+                  )}
+                </div>
               </div>
               )}
 
               {isMobile ? (
                 <div className="space-y-2">
-                  {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => {
+                  {filteredMovements.length > 0 ? movShown.map((m: any, i: number) => {
                     const isIn = m.movement_type === 'Entrada';
                     return (
                       <div key={m.id ?? i} className="p-3 rounded-xl border border-line-soft bg-surface">
@@ -928,6 +1157,11 @@ export default function SellerPortalPage() {
                     );
                   }) : (
                     <p className="text-center text-sm text-t4 py-10">Nenhuma movimentação encontrada</p>
+                  )}
+                  {movHasMore && (
+                    <div ref={movSentinelRef} className="py-4 text-center text-xs text-t4">
+                      exibindo {movShown.length.toLocaleString('pt-BR')} de {filteredMovements.length.toLocaleString('pt-BR')} — role para carregar mais
+                    </div>
                   )}
                 </div>
               ) : (
@@ -965,7 +1199,7 @@ export default function SellerPortalPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMovements.length > 0 ? filteredMovements.map((m: any, i: number) => (
+                    {filteredMovements.length > 0 ? movShown.map((m: any, i: number) => (
                       <tr key={m.id ?? i} className="border-b border-line-soft hover:bg-surface-2">
                         <td className="py-2.5 px-3 text-xs text-t3">
                           {m.movement_date ? format(new Date(m.movement_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
@@ -990,8 +1224,11 @@ export default function SellerPortalPage() {
                     )}
                   </tbody>
                 </table>
+                {movHasMore && <div ref={movSentinelRef} className="h-1" />}
                 <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
-                  {filteredMovements.length} movimentação(ões)
+                  {movHasMore
+                    ? `exibindo ${movShown.length.toLocaleString('pt-BR')} de ${filteredMovements.length.toLocaleString('pt-BR')} — role para carregar mais`
+                    : `${filteredMovements.length.toLocaleString('pt-BR')} movimentação(ões)`}
                 </div>
               </div>
               )}
@@ -1050,8 +1287,50 @@ export default function SellerPortalPage() {
                 <option value="Saída">Saída</option>
               </select>
             </div>
+            {movNatures.length > 0 && (
+              <div>
+                <label className="block text-xs text-t4 mb-1.5">Natureza</label>
+                <select
+                  value={movNature}
+                  onChange={e => setMovNature(e.target.value)}
+                  className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+                >
+                  <option value="">Todas as naturezas</option>
+                  {movNatures.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs text-t4 mb-1.5">Nota fiscal</label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Chip active={movNfMode === 'com'} onClick={() => setMovNfMode(v => v === 'com' ? '' : 'com')}>Com NF</Chip>
+                <Chip active={movNfMode === 'sem'} onClick={() => setMovNfMode(v => v === 'sem' ? '' : 'sem')}>Sem NF</Chip>
+                <input
+                  value={movNf}
+                  onChange={e => setMovNf(e.target.value)}
+                  placeholder="NF nº"
+                  inputMode="numeric"
+                  className="flex-1 min-w-[100px] border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-t4 mb-1.5">Quantidade mínima</label>
+              <input
+                value={movMinQty}
+                onChange={e => setMovMinQty(e.target.value.replace(/[^\d]/g, ''))}
+                placeholder="0"
+                inputMode="numeric"
+                className="w-full border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500"
+              />
+            </div>
             <div>
               <label className="block text-xs text-t4 mb-1.5">Período</label>
+              <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                {([['Hoje', 0], ['7d', 7], ['30d', 30], ['90d', 90], ['12m', 365], ['Tudo', 'all']] as const).map(([l, v]) => (
+                  <Chip key={l} active={false} onClick={() => setMovPreset(v)}>{l}</Chip>
+                ))}
+              </div>
               <div className="flex items-center gap-2">
                 <input type="date" value={movDateFrom} onChange={e => setMovDateFrom(e.target.value)}
                   className="flex-1 border border-line rounded-lg px-3 py-2 text-sm bg-surface text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
@@ -1061,9 +1340,9 @@ export default function SellerPortalPage() {
               </div>
             </div>
             <div className="flex gap-2 pt-1">
-              {(movTypeFilter || movDateFrom !== oneYearAgo || movDateTo !== today) && (
+              {movFiltersActive && (
                 <button
-                  onClick={() => { setMovTypeFilter(''); setMovDateFrom(oneYearAgo); setMovDateTo(today); }}
+                  onClick={clearMovFilters}
                   className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
                 >
                   Limpar

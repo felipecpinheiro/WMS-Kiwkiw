@@ -30,6 +30,7 @@ import AuditPage from './pages/Audit';
 import SettingsPage from './pages/Settings';
 import HandlingPage from './pages/Handling';
 import SellerPortalPage from './pages/SellerPortal';
+import PrivacyPolicyPage from './pages/PrivacyPolicy';
 
 // Components
 import Layout from './components/Layout';
@@ -230,8 +231,9 @@ export default function App() {
         />
         <AppWithForceChange>
           <Routes>
-            {/* Rota pública */}
+            {/* Rotas públicas */}
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/privacidade" element={<PrivacyPolicyPage />} />
 
             {/* Portal do Cliente/Seller — somente leitura */}
             <Route

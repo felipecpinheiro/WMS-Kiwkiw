@@ -1488,15 +1488,14 @@ export default function ScannerPage() {
                 });
                 // índice do primeiro item ainda não concluído
                 const firstPendingIdx = sorted.findIndex(it => it.scanned < it.quantity);
-                const pendingCount = sorted.filter(it => it.scanned < it.quantity).length;
+                const piecesRemaining = sorted.reduce((sum, it) => sum + Math.max(0, it.quantity - it.scanned), 0);
 
                 return (
                   <>
                     <h3 className="text-[11px] font-semibold text-t4 uppercase tracking-widest mb-3">
-                      Itens do Pedido ({displayOrder.items.length})
-                      {pendingCount > 0 && (
-                        <span className="ml-2 text-violet-400">{pendingCount} restante{pendingCount > 1 ? 's' : ''}</span>
-                      )}
+                      {piecesRemaining > 0
+                        ? <span className="text-violet-400">{piecesRemaining} peça{piecesRemaining > 1 ? 's' : ''} restante{piecesRemaining > 1 ? 's' : ''}</span>
+                        : <span>Concluído</span>}
                     </h3>
                     {/* Grid 4 colunas:
                         • em curso (isFirst): col-span-2 (50%) — destaque violeta, posição 1

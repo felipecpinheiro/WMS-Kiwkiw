@@ -213,6 +213,27 @@ class Product(Base):
     order_items = relationship("OrderItem", back_populates="product")
 
 
+class DiscontinuedSku(Base):
+    """
+    SKU descontinuado por seller (13/09/2026). Some do resumo de estoque
+    (interno e Portal do Seller) e bloqueia qualquer movimentação nova nele —
+    a movimentação já existente continua intacta na aba Movimentações.
+    Reversível: apagar a linha devolve o SKU ao normal.
+    """
+    __tablename__ = "discontinued_skus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    sku = Column(String(100), nullable=False)
+    discontinued_at = Column(DateTime, default=now_brasilia)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    seller = relationship("Seller")
+    created_by = relationship("User")
+
+    __table_args__ = (UniqueConstraint("seller_id", "sku", name="uq_discontinued_seller_sku"),)
+
+
 class Kit(Base):
     """Kits: combinações de SKUs que aparecem como um único produto no ERP."""
     __tablename__ = "kits"

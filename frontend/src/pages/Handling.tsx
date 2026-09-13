@@ -299,16 +299,28 @@ function HandlingCard({
           {/* NF com SKU sem produto cadastrado não entra no manuseio: sem
               produto não há código de barras pra bipar. Volta sozinha quando
               o produto for cadastrado (Dashboard). */}
-          {!!card.held_orders && (
+          {!!card.missing_product_orders && (
             <span
               title="Essas NFs não podem ser bipadas porque algum SKU não tem produto cadastrado. Cadastre o produto no Dashboard e elas voltam sozinhas."
               className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
               text-bad bg-bad-soft border border-bad/20"
             >
-              🔒 {card.held_orders} sem produto cadastrado
+              🔒 {card.missing_product_orders} sem produto cadastrado
             </span>
           )}
-          {!!card.held_orders && !!(card.held_skus && card.held_skus.length) && onRegister && (
+          {/* NF com SKU descontinuado (13/09/2026): tratado como se o SKU não
+              existisse mais. Diferente do "sem produto", não há nada para
+              cadastrar — só reverter na aba do seller em Cadastros. */}
+          {!!card.discontinued_orders && (
+            <span
+              title="Essas NFs têm SKU descontinuado e não podem ser bipadas. Reverta na aba 'Descontinuados' do cadastro do seller, se for o caso."
+              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+              text-bad bg-bad-soft border border-bad/20"
+            >
+              🚫 {card.discontinued_orders} SKU descontinuado
+            </span>
+          )}
+          {!!card.missing_product_orders && !!(card.held_skus && card.held_skus.length) && onRegister && (
             <button
               onClick={(e) => { e.stopPropagation(); onRegister(); }}
               className="mt-1 ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold

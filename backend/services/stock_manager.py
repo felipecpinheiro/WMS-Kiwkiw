@@ -220,16 +220,41 @@ def _registered_sku_pairs(db: Session, pairs: set) -> set:
     return {(r[0], r[1]) for r in rows}
 
 
+def _discontinued_pairs(db: Session, pairs: set) -> set:
+    """
+    Dado um conjunto de (seller_id, sku), devolve os que estão DESCONTINUADOS
+    (tabela `discontinued_skus`, 13/09/2026). Mesmo padrão de
+    `_registered_sku_pairs`: uma consulta só, com dois IN.
+    """
+    if not pairs:
+        return set()
+    seller_ids = {p[0] for p in pairs}
+    skus = {p[1] for p in pairs}
+    rows = db.query(models.DiscontinuedSku.seller_id, models.DiscontinuedSku.sku).filter(
+        models.DiscontinuedSku.seller_id.in_(seller_ids),
+        models.DiscontinuedSku.sku.in_(skus),
+    ).all()
+    return {(r[0], r[1]) for r in rows}
+
+
 def evaluate_orders_for_stock(orders: List, db: Session) -> Dict[int, Dict]:
     """
     Para cada pedido, diz se ele pode baixar estoque e o que está faltando.
-    Devolve {order_id: {"missing_carrier", "missing_skus", "can_apply"}}.
+    Devolve {order_id: {"missing_carrier", "missing_skus", "discontinued_skus",
+    "can_apply"}}.
+
+    ⚠️ `discontinued_skus` NÃO entra em `missing_skus`: são coisas diferentes.
+    `missing_skus` alimenta o modal de "cadastrar produto faltante" — cadastrar
+    de novo um SKU descontinuado não faz sentido, ele já tem produto, só está
+    bloqueado de propósito. Quem consome os dois campos precisa tratá-los
+    separado.
     """
     pairs = set()
     for o in orders:
         for it in o.items:
             pairs.add((o.seller_id, it.sku))
     registered = _registered_sku_pairs(db, pairs)
+    discontinued = _discontinued_pairs(db, pairs)
 
     result = {}
     for o in orders:
@@ -238,10 +263,15 @@ def evaluate_orders_for_stock(orders: List, db: Session) -> Dict[int, Dict]:
             it.sku for it in o.items
             if (o.seller_id, it.sku) not in registered
         })
+        discontinued_skus = sorted({
+            it.sku for it in o.items
+            if (o.seller_id, it.sku) in discontinued
+        })
         result[o.id] = {
             "missing_carrier": missing_carrier,
             "missing_skus": missing_skus,
-            "can_apply": (not missing_carrier) and (not missing_skus),
+            "discontinued_skus": discontinued_skus,
+            "can_apply": (not missing_carrier) and (not missing_skus) and (not discontinued_skus),
         }
     return result
 
@@ -371,6 +401,7 @@ def apply_stock_for_orders(
                 "customer_name": order.customer_name,
                 "missing_carrier": ev["missing_carrier"],
                 "missing_skus": ev["missing_skus"],
+                "discontinued_skus": ev["discontinued_skus"],
             })
             for sku in ev["missing_skus"]:
                 key = (order.seller_id, sku)
@@ -726,6 +757,46 @@ def orders_missing_product_skus(db: Session, order_ids: List[int]) -> Dict[int, 
     return out
 
 
+def orders_with_discontinued_skus(db: Session, order_ids: List[int]) -> Dict[int, List[str]]:
+    """
+    Dos pedidos informados, quais têm SKU marcado como DESCONTINUADO
+    (13/09/2026) — e QUAIS SKUs são. Devolve {order_id: [sku, ...]}; pedido
+    que não aparece no dicionário está completo.
+
+    Mesmo desenho de `orders_missing_product_skus`: essas NFs ficam fora do
+    manuseio (a Purpose e outros sellers pediram para tratar o SKU como se
+    não existisse mais), e a baixa de estoque delas também fica pendente —
+    ver o campo `discontinued_skus` em `evaluate_orders_for_stock`. Reverter
+    (apagar a linha em `discontinued_skus`) libera sozinho via
+    `release_pending_orders_for_sku`.
+
+    UMA consulta agrupada, não uma por pedido — mesmo motivo do irmão acima.
+    """
+    if not order_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT oi.order_id, oi.sku
+          FROM order_items oi
+          JOIN orders o ON o.id = oi.order_id
+         WHERE oi.order_id IN :ids
+           AND EXISTS (
+                 SELECT 1
+                   FROM discontinued_skus d
+                  WHERE d.seller_id = o.seller_id
+                    AND d.sku = oi.sku
+           )
+    """).bindparams(bindparam("ids", expanding=True)), {"ids": list(order_ids)}).fetchall()
+
+    out: Dict[int, List[str]] = {}
+    for order_id, sku in rows:
+        out.setdefault(order_id, [])
+        if sku not in out[order_id]:
+            out[order_id].append(sku)
+    for skus in out.values():
+        skus.sort()
+    return out
+
+
 def pending_orders_with_sku(db: Session, seller_id: int, sku: str) -> List:
     """
     NFs deste seller que ainda NÃO baixaram estoque e contêm este SKU.
@@ -894,6 +965,154 @@ def release_pending_orders_for_skus(
     return apply_stock_for_orders(orders, db, operator_id=operator_id)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# SKUS DESCONTINUADOS (13/09/2026)
+# ══════════════════════════════════════════════════════════════════════════
+# Pedido do dono do sistema: um SKU que a loja parou de vender (ex.: uma
+# caneca de edição limitada) some do resumo de estoque (interno e Portal do
+# Seller) e passa a ser tratado "como se não existisse mais" em qualquer
+# movimentação NOVA — mas a movimentação que já aconteceu (quem comprou,
+# quando, de qual NF) continua intacta na aba Movimentações, porque é
+# exatamente isso que alguém vai precisar consultar se decidir voltar a
+# vender aquele SKU (ou um parecido) daqui a um ano.
+
+def list_discontinued_skus(db: Session, seller_id: int) -> List[Dict]:
+    """Lista de gestão: SKUs descontinuados deste seller, mais recentes primeiro."""
+    rows = db.query(models.DiscontinuedSku).options(
+        joinedload(models.DiscontinuedSku.created_by),
+    ).filter(
+        models.DiscontinuedSku.seller_id == seller_id,
+    ).order_by(models.DiscontinuedSku.discontinued_at.desc()).all()
+
+    return [
+        {
+            "sku": r.sku,
+            "discontinued_at": r.discontinued_at,
+            "created_by_name": r.created_by.name if r.created_by else None,
+        }
+        for r in rows
+    ]
+
+
+def preview_discontinue_skus(db: Session, seller_id: int, raw_skus: List[str]) -> Dict:
+    """
+    Fase 1 (não grava nada): confere a lista colada contra o que o seller
+    tem cadastrado, mostrando o saldo atual de cada SKU válido.
+
+    Regra do dono do sistema: erro de digitação BLOQUEIA o lote inteiro — a
+    tela deve marcar a(s) linha(s) inválida(s) e não deixar confirmar até
+    corrigir. Por isso `valid` só vem True quando TODOS os SKUs colados
+    existem no cadastro do seller.
+    """
+    skus = [s.strip() for s in raw_skus if s and s.strip()]
+    # Preserva a ordem de digitação, remove duplicata da própria colagem.
+    seen = set()
+    skus_dedup = []
+    for s in skus:
+        if s not in seen:
+            seen.add(s)
+            skus_dedup.append(s)
+
+    if not skus_dedup:
+        return {"rows": [], "valid": False}
+
+    cadastrados = {
+        p.sku for p in db.query(models.Product.sku).filter(
+            models.Product.seller_id == seller_id,
+            models.Product.sku.in_(skus_dedup),
+        ).all()
+    }
+    positions = {
+        p.sku: p.current_stock for p in db.query(
+            models.StockPosition.sku, models.StockPosition.current_stock,
+        ).filter(
+            models.StockPosition.seller_id == seller_id,
+            models.StockPosition.sku.in_(skus_dedup),
+        ).all()
+    }
+    already = {
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+            models.DiscontinuedSku.sku.in_(skus_dedup),
+        ).all()
+    }
+
+    rows = []
+    all_found = True
+    for sku in skus_dedup:
+        found = sku in cadastrados
+        if not found:
+            all_found = False
+        rows.append({
+            "sku": sku,
+            "found": found,
+            "current_stock": positions.get(sku, 0) if found else None,
+            "already_discontinued": sku in already,
+        })
+
+    return {"rows": rows, "valid": all_found}
+
+
+def confirm_discontinue_skus(
+    db: Session,
+    seller_id: int,
+    raw_skus: List[str],
+    created_by_id: Optional[int] = None,
+) -> List[str]:
+    """
+    Fase 2: grava. Chamar SÓ depois que `preview_discontinue_skus` devolveu
+    `valid=True` para a mesma lista — revalida aqui de novo (a lista pode ter
+    sido forjada) e recusa se algum SKU não existir no seller.
+
+    SKU já descontinuado é ignorado em silêncio (idempotente); não é erro.
+    Devolve os SKUs recém-marcados (para o AuditLog de quem chamou).
+    """
+    preview = preview_discontinue_skus(db, seller_id, raw_skus)
+    if not preview["valid"]:
+        invalid = [r["sku"] for r in preview["rows"] if not r["found"]]
+        raise ValueError(f"SKU(s) não encontrado(s) no seller: {', '.join(invalid)}")
+
+    newly_added = []
+    for row in preview["rows"]:
+        if row["already_discontinued"]:
+            continue
+        db.add(models.DiscontinuedSku(
+            seller_id=seller_id,
+            sku=row["sku"],
+            created_by_id=created_by_id,
+        ))
+        newly_added.append(row["sku"])
+
+    return newly_added
+
+
+def remove_discontinued_sku(
+    db: Session,
+    seller_id: int,
+    sku: str,
+    operator_id: Optional[int] = None,
+) -> Dict:
+    """
+    Reverte: o SKU volta a se comportar normalmente (some da lista, reaparece
+    no resumo, aceita movimentação de novo). Chama
+    `release_pending_orders_for_sku` depois de apagar a linha — se alguma NF
+    ficou pendente SÓ por causa deste SKU, ela baixa/entra no manuseio sozinha,
+    igual já acontece ao cadastrar um produto que faltava.
+    """
+    entry = db.query(models.DiscontinuedSku).filter(
+        models.DiscontinuedSku.seller_id == seller_id,
+        models.DiscontinuedSku.sku == sku,
+    ).first()
+    if not entry:
+        return {"removed": False, "stock": None}
+
+    db.delete(entry)
+    db.flush()
+
+    report = release_pending_orders_for_sku(seller_id, sku, db, operator_id=operator_id)
+    return {"removed": True, "stock": report}
+
+
 def reverse_stock_for_order(
     order,
     db: Session,
@@ -1032,10 +1251,24 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
     """
     Gera relatório de estoque para um seller.
     Retorna a visão completa de posições de estoque.
+
+    ⚠️ SKU descontinuado (13/09/2026) NUNCA aparece aqui — nem no Estoque
+    interno nem no Portal do Seller, que leem os dois desta mesma função. A
+    movimentação dele continua intacta em `stock_movements`; só o resumo
+    esconde.
     """
+    discontinued_skus = {
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+        ).all()
+    }
+
     positions = db.query(models.StockPosition).filter(
         models.StockPosition.seller_id == seller_id,
     ).order_by(models.StockPosition.sku).all()
+
+    if discontinued_skus:
+        positions = [p for p in positions if p.sku not in discontinued_skus]
 
     sixty_days_ago = today_brasilia() - timedelta(days=60)
 

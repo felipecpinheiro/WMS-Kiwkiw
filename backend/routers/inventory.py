@@ -358,6 +358,18 @@ def create_manual_movement(
         if not product_name or product_name == sku:
             product_name = prod.name
 
+    # SKU descontinuado (13/09/2026) não aceita movimentação nova de nenhum
+    # tipo — checagem feita já com a grafia resolvida do cadastro, senão
+    # 'mosq2' passaria por baixo de 'MOSQ2' descontinuado.
+    if db.query(models.DiscontinuedSku.id).filter(
+        models.DiscontinuedSku.seller_id == seller_id,
+        models.DiscontinuedSku.sku == sku,
+    ).first():
+        raise HTTPException(
+            status_code=400,
+            detail=f"SKU {sku} foi descontinuado e não aceita movimentação nova.",
+        )
+
     movement = models.StockMovement(
         seller_id=seller_id,
         sku=sku,
@@ -463,6 +475,16 @@ def create_bulk_movements(
         ).all()
     }
 
+    # SKU descontinuado (13/09/2026) não aceita movimentação nova — mesma
+    # trava de /movements/manual, pré-carregada aqui pelo mesmo motivo das
+    # duas consultas acima (nunca uma checagem por linha).
+    discontinued_skus_batch: set = {
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+            models.DiscontinuedSku.sku.in_(skus_in_batch),
+        ).all()
+    }
+
     movements_to_add: list[models.StockMovement] = []
     ok = 0
     errors: list[str] = []
@@ -474,6 +496,9 @@ def create_bulk_movements(
             sku = row.get("sku", "").strip()
             if not sku:
                 errors.append(f"Linha {i + 1}: SKU vazio")
+                continue
+            if sku in discontinued_skus_batch:
+                errors.append(f"Linha {i + 1}: SKU {sku} foi descontinuado")
                 continue
 
             raw_type = row.get("movement_type", "")
@@ -888,6 +913,16 @@ def export_stock_csv(
     positions = db.query(models.StockPosition).filter(
         models.StockPosition.seller_id == seller_id
     ).order_by(models.StockPosition.sku).all()
+    # SKU descontinuado (13/09/2026) some do resumo — mesmo recorte de
+    # get_stock_report, repetido aqui porque este endpoint lê StockPosition
+    # direto, sem passar por aquela função.
+    _discontinued = {
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+        ).all()
+    }
+    if _discontinued:
+        positions = [p for p in positions if p.sku not in _discontinued]
 
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     seller_name = seller.name if seller else str(seller_id)
@@ -952,6 +987,15 @@ def export_stock_xlsx(
     positions = db.query(models.StockPosition).filter(
         models.StockPosition.seller_id == seller_id
     ).order_by(models.StockPosition.sku).all()
+    # SKU descontinuado (13/09/2026) some do resumo — ver mesmo comentário no
+    # export CSV, alguns parágrafos acima.
+    _discontinued = {
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+        ).all()
+    }
+    if _discontinued:
+        positions = [p for p in positions if p.sku not in _discontinued]
 
     seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
     seller_name = seller.name if seller else str(seller_id)
@@ -1274,11 +1318,21 @@ def analyze_history(
         if sku.lower() not in existing_skus
     ]
 
+    # SKU descontinuado (13/09/2026) — bloqueia a importação, sem "force"
+    # (diferente do SKU sem cadastro): o dono do sistema pediu bloqueio duro.
+    discontinued = sorted({
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+            models.DiscontinuedSku.sku.in_(list(sku_names)),
+        ).all()
+    })
+
     return {
         "total_rows": len(rows),
         "total_skus": len(sku_names),
         "unknown_skus": sorted(unknown, key=lambda x: x["sku"]),
         "already_registered": len(sku_names) - len(unknown),
+        "discontinued_skus": discontinued,
     }
 
 
@@ -1310,6 +1364,28 @@ def execute_history_import(
         names_map: dict = json.loads(product_names)
     except Exception:
         names_map = {}
+
+    # ── Trava: nenhum SKU pode estar descontinuado (13/09/2026) ───────────────
+    # Diferente da trava de "SKU sem cadastro" logo abaixo, esta NÃO tem
+    # "force": SKU descontinuado é bloqueio duro, sem escape pela tela.
+    skus_arquivo_todos = {r["sku"] for r in rows}
+    discontinuados = sorted({
+        r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+            models.DiscontinuedSku.sku.in_(list(skus_arquivo_todos)),
+        ).all()
+    })
+    if discontinuados:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    f"{len(discontinuados)} SKU(s) do arquivo foram descontinuados "
+                    f"e não podem receber movimentação."
+                ),
+                "discontinued_skus": discontinuados,
+            },
+        )
 
     # ── Trava: nenhum SKU pode ficar sem produto cadastrado ──────────────────
     if not force:

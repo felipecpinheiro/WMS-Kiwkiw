@@ -25,6 +25,7 @@ from ..services.stock_manager import (
     reverse_stock_for_order,
     order_has_stock_applied,
     orders_missing_product_skus,
+    orders_with_discontinued_skus,
     orders_with_scan_overage,
     is_entrada_order,
 )
@@ -188,16 +189,22 @@ def get_session_orders(
     # antes disso o operador só descobria errando na bancada. Volta sozinha
     # quando o produto for cadastrado. Ver order_ids_missing_product().
     held_map = orders_missing_product_skus(db, [o.id for o in orders])
+    # NF com SKU descontinuado (13/09/2026) fica fora do manuseio pelo mesmo
+    # motivo: o pedido do dono do sistema é tratar o SKU "como se não
+    # existisse mais" em qualquer movimentação nova.
+    discontinued_map = orders_with_discontinued_skus(db, [o.id for o in orders])
+    held_ids = set(held_map) | set(discontinued_map)
     held_orders = [
         {
             "order_id": o.id,
             "nf_number": o.nf_number,
             "seller_name": o.seller.trade_name if o.seller else None,
-            "missing_skus": held_map[o.id],
+            "missing_skus": held_map.get(o.id, []),
+            "discontinued_skus": discontinued_map.get(o.id, []),
         }
-        for o in orders if o.id in held_map
+        for o in orders if o.id in held_ids
     ]
-    orders = [o for o in orders if o.id not in held_map]
+    orders = [o for o in orders if o.id not in held_ids]
 
     # Conta itens escaneados por pedido e por (pedido, sku) em 2 consultas agrupadas,
     # em vez de 1 query por pedido + 1 query por item de cada pedido (N+1 — ver CLAUDE.md).
@@ -376,6 +383,22 @@ def open_order_by_nfe(
                 f"{'SKU sem cadastro' if len(faltantes) == 1 else 'SKUs sem cadastro'} "
                 f"({', '.join(faltantes[:5])}{'…' if len(faltantes) > 5 else ''}). "
                 f"Cadastre o produto no Dashboard e a NF volta sozinha."
+            ),
+        }
+
+    # NF com SKU descontinuado (13/09/2026): tratado como se o SKU não
+    # existisse mais. Diferente do "sem produto", não há nada para cadastrar —
+    # só reverte quem marcou o SKU como descontinuado (aba do seller em
+    # Cadastros de Sellers).
+    descontinuados = orders_with_discontinued_skus(db, [order.id]).get(order.id)
+    if descontinuados:
+        return {
+            "success": False,
+            "blocked_reason": "discontinued_sku",
+            "message": (
+                f"NF {order.nf_number} não pode ser manuseada: "
+                f"{'SKU' if len(descontinuados) == 1 else 'SKUs'} descontinuado(s) "
+                f"({', '.join(descontinuados[:5])}{'…' if len(descontinuados) > 5 else ''})."
             ),
         }
 
@@ -751,6 +774,22 @@ def process_scan(
             success=False,
             message=f"Pedido {order.nf_number} está sem transportadora. Preencha antes de continuar a bipagem.",
             status="error",
+            items_remaining=0,
+        )
+
+    # NF com SKU descontinuado (13/09/2026) — segunda camada de defesa, mesma
+    # trava de open_order_by_nfe. Na prática a NF nunca deveria chegar aqui
+    # (fica fora do manuseio antes disso), mas o servidor não confia só na
+    # tela para isso.
+    descontinuados = orders_with_discontinued_skus(db, [order.id]).get(order.id)
+    if descontinuados:
+        return schemas.ScanResponse(
+            success=False,
+            message=(
+                f"NF {order.nf_number} tem SKU descontinuado "
+                f"({', '.join(descontinuados[:5])}) e não pode ser bipada."
+            ),
+            status="discontinued_sku",
             items_remaining=0,
         )
 
@@ -3019,7 +3058,12 @@ def session_cards(
     # UMA consulta para todas as sessões da tela (não uma por card/pedido).
     all_order_ids = [o.id for s in sessions for o in s.orders]
     held_map_all = orders_missing_product_skus(db, all_order_ids)
-    held_ids = set(held_map_all.keys())
+    # NFs com SKU descontinuado (13/09/2026) — mesmo mecanismo, mas SEM botão
+    # de "Cadastrar produto": não há nada para cadastrar, só reverter a
+    # descontinuação na aba do seller. Por isso ficam num mapa separado, para
+    # não misturar as duas razões no mesmo `held_skus`.
+    discontinued_map_all = orders_with_discontinued_skus(db, all_order_ids)
+    held_ids = set(held_map_all.keys()) | set(discontinued_map_all.keys())
     # Nome do produto (do próprio OrderItem) por (order_id, sku) — só das NFs
     # seguradas, para o card poder listar QUAL SKU falta sem carregar
     # joinedload(items) na tela inteira (que é pesada — ver CLAUDE.md).
@@ -3100,6 +3144,13 @@ def session_cards(
             # card poder avisar que ela existe. Volta sozinha ao cadastrar.
             held_here = [o for o in active_orders if o.id in held_ids]
             active_orders = [o for o in active_orders if o.id not in held_ids]
+            # Subconjuntos de held_here por motivo — uma NF pode, em tese, estar
+            # nos dois ao mesmo tempo. O total (held_orders) continua sendo a
+            # UNIÃO; estas contagens à parte existem só para o card não dizer
+            # "sem produto cadastrado" numa NF que só está descontinuada (e
+            # vice-versa).
+            missing_product_here = [o for o in held_here if o.id in held_map_all]
+            discontinued_here = [o for o in held_here if o.id in discontinued_map_all]
 
             # SKUs sem produto cadastrado deste card — alimenta o botão
             # "Cadastrar produto" no card de Manuseios. Um por (seller, sku),
@@ -3116,6 +3167,18 @@ def session_cards(
                         "product_name": held_names.get((_ho.id, _sku)) or _sku,
                         "nf_number": _ho.nf_number,
                     })
+
+            # SKUs descontinuados deste card — mesma ideia de `held_skus`, mas
+            # sem produto pra "cadastrar": o card só avisa.
+            discontinued_skus_here: list = []
+            _seen_discontinued: set = set()
+            for _ho in held_here:
+                for _sku in discontinued_map_all.get(_ho.id, []):
+                    if _sku in _seen_discontinued:
+                        continue
+                    _seen_discontinued.add(_sku)
+                    discontinued_skus_here.append({"sku": _sku, "nf_number": _ho.nf_number})
+
             if not active_orders:
                 # Tudo que sobrou está segurado — o card ainda aparece, mas só
                 # para mostrar a pendência (senão o seller sumiria do kanban).
@@ -3199,6 +3262,14 @@ def session_cards(
                 "held_orders": len(held_here),
                 "held_only": held_only_card,
                 "held_skus": held_skus,
+                # NFs por SEM PRODUTO especificamente (subconjunto de held_orders)
+                # — o badge "sem produto cadastrado" usa esta contagem, não o
+                # total, senão diria "sem produto" numa NF só descontinuada.
+                "missing_product_orders": len(missing_product_here),
+                # SKUs descontinuados (13/09/2026) — subconjunto de held_orders,
+                # sem botão de cadastro, só aviso.
+                "discontinued_orders": len(discontinued_here),
+                "discontinued_skus": discontinued_skus_here,
             })
 
     return cards

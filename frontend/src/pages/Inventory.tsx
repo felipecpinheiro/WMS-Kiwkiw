@@ -70,6 +70,7 @@ function ImportHistoryModal({
     total_skus: number;
     already_registered: number;
     unknown_skus: UnknownSku[];
+    discontinued_skus?: string[];
   } | null>(null);
   const [nameMap, setNameMap] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ imported: number; products_created: number; errors: string[] } | null>(null);
@@ -106,6 +107,16 @@ function ImportHistoryModal({
    */
   const handleImport = async (force = false) => {
     if (!file || !analyzeResult) return;
+    // SKU descontinuado bloqueia SEMPRE, mesmo com "force" (que só existe
+    // para SKU sem cadastro) — sem escape pela tela, por decisão do dono.
+    if (analyzeResult.discontinued_skus?.length) {
+      setError(
+        `${analyzeResult.discontinued_skus.length} SKU(s) descontinuado(s) no arquivo ` +
+        `(${analyzeResult.discontinued_skus.join(', ')}). Reverta na aba "Descontinuados" do ` +
+        `seller antes de importar.`
+      );
+      return;
+    }
     // Sem force, exige nome para cada SKU novo — assim eles são cadastrados junto
     if (!force) {
       const missing = analyzeResult.unknown_skus.filter((u) => !nameMap[u.sku]?.trim());
@@ -127,10 +138,16 @@ function ImportHistoryModal({
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       const status = err?.response?.status;
-      // O backend devolve um objeto quando barra por SKU não cadastrado
+      // O backend devolve um objeto quando barra por SKU não cadastrado OU
+      // por SKU descontinuado (13/09/2026) — este último sem "force" possível.
+      const skuList = detail?.missing_skus?.length
+        ? detail.missing_skus
+        : detail?.discontinued_skus?.length
+        ? detail.discontinued_skus
+        : null;
       const msg =
         detail && typeof detail === 'object'
-          ? `${detail.message}${detail.missing_skus?.length ? `\nSKUs: ${detail.missing_skus.join(', ')}` : ''}`
+          ? `${detail.message}${skuList ? `\nSKUs: ${skuList.join(', ')}` : ''}`
           : detail;
       setError(msg ? `[${status}] ${msg}` : `Erro de conexão: ${err?.message || 'desconhecido'}`);
       setPhase('naming');
@@ -208,6 +225,19 @@ function ImportHistoryModal({
                   <p className="text-t3 text-xs mt-0.5">SKUs novos</p>
                 </div>
               </div>
+
+              {!!analyzeResult.discontinued_skus?.length && (
+                <div className="bg-red-500/10 border border-bad/40 rounded-lg p-3">
+                  <p className="text-bad text-sm font-semibold mb-1">
+                    🚫 Importação bloqueada — {analyzeResult.discontinued_skus.length} SKU(s) descontinuado(s)
+                  </p>
+                  <p className="text-t3 text-xs leading-relaxed">
+                    {analyzeResult.discontinued_skus.join(', ')}. Esses SKUs foram descontinuados neste
+                    seller e não aceitam movimentação nova — não há "cadastrar mesmo assim" para eles.
+                    Reverta na aba "Descontinuados" do cadastro do seller se precisar importar mesmo assim.
+                  </p>
+                </div>
+              )}
 
               {analyzeResult.unknown_skus.length === 0 ? (
                 <div className="flex items-center gap-2 bg-emerald-500/10 border border-ok/30 rounded-lg p-3">
@@ -337,15 +367,17 @@ function ImportHistoryModal({
                   {analyzeResult && analyzeResult.unknown_skus.length > 0 && (
                     <button
                       onClick={() => handleImport(true)}
+                      disabled={!!analyzeResult.discontinued_skus?.length}
                       title="Importa ignorando a trava de SKU não cadastrado"
-                      className="px-4 py-2 rounded-lg text-sm font-medium text-warn border border-warn/40 hover:bg-amber-500/10 transition"
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-warn border border-warn/40 hover:bg-amber-500/10 transition disabled:opacity-40"
                     >
                       Cadastrar mesmo assim
                     </button>
                   )}
                   <button
                     onClick={() => handleImport(false)}
-                    className="px-5 py-2 rounded-lg text-sm font-semibold text-t1"
+                    disabled={!!analyzeResult?.discontinued_skus?.length}
+                    className="px-5 py-2 rounded-lg text-sm font-semibold text-t1 disabled:opacity-40"
                     style={{ background: 'linear-gradient(135deg,#2E9E6B,#1B7A50)' }}
                   >
                     Importar Histórico

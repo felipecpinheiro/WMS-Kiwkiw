@@ -252,6 +252,11 @@ export interface SessionCard {
   // SKUs sem produto cadastrado deste card (um por seller+sku) — alimenta o
   // botão "Cadastrar produto" no card de Manuseios.
   held_skus?: { sku: string; product_name: string | null; nf_number: string }[];
+  // Subconjuntos de held_orders por motivo (13/09/2026) — held_orders é a
+  // UNIÃO dos dois, então o badge certo usa a contagem específica.
+  missing_product_orders?: number;
+  discontinued_orders?: number;
+  discontinued_skus?: { sku: string; nf_number: string }[];
   /**
    * Conferências de ENTRADA pausadas neste card. Já contadas em
    * pending_orders — a NF pausada continua EM ABERTO; isto é só o badge.
@@ -997,7 +1002,28 @@ export const cadastrosApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  discontinuedSkus: (sellerId: number) =>
+    api.get(`/cadastros/sellers/${sellerId}/discontinued-skus`),
+  analyzeDiscontinuedSkus: (sellerId: number, skus: string[]) =>
+    api.post(`/cadastros/sellers/${sellerId}/discontinued-skus/analyze`, { skus }),
+  confirmDiscontinuedSkus: (sellerId: number, skus: string[]) =>
+    api.post(`/cadastros/sellers/${sellerId}/discontinued-skus/confirm`, { skus }),
+  removeDiscontinuedSku: (sellerId: number, sku: string) =>
+    api.delete(`/cadastros/sellers/${sellerId}/discontinued-skus/${encodeURIComponent(sku)}`),
 };
+
+export interface DiscontinuedSkuRow {
+  sku: string;
+  discontinued_at: string;
+  created_by_name: string | null;
+}
+
+export interface DiscontinuedSkuPreviewRow {
+  sku: string;
+  found: boolean;
+  current_stock: number | null;
+  already_discontinued: boolean;
+}
 
 // ============================================================
 // FATURAMENTO

@@ -11,7 +11,7 @@ import {
   Building2, Plus, Pencil, Trash2, X, Check, Store,
   ClipboardList, Upload, ExternalLink, Search, Wrench,
 } from 'lucide-react';
-import { cadastrosApi, billingApi, CANONICAL_BOXES } from '../api';
+import { cadastrosApi, billingApi, CANONICAL_BOXES, DiscontinuedSkuRow, DiscontinuedSkuPreviewRow } from '../api';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import FaixaPedidosEditor from '../components/FaixaPedidosEditor';
@@ -143,7 +143,7 @@ export default function SellersPage() {
   const [editId, setEditId]           = useState<number | null>(null);
   const [form, setForm]               = useState<SellerForm>(EMPTY);
   const [search, setSearch]           = useState('');
-  const [formTab, setFormTab]         = useState<'basic'|'comercial'|'caixas'|'experiencia'>('basic');
+  const [formTab, setFormTab]         = useState<'basic'|'comercial'|'caixas'|'experiencia'|'descontinuados'>('basic');
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [sellerGrid, setSellerGrid]   = useState<string[][]>(
     Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(''))
@@ -155,6 +155,11 @@ export default function SellersPage() {
   // preço de caixa por seller (aba "Caixas"): { box_key: valor como string }
   const [boxPrices, setBoxPrices]     = useState<Record<string, string>>({});
   const [saving, setSaving]           = useState(false);
+  // aba "Descontinuados" (13/09/2026)
+  const [discontinuedList, setDiscontinuedList] = useState<DiscontinuedSkuRow[]>([]);
+  const [discontinuedPaste, setDiscontinuedPaste] = useState('');
+  const [discontinuedPreview, setDiscontinuedPreview] = useState<DiscontinuedSkuPreviewRow[] | null>(null);
+  const [discontinuedBusy, setDiscontinuedBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Única tela do sistema que exibe sellers inativos (com o badge "Inativo"),
@@ -199,6 +204,9 @@ export default function SellersPage() {
     setFormTab('basic');
     setExpFile(null);
     setBoxPrices({});
+    setDiscontinuedList([]);
+    setDiscontinuedPaste('');
+    setDiscontinuedPreview(null);
     setShowModal(true);
   };
 
@@ -207,6 +215,9 @@ export default function SellersPage() {
     setFormTab('basic');
     setExpFile(null);
     setBoxPrices({});
+    setDiscontinuedList([]);
+    setDiscontinuedPaste('');
+    setDiscontinuedPreview(null);
     // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
@@ -237,6 +248,69 @@ export default function SellersPage() {
       setBoxPrices(m);
     } catch {
       setBoxPrices({});
+    }
+    try {
+      const res = await cadastrosApi.discontinuedSkus(s.id);
+      setDiscontinuedList(res.data.rows || []);
+    } catch {
+      setDiscontinuedList([]);
+    }
+  };
+
+  const reloadDiscontinued = async () => {
+    if (!editId) return;
+    try {
+      const res = await cadastrosApi.discontinuedSkus(editId);
+      setDiscontinuedList(res.data.rows || []);
+    } catch {
+      // mantém a lista anterior na tela em caso de falha de rede
+    }
+  };
+
+  const handleAnalyzeDiscontinued = async () => {
+    if (!editId) return;
+    const skus = discontinuedPaste.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (skus.length === 0) return;
+    setDiscontinuedBusy(true);
+    try {
+      const res = await cadastrosApi.analyzeDiscontinuedSkus(editId, skus);
+      setDiscontinuedPreview(res.data.rows || []);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Falha ao verificar os SKUs');
+    } finally {
+      setDiscontinuedBusy(false);
+    }
+  };
+
+  const handleConfirmDiscontinued = async () => {
+    if (!editId || !discontinuedPreview) return;
+    const skus = discontinuedPreview.map(r => r.sku);
+    setDiscontinuedBusy(true);
+    try {
+      const res = await cadastrosApi.confirmDiscontinuedSkus(editId, skus);
+      toast.success(`${res.data.count} SKU(s) descontinuado(s)`);
+      setDiscontinuedPaste('');
+      setDiscontinuedPreview(null);
+      await reloadDiscontinued();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Falha ao confirmar');
+    } finally {
+      setDiscontinuedBusy(false);
+    }
+  };
+
+  const handleRemoveDiscontinued = async (sku: string) => {
+    if (!editId) return;
+    if (!window.confirm(`Reverter "${sku}"? Ele volta a aparecer no resumo e aceitar movimentação normalmente.`)) return;
+    setDiscontinuedBusy(true);
+    try {
+      await cadastrosApi.removeDiscontinuedSku(editId, sku);
+      toast.success(`SKU ${sku} voltou a ser vendido`);
+      await reloadDiscontinued();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Falha ao reverter');
+    } finally {
+      setDiscontinuedBusy(false);
     }
   };
 
@@ -493,12 +567,12 @@ export default function SellersPage() {
               <button onClick={() => setShowModal(false)} className="text-t4 hover:text-t3"><X size={18} /></button>
             </div>
             <div className="flex border-b border-line mb-5">
-              {(['basic','comercial','caixas','experiencia'] as const).map(tab => (
+              {(['basic','comercial','caixas','experiencia','descontinuados'] as const).map(tab => (
                 <button key={tab} onClick={() => setFormTab(tab)}
                   className={`px-4 py-2 text-sm font-medium border-b-2 transition ${formTab === tab
                     ? (tab === 'experiencia' ? 'border-ok text-ok' : 'border-violet-600 text-violet-300')
                     : 'border-transparent text-t3 hover:text-t2'}`}>
-                  {tab === 'basic' ? 'Dados Básicos' : tab === 'comercial' ? 'Comercial' : tab === 'caixas' ? 'Caixas' : 'Experiência'}
+                  {tab === 'basic' ? 'Dados Básicos' : tab === 'comercial' ? 'Comercial' : tab === 'caixas' ? 'Caixas' : tab === 'experiencia' ? 'Experiência' : 'Descontinuados'}
                 </button>
               ))}
             </div>
@@ -698,6 +772,114 @@ export default function SellersPage() {
                     onChange={e => setExpFile(e.target.files?.[0] ?? null)} />
                 </div>
                 {expFile && <p className="text-xs text-warn/80">O arquivo será enviado ao salvar.</p>}
+              </div>
+            )}
+
+            {formTab === 'descontinuados' && (
+              <div className="space-y-4">
+                {!editId ? (
+                  <p className="text-sm text-t3">Salve o seller primeiro para poder descontinuar SKUs dele.</p>
+                ) : (
+                  <>
+                    <p className="text-xs text-t4">
+                      SKU descontinuado some do resumo de estoque (aqui e no Portal do Seller) e
+                      passa a ser tratado como se não existisse mais — não aceita movimentação
+                      nova em nenhum lugar do sistema. A movimentação que já aconteceu continua
+                      normalmente na aba Movimentações. É reversível a qualquer momento.
+                    </p>
+
+                    <div>
+                      <label className="block text-xs text-t3 mb-1">Colar SKUs (um por linha)</label>
+                      <textarea
+                        value={discontinuedPaste}
+                        onChange={e => { setDiscontinuedPaste(e.target.value); setDiscontinuedPreview(null); }}
+                        rows={5}
+                        className={cls}
+                        style={clsStyle}
+                        placeholder={'CANECA-HEROI\nCAMISETA-P-2023'}
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={handleAnalyzeDiscontinued}
+                          disabled={discontinuedBusy || !discontinuedPaste.trim()}
+                          className="px-3 py-1.5 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 transition disabled:opacity-50"
+                        >
+                          Verificar
+                        </button>
+                        {discontinuedPreview && (
+                          <button
+                            onClick={handleConfirmDiscontinued}
+                            disabled={discontinuedBusy || discontinuedPreview.some(r => !r.found)}
+                            className="px-3 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50"
+                          >
+                            Confirmar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {discontinuedPreview && (
+                      <div className="border border-line-soft rounded-lg overflow-hidden">
+                        <div className="grid grid-cols-[1fr_100px_140px] gap-2 px-3 py-2 bg-surface-2 text-[10px] uppercase text-t4">
+                          <span>SKU</span><span className="text-right">Saldo atual</span><span>Situação</span>
+                        </div>
+                        {discontinuedPreview.map((r, i) => (
+                          <div key={i}
+                            className={`grid grid-cols-[1fr_100px_140px] gap-2 px-3 py-1.5 items-center border-t text-sm ${
+                              r.found ? 'border-line-soft' : 'border-red-500/30 bg-red-500/10'
+                            }`}
+                          >
+                            <span className={r.found ? 'text-t2' : 'text-bad font-medium'}>{r.sku}</span>
+                            <span className="text-right text-t3">{r.found ? r.current_stock : '—'}</span>
+                            <span className="text-xs">
+                              {!r.found
+                                ? 'SKU não encontrado'
+                                : r.already_discontinued
+                                ? 'Já descontinuado'
+                                : 'OK'}
+                            </span>
+                          </div>
+                        ))}
+                        {discontinuedPreview.some(r => !r.found) && (
+                          <p className="text-xs text-bad px-3 py-2 border-t border-line-soft">
+                            Corrija ou remova os SKUs não encontrados antes de confirmar — nada será
+                            gravado enquanto houver erro na lista.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-t3 font-semibold mb-1">
+                        Já descontinuados ({discontinuedList.length})
+                      </div>
+                      {discontinuedList.length === 0 ? (
+                        <p className="text-xs text-t4">Nenhum SKU descontinuado neste seller.</p>
+                      ) : (
+                        <div className="border border-line-soft rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                          {discontinuedList.map(r => (
+                            <div key={r.sku} className="flex items-center justify-between px-3 py-1.5 border-t border-line-soft first:border-t-0 text-sm">
+                              <div>
+                                <span className="text-t2">{r.sku}</span>
+                                <span className="text-t4 text-xs ml-2">
+                                  {new Date(r.discontinued_at).toLocaleDateString('pt-BR')}
+                                  {r.created_by_name ? ` · ${r.created_by_name}` : ''}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveDiscontinued(r.sku)}
+                                disabled={discontinuedBusy}
+                                className="text-xs text-violet-300 hover:underline disabled:opacity-50"
+                              >
+                                Reverter
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

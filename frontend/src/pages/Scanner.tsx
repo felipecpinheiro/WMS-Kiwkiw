@@ -576,6 +576,11 @@ export default function ScannerPage() {
         // Manuseios ou pelo Dashboard e a NF volta sozinha.
         setFeedback({ state: 'error', title: '✗ SKU sem cadastro', message: data.message });
         toast.error(data.message, { duration: 8000 });
+      } else if (data.blocked_reason === 'discontinued_sku') {
+        // NF com SKU descontinuado (13/09/2026) — tratado como se não
+        // existisse mais. Só reverte na aba "Descontinuados" do seller.
+        setFeedback({ state: 'error', title: '✗ SKU descontinuado', message: data.message });
+        toast.error(data.message, { duration: 8000 });
       } else {
         setFeedback({ state: 'error', title: '✗ NFe não encontrada', message: data.message || 'Verifique a etiqueta' });
       }
@@ -760,6 +765,13 @@ export default function ScannerPage() {
       } else if (data.status === 'inactive') {
         setFeedback({ state: 'error', title: '✗ NF inativada', message: data.message });
         toast.error(data.message, { duration: 6000 });
+        setActiveOrderId(null);
+        setTimeout(() => navigate('/manuseios'), 2500);
+      } else if (data.status === 'discontinued_sku') {
+        // Segunda camada de defesa (13/09/2026) — na prática a NF já deveria
+        // estar fora do manuseio antes de chegar aqui.
+        setFeedback({ state: 'error', title: '✗ SKU descontinuado', message: data.message });
+        toast.error(data.message, { duration: 8000 });
         setActiveOrderId(null);
         setTimeout(() => navigate('/manuseios'), 2500);
       } else {

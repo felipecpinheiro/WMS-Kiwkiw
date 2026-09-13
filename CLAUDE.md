@@ -39,6 +39,98 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 13/09/2026 — SKUs Descontinuados
+
+Pedido do dono do sistema numa reunião com a Purpose: alguns SKUs pararam de ser vendidos
+(ex.: uma caneca de edição limitada) e precisam **sumir do resumo de estoque** — mas a
+movimentação que já aconteceu com eles não pode se perder, porque um dia o seller pode voltar
+a vender aquele SKU (ou um parecido) e vai precisar saber quanto vendeu, para quem e de qual NF.
+**Só a parte de descontinuados foi feita agora** — a fusão de SKU duplicado (mesmo produto com
+dois SKUs, mover o estoque de um pro outro) ficou para depois, por pedido do próprio dono.
+
+**A regra fechada com o dono, resumida:** SKU descontinuado é tratado **como se não existisse
+mais** para qualquer coisa NOVA — não aceita movimentação de nenhum tipo, em nenhuma tela — mas
+a movimentação que **já** existe continua 100% intacta na aba Movimentações (interna e Portal).
+Reversível a qualquer momento: remover da lista devolve o SKU ao normal, inclusive destravando
+sozinha qualquer NF que tenha ficado pendente só por causa dele.
+
+**Tabela nova `discontinued_skus`** (`seller_id` + `sku`, único por par; `discontinued_at`,
+`created_by_id`) — nasce pelo `Base.metadata.create_all()` do `init_db()`, sem migração manual
+(mesmo mecanismo das 6 tabelas do Faturamento em 31/08). **Nada a ver com `Product.active`**: o
+`active` já bloqueia coisas operacionais (baixa de estoque no import, bipagem) e o dono queria
+algo à parte, porque descontinuar não é "produto errado", é "parei de vender isso".
+
+**Onde o SKU some (`get_stock_report` em `stock_manager.py` é o choke-point):**
+- Estoque interno (`Inventory.tsx`) e Portal do Seller — aba "Meu Estoque" **e** os blocos
+  "Estoque por nível"/"Prestes a romper" da aba Dashboard do portal — os três leem essa função.
+- Export CSV e Excel do resumo (`inventory.py`) — **não** passam por `get_stock_report` (leem
+  `StockPosition` direto), então precisaram do mesmo filtro repetido nos dois endpoints.
+- "Mais Vendidos" do Dashboard do Portal (`seller_dashboard_top_skus`) — consulta direta em
+  `stock_movements`, filtro via `NOT EXISTS` na query.
+- **Aba Movimentações (interna e Portal) NÃO filtra nada** — de propósito, é o histórico que
+  precisa sobreviver.
+
+**Onde a movimentação NOVA é bloqueada — reaproveitando o mecanismo que já existia pra "SKU sem
+produto cadastrado" (`orders_missing_product_skus`), só que numa tabela diferente:**
+- `orders_with_discontinued_skus()` (novo, mesmo desenho do irmão) — NF com SKU descontinuado
+  fica **fora do manuseio** (só aquela NF; o resto do arquivo sobe normal), nos mesmos 3 pontos
+  de `scanning.py`: `get_session_orders`, `open_order_by_nfe` (`blocked_reason="discontinued_sku"`)
+  e `session_cards`. **Vale para saída e para entrada.**
+- `evaluate_orders_for_stock()` ganhou o campo `discontinued_skus` — a baixa de estoque da NF
+  também fica pendente, no mesmo mecanismo de `missing_carrier`/`missing_skus`. ⚠️ **Não entra em
+  `missing_skus`**: aquele campo alimenta o modal de "cadastrar produto faltante", e cadastrar de
+  novo um SKU que já existe (só está descontinuado) não faz sentido nenhum.
+- `process_scan` — segunda camada de defesa (a NF já deveria estar fora do manuseio antes de
+  chegar aqui), `status="discontinued_sku"` na resposta.
+- `create_manual_movement` e `create_bulk_movements` (`/inventory/movements/manual` e `/bulk`) —
+  400/erro de linha, verificado pela **grafia do cadastro** (não a digitada — mesma armadilha de
+  caixa alta/baixa de 28/08).
+- `_validate_rows` de Devoluções (`returns.py`) — entra na validação tudo-ou-nada que já existe.
+- Import de histórico de estoque (`inventory.py`) — bloqueia em `/analyze` e `/execute`, **sem
+  "force"** (diferente do "SKU sem cadastro", aqui não tem escape pela tela).
+- **Kits não precisaram de código novo**: a explosão do kit já grava o SKU real do componente em
+  `order_items` antes de qualquer uma dessas checagens rodar, então SKU descontinuado como
+  componente é pego automaticamente pelo mesmo mecanismo de NF.
+
+**`held_orders` no card de Manuseios agora é a UNIÃO de dois motivos** (sem produto cadastrado +
+descontinuado) — os badges usam contagens separadas (`missing_product_orders` /
+`discontinued_orders`) para não dizer "sem produto cadastrado" numa NF que só está descontinuada.
+
+**Tela de gestão: aba "Descontinuados" no cadastro do Seller** (`Sellers.tsx`, `require_manager_or_above`,
+mesmo nível da aba Comercial) — **não fica dentro da tela de Estoque**, foi decisão do dono ficar
+junto da configuração do seller. Fluxo em 2 passos, igual Devoluções:
+- `POST .../discontinued-skus/analyze` — cola uma lista (um SKU por linha), devolve o **saldo
+  atual** de cada um e marca quem não bateu com o cadastro daquele seller. **Erro de digitação
+  bloqueia o lote inteiro** — a linha errada fica com borda vermelha na tela e o botão
+  "Confirmar" some até tudo bater (decisão do dono; nada de "ignora o que não bateu").
+- `POST .../discontinued-skus/confirm` — revalida do zero (não confia no que o preview mandou de
+  volta) e grava. SKU que já estava descontinuado é ignorado em silêncio (idempotente).
+- `GET .../discontinued-skus` — lista de gestão (SKU, data, quem marcou).
+- `DELETE .../discontinued-skus/{sku}` — reverte, chamando `release_pending_orders_for_sku` na
+  hora: NF que ficou pendente só por causa deste SKU baixa/entra no manuseio sozinha.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Achar que SKU descontinuado é a mesma coisa que produto inativo (`Product.active=False`) | São conceitos diferentes: inativar bloqueia coisas operacionais (import trava por transportadora+produto, bipagem some). Descontinuar é escolha do seller, não erro de cadastro | Tabela própria (`discontinued_skus`), nunca mexer em `Product.active` por essa feature |
+| Query nova que lista/exporta posição de estoque | Se não passar por `get_stock_report` OU repetir o filtro de `discontinued_skus`, o SKU descontinuado volta a vazar (foi o caso dos 2 exports e do top-skus) | Toda consulta nova de "resumo de estoque" tem que excluir `discontinued_skus`, igual os 3 pontos já corrigidos |
+| Contar `card.held_orders` achando que é só "sem produto cadastrado" | Desde 13/09 é a UNIÃO de dois motivos — o badge errado diria "sem produto" numa NF só descontinuada | Usar `missing_product_orders`/`discontinued_orders` (contagens separadas) nos badges, `held_orders` só pro total |
+| Colocar `discontinued_skus` dentro de `missing_skus` em `evaluate_orders_for_stock` | `missing_skus` alimenta o modal de "cadastrar produto faltante" — ofereceria cadastrar de novo um SKU que já tem produto | Campos separados, sempre. Ver o comentário na função |
+| Achar que dá pra "forçar" import de histórico com SKU descontinuado | Diferente do "SKU sem cadastro", **não existe** `force=true` pra descontinuado — bloqueio duro, por pedido do dono | Reverter na aba do seller é o único caminho |
+| Verificar lote de SKUs pra descontinuar e permitir parcial | O dono foi explícito: erro de digitação bloqueia TUDO, nunca "ignora e segue com o resto" | `confirm_discontinue_skus` recusa o lote inteiro se `preview_discontinue_skus` disser `valid=False` |
+
+**Testes:** 50 verificações E2E via TestClient (28 + 22, dois scripts) contra cópia do banco local
+com dado real da Purpose — cobriu analyze com SKU inválido bloqueando o lote, confirm, resumo
+(interno + export CSV) sumindo com o SKU, movimentação manual recusada, movimentação histórica
+preservada, devolução bloqueada, reversão devolvendo o SKU ao resumo e liberando NF pendente
+(`stock_applied_at` preenchido, NF volta a aparecer no manuseio), `session-cards`/`sessions/orders`
+segurando a NF certa com o motivo certo, `open-by-nfe` recusando com `blocked_reason` correto, e
+import de histórico bloqueando em `/analyze` e `/execute`. `tsc --noEmit` limpo. **Não testado
+contra PostgreSQL** — a tabela não usa nenhum tipo específico de banco (sem enum novo), risco baixo.
+
+---
+
 ## Mudanças Recentes — 10/09/2026 — Portal do Seller: gráficos, filtros de Estoque/Movimentações e janela de render
 
 **Só frontend** (`frontend/src/pages/SellerPortal.tsx` + `SellerDashboard.tsx`). **Sem backend,
@@ -1115,6 +1207,7 @@ WMS Kiwkiw/
 | `scanning_logs` | Auditoria completa de cada scan/bipagem |
 | `stock_movements` | Histórico de entradas e saídas de estoque. `movement_date` = quando a Kiwkiw processou; `nf_date` = data da NF emitida pelo seller (só aparece no Portal do Seller) |
 | `stock_positions` | Posição atual de estoque (desnormalizada para performance) |
+| `discontinued_skus` | SKUs descontinuados por seller (13/09/2026) — some do resumo, bloqueia movimentação nova, reversível |
 | `billing_configs` | Configurações de cobrança por seller |
 | `audit_logs` | Log de auditoria geral do sistema |
 | `app_settings` | Configurações key/value do sistema |
@@ -1691,7 +1784,7 @@ esses números** (decisão do dono do sistema).
 | `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque, só SAÍDA**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs de saída que não baixaram — **entrada fica fora**), PDFs (**recusam sessão de entrada**) |
 | `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
-| `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`), unidades, usuários, experience-file |
+| `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`, `discontinued-skus` + `analyze`/`confirm` — 13/09/2026), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026).** `seller-params`/`seller-box-prices` (manager+, sem portão), `/billing/my/...` (Portal do seller, sem portão). Os outros 11 — `box-prices`, `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`) — exigem **admin + Acesso Protegido ao Financeiro liberado** (02/09/2026, ver `billing_access`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
@@ -2461,3 +2554,5 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Movimento de estoque novo que cite uma NF de venda | Preencher o `order_id` "para ligar as pontas" faz `reverse_stock_for_order()` (que soma o **saldo líquido do `order_id`**) varrer esse movimento junto quando a NF for cancelada/inativada — o estoque some em silêncio | Movimento que **não é** da NF (devolução, ajuste) nasce **sem `order_id`**; o número da NF vai no `nf_number` e na observação, que é o que a tela e o Portal mostram |
 | Painel flutuante (dropdown/autocomplete) dentro de tabela | Contêiner com `overflow-x-auto` **corta** qualquer painel absoluto, sem erro nenhum: os dados chegam do servidor e a lista simplesmente não aparece (aconteceu no seletor de SKU de Devoluções) | `createPortal` + `position: fixed` ancorado no campo, fechando ao rolar/redimensionar. Ver `SkuPicker` em [Returns.tsx](frontend/src/pages/Returns.tsx) |
 | Endpoint novo que grava a partir de uma conferência na tela | Validar só no `analyze` e confiar que o `lancar` recebe o que foi conferido — a chamada pode ser forjada e aqui o erro vira **estoque errado** | As duas rotas passam pela **mesma** função de validação (`_validate_rows` em `returns.py`), e o gravador revalida sempre |
+| Query/export novo de resumo de estoque (posição atual) | Se não passar por `get_stock_report` nem repetir o filtro de `discontinued_skus` (13/09/2026), SKU descontinuado volta a aparecer — já aconteceu nos exports CSV/Excel e no "Mais Vendidos" do portal, que consultam `StockPosition`/`stock_movements` direto | Toda consulta de "resumo" tem que excluir `discontinued_skus`; `stock_manager.get_stock_report` é a referência |
+| Tratar SKU descontinuado igual "SKU sem produto cadastrado" | São dois motivos diferentes de segurar NF fora do manuseio, com tabelas e mensagens distintas — `card.held_orders` é a UNIÃO dos dois desde 13/09/2026 | Usar `missing_product_orders`/`discontinued_orders` (contagens separadas) nos badges e no `discontinued_skus` de `evaluate_orders_for_stock`, nunca misturar com `missing_skus` (que alimenta o modal de cadastro de produto) |

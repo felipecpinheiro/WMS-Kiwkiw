@@ -276,19 +276,36 @@ def _validate_rows(rows: List[dict], db: Session) -> dict:
         ).all():
             produtos[(sid, p.sku)] = p
 
+    # SKU descontinuado (13/09/2026) bloqueia a devolução também — o produto
+    # físico pode até voltar fisicamente pro seller, mas o WMS trata o SKU
+    # como se não existisse mais em qualquer movimentação nova.
+    discontinuados: dict = {}
+    for sid, skus in por_seller.items():
+        for d in db.query(models.DiscontinuedSku).filter(
+            models.DiscontinuedSku.seller_id == sid,
+            models.DiscontinuedSku.sku.in_(list(skus)),
+        ).all():
+            discontinuados[(sid, d.sku)] = d
+
     vistos: dict = {}
     for r in resolvidos:
         n = r["line"]
         if r["seller_id"] and r["sku"]:
-            prod = produtos.get((r["seller_id"], r["sku"]))
-            if not prod:
+            if (r["seller_id"], r["sku"]) in discontinuados:
                 errors.append(
-                    f'Linha {n}: SKU "{r["sku"]}" não tem produto ativo cadastrado '
-                    f'no seller {r["seller_name"]}'
+                    f'Linha {n}: SKU "{r["sku"]}" foi descontinuado em '
+                    f'{r["seller_name"]} e não aceita movimentação'
                 )
             else:
-                r["product_id"] = prod.id
-                r["product_name"] = prod.name
+                prod = produtos.get((r["seller_id"], r["sku"]))
+                if not prod:
+                    errors.append(
+                        f'Linha {n}: SKU "{r["sku"]}" não tem produto ativo cadastrado '
+                        f'no seller {r["seller_name"]}'
+                    )
+                else:
+                    r["product_id"] = prod.id
+                    r["product_name"] = prod.name
 
         # Duplicidade: só é duplicata quando TUDO bate, NF inclusive. Mesmo SKU
         # e mesma quantidade em NFs diferentes é devolução legítima.

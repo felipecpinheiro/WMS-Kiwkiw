@@ -931,15 +931,22 @@ def seller_dashboard_top_skus(
     if start > end:
         start, end = end, start
 
+    # SKU descontinuado (13/09/2026) some do "Mais Vendidos" — mesmo recorte
+    # de resumo do get_stock_report, aplicado aqui via NOT EXISTS porque esta
+    # consulta é direta em stock_movements, sem passar por aquela função.
     rows = db.execute(
         text(f"""
             SELECT sku, SUM(quantity) AS total
-            FROM stock_movements
-            WHERE seller_id = :sid
-              AND {_OUT_LABELS_SQL}
-              AND movement_date >= :start
-              AND movement_date <= :end
-            GROUP BY sku
+            FROM stock_movements m
+            WHERE m.seller_id = :sid
+              AND {_OUT_LABELS_SQL.replace('movement_type', 'm.movement_type')}
+              AND m.movement_date >= :start
+              AND m.movement_date <= :end
+              AND NOT EXISTS (
+                    SELECT 1 FROM discontinued_skus d
+                     WHERE d.seller_id = m.seller_id AND d.sku = m.sku
+              )
+            GROUP BY m.sku
             ORDER BY total DESC
             LIMIT :lim
         """),

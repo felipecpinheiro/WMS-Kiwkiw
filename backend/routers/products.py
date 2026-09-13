@@ -20,7 +20,11 @@ from ..auth import (
 from ..timezone_utils import end_of_day
 from ..services.kit_import import parse_kit_workbook, match_sellers, _norm as _norm_seller
 from ..services.order_import import _build_seller_alias_map
-from ..services.stock_manager import release_pending_orders_for_sku, release_pending_orders_for_skus
+from ..services.stock_manager import (
+    release_pending_orders_for_sku, release_pending_orders_for_skus,
+    list_discontinued_skus, preview_discontinue_skus, confirm_discontinue_skus,
+    remove_discontinued_sku,
+)
 from ..services.excel_utils import ensure_xlsx_bytes
 from .. import models, schemas
 
@@ -2321,3 +2325,123 @@ def upload_experience_file(
         raise HTTPException(status_code=500, detail=f"Erro ao salvar arquivo: {e}")
 
     return {"filename": dest_name, "path": f"/media/experience/{dest_name}"}
+
+
+# ============================================================
+# SKUS DESCONTINUADOS (13/09/2026) — aba da configuração do seller
+# ============================================================
+# Pedido do dono do sistema: SKU que a loja parou de vender some do resumo de
+# estoque (interno e Portal do Seller) e fica bloqueado pra qualquer
+# movimentação nova — a movimentação que já existe continua intacta na aba
+# Movimentações. Reversível a qualquer momento (ver DELETE abaixo).
+# A lógica de verdade mora em stock_manager.py; aqui é só validação de seller
+# + auditoria, no mesmo padrão do resto deste arquivo.
+
+@router.get("/sellers/{seller_id}/discontinued-skus")
+def get_discontinued_skus(
+    seller_id: int,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """Lista os SKUs descontinuados deste seller (tela de gestão)."""
+    if not db.query(models.Seller.id).filter(models.Seller.id == seller_id).first():
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+    return {"rows": list_discontinued_skus(db, seller_id)}
+
+
+@router.post("/sellers/{seller_id}/discontinued-skus/analyze")
+def analyze_discontinued_skus(
+    seller_id: int,
+    body: dict = Body(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Confere a lista colada (uma linha por SKU) SEM gravar nada. Devolve o
+    saldo atual de cada SKU válido e marca quem não bateu com o cadastro do
+    seller — a tela usa isso para destacar a linha com borda vermelha e
+    travar o botão "Confirmar" até tudo bater (regra do dono do sistema).
+    """
+    if not db.query(models.Seller.id).filter(models.Seller.id == seller_id).first():
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    raw = body.get("skus", [])
+    if isinstance(raw, str):
+        raw = raw.splitlines()
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail="'skus' deve ser uma lista ou texto multi-linha")
+
+    return preview_discontinue_skus(db, seller_id, raw)
+
+
+@router.post("/sellers/{seller_id}/discontinued-skus/confirm")
+def confirm_discontinued_skus(
+    seller_id: int,
+    body: dict = Body(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Grava. Revalida do zero (não confia no preview do frontend) — qualquer
+    SKU que não bata com o cadastro do seller recusa o lote inteiro com 422,
+    igual o `/analyze` já sinalizou.
+    """
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    raw = body.get("skus", [])
+    if isinstance(raw, str):
+        raw = raw.splitlines()
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=422, detail="'skus' é obrigatório")
+
+    try:
+        newly_added = confirm_discontinue_skus(db, seller_id, raw, created_by_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if newly_added:
+        db.add(models.AuditLog(
+            entity_type="DiscontinuedSku",
+            entity_id=seller_id,
+            action="CREATE",
+            detail=(
+                f"SKU(s) descontinuado(s) em {seller.trade_name}: "
+                f"{', '.join(newly_added)}"
+            ),
+            user_id=current_user.id,
+        ))
+    db.commit()
+    return {"discontinued": newly_added, "count": len(newly_added)}
+
+
+@router.delete("/sellers/{seller_id}/discontinued-skus/{sku}")
+def delete_discontinued_sku(
+    seller_id: int,
+    sku: str,
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Reverte: o SKU volta a se comportar normalmente (some da lista, reaparece
+    no resumo, aceita movimentação de novo). NF que ficou pendente só por
+    causa deste SKU baixa/entra no manuseio sozinha (ver remove_discontinued_sku).
+    """
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    result = remove_discontinued_sku(db, seller_id, sku, operator_id=current_user.id)
+    if not result["removed"]:
+        raise HTTPException(status_code=404, detail=f"SKU '{sku}' não está descontinuado")
+
+    db.add(models.AuditLog(
+        entity_type="DiscontinuedSku",
+        entity_id=seller_id,
+        action="DELETE",
+        detail=f"SKU {sku} voltou a ser vendido em {seller.trade_name}",
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return {"removed": True, "stock": result["stock"]}

@@ -799,6 +799,69 @@ class BillingClosingDraftIn(BillingSellerParamsIn):
     nf_overrides: List[BillingNFOverrideIn] = []
 
 
+class ClientSupplyRuleIn(BaseModel):
+    rule_type: str            # 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY'
+    sku: Optional[str] = None
+    quantity: int = 1
+
+
+class ClientSupplyRuleOut(ClientSupplyRuleIn):
+    id: int
+    box_key: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ClientSupplyEntryIn(BaseModel):
+    quantity: int
+    entry_date: date
+    note: str = ""
+
+
+class ClientSupplyEntryOut(ClientSupplyEntryIn):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class ClientSupplyIn(BaseModel):
+    name: str
+    count_from_date: date
+
+
+class ClientSupplyOut(BaseModel):
+    id: int
+    seller_id: int
+    name: str
+    count_from_date: date
+    locked: bool
+    box_key: Optional[str] = None
+    entries: List[ClientSupplyEntryOut] = []
+    rules: List[ClientSupplyRuleOut] = []
+    total_entradas: int
+    consumo_estimado: int
+    saldo_estimado: int
+
+    class Config:
+        from_attributes = True
+
+
+class ClientSupplyMovementOut(BaseModel):
+    # Nome do campo NÃO pode ser "date" — colide com o tipo `date` importado no
+    # topo do arquivo e faz o pydantic resolver a anotação como NoneType (erro
+    # real pego em teste: "Input should be None" em toda linha da resposta).
+    movement_date: Optional[date] = None
+    type: str              # 'entrada' | 'consumo'
+    supply_id: int
+    supply_name: str
+    quantity: int
+    note: Optional[str] = None
+    nf_number: Optional[str] = None
+    rule_desc: Optional[str] = None
+
+
 class DuplicateOrderInfo(BaseModel):
     """Detalhe de um pedido já existente detectado na importação."""
     nf_number: str

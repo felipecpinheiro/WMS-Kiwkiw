@@ -39,6 +39,12 @@ class MovementType(str, enum.Enum):
     IN = "Entrada"
     OUT = "Saída"
 
+class SupplyRuleType(str, enum.Enum):
+    PER_ORDER = "PER_ORDER"            # todo pedido de saída consome `quantity`
+    SKU_OCCURRENCE = "SKU_OCCURRENCE"  # pedido contém o SKU -> consome `quantity` (não importa a qtd do SKU)
+    SKU_QUANTITY = "SKU_QUANTITY"      # consumo = qtd do SKU enviada x `quantity`
+    BOX_OCCURRENCE = "BOX_OCCURRENCE"  # pedido saiu com `box_key` -> consome `quantity` (só as caixas próprias travadas)
+
 class FileType(str, enum.Enum):
     IMPORT = "entrada"
     EXPORT = "saida"
@@ -719,6 +725,74 @@ class BillingClosingLine(Base):
     sem_caixa = Column(Boolean, default=False, nullable=False)
 
     closing = relationship("BillingMonthlyClosing", back_populates="lines")
+
+
+# ============================================================
+# INSUMOS DO CLIENTE (13/09/2026)
+#
+# Coisas que o seller manda pra Kiwkiw usar no unboxing/embalagem e que NÃO
+# têm código de barras — não dá pra bipar, então não entram em
+# stock_movements/stock_positions. Isso aqui é um saldo ESTIMADO
+# (entradas - consumo calculado por regra), gerenciado pelo PRÓPRIO seller no
+# Portal, sem nenhum vínculo com faturamento ou com o estoque de produto.
+# ============================================================
+
+class ClientSupply(Base):
+    """Um tipo de insumo cadastrado pelo seller (ex: 'Adesivo Verão')."""
+    __tablename__ = "client_supplies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    name = Column(String(150), nullable=False)
+    # Consumo só conta pedidos de saída a partir desta data (passado ou futuro,
+    # decisão do dono do sistema em 13/09/2026).
+    count_from_date = Column(Date, nullable=False)
+    # Travado = uma das 4 caixas próprias (ver PROPRIO_BOXES). Nome e regra
+    # nascem fixos e a API recusa alterá-los ou apagar o registro — só as
+    # entradas (quantidade/data) ficam editáveis pelo seller.
+    locked = Column(Boolean, default=False, nullable=False)
+    box_key = Column(String(30), nullable=True)   # só preenchido quando locked=True
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=now_brasilia)
+
+    seller = relationship("Seller")
+    entries = relationship("ClientSupplyEntry", back_populates="supply", cascade="all, delete-orphan")
+    rules = relationship("ClientSupplyRule", back_populates="supply", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("seller_id", "box_key", name="uq_client_supply_seller_box"),
+    )
+
+
+class ClientSupplyEntry(Base):
+    """Entrada de insumo: 'recebi/enviei N unidades nesta data'."""
+    __tablename__ = "client_supply_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supply_id = Column(Integer, ForeignKey("client_supplies.id"), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    entry_date = Column(Date, nullable=False)
+    note = Column(String(300), default="", nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=now_brasilia)
+
+    supply = relationship("ClientSupply", back_populates="entries")
+
+
+class ClientSupplyRule(Base):
+    """Regra de consumo estimado de um insumo. Um insumo pode ter várias (somam)."""
+    __tablename__ = "client_supply_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supply_id = Column(Integer, ForeignKey("client_supplies.id"), nullable=False)
+    rule_type = Column(Enum(SupplyRuleType), nullable=False)
+    sku = Column(String(100), nullable=True)       # SKU_OCCURRENCE / SKU_QUANTITY
+    box_key = Column(String(30), nullable=True)    # BOX_OCCURRENCE
+    quantity = Column(Integer, nullable=False, default=1)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=now_brasilia)
+
+    supply = relationship("ClientSupply", back_populates="rules")
 
 
 # ============================================================

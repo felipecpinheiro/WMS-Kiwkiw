@@ -1066,9 +1066,17 @@ export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
 export interface BillingBoxPrice { box_key: string; price: number | null }
 
 // Lista canônica de caixas — repetida no Scanner, faturamento e cadastro do seller.
+// 13/09/2026: "Própria" virou 4 caixas próprias por tamanho.
 export const CANONICAL_BOXES = [
   '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
-  'Saco de Embarque', 'Própria',
+  'Saco de Embarque',
+  'Própria P', 'Própria M', 'Própria G', 'Próprio Saco de Embarque',
+] as const;
+
+// Caixas que o próprio seller envia — usadas pra estilizar o botão no Scanner
+// (cor diferente) e como âncora dos insumos travados na aba Insumos do Portal.
+export const PROPRIO_BOXES = [
+  'Própria P', 'Própria M', 'Própria G', 'Próprio Saco de Embarque',
 ] as const;
 
 export interface BillingSellerBoxPrices {
@@ -1269,4 +1277,74 @@ export const returnsApi = {
       '/devolucoes/lancar',
       { rows },
     ),
+};
+
+
+// ============================================================
+// INSUMOS DO CLIENTE (13/09/2026)
+// ============================================================
+// Insumo = material sem código de barras (adesivo, cartão, caixa própria...)
+// que o seller manda pra Kiwkiw. Saldo ESTIMADO por regra, gerenciado pelo
+// próprio seller no Portal — nunca toca em estoque de produto nem faturamento.
+
+export type SupplyRuleType = 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY' | 'BOX_OCCURRENCE';
+
+export interface ClientSupplyRule {
+  id: number;
+  rule_type: SupplyRuleType;
+  sku: string | null;
+  box_key: string | null;
+  quantity: number;
+}
+
+export interface ClientSupplyEntry {
+  id: number;
+  quantity: number;
+  entry_date: string;
+  note: string;
+}
+
+export interface ClientSupply {
+  id: number;
+  seller_id: number;
+  name: string;
+  count_from_date: string;
+  locked: boolean;
+  box_key: string | null;
+  entries: ClientSupplyEntry[];
+  rules: ClientSupplyRule[];
+  total_entradas: number;
+  consumo_estimado: number;
+  saldo_estimado: number;
+}
+
+export interface ClientSupplyMovement {
+  movement_date: string | null;
+  type: 'entrada' | 'consumo';
+  supply_id: number;
+  supply_name: string;
+  quantity: number;
+  note: string | null;
+  nf_number: string | null;
+  rule_desc: string | null;
+}
+
+export const clientSuppliesApi = {
+  list: (sellerId?: number) =>
+    api.get<ClientSupply[]>('/client-supplies', { params: sellerId ? { seller_id: sellerId } : undefined }),
+  movements: (sellerId?: number) =>
+    api.get<ClientSupplyMovement[]>('/client-supplies/movements', { params: sellerId ? { seller_id: sellerId } : undefined }),
+  create: (data: { name: string; count_from_date: string }) =>
+    api.post<ClientSupply>('/client-supplies', data),
+  update: (id: number, data: { name: string; count_from_date: string }) =>
+    api.put<ClientSupply>(`/client-supplies/${id}`, data),
+  remove: (id: number) => api.delete(`/client-supplies/${id}`),
+  addEntry: (supplyId: number, data: { quantity: number; entry_date: string; note?: string }) =>
+    api.post<ClientSupply>(`/client-supplies/${supplyId}/entries`, data),
+  updateEntry: (entryId: number, data: { quantity: number; entry_date: string; note?: string }) =>
+    api.put<ClientSupply>(`/client-supplies/entries/${entryId}`, data),
+  removeEntry: (entryId: number) => api.delete<ClientSupply>(`/client-supplies/entries/${entryId}`),
+  addRule: (supplyId: number, data: { rule_type: SupplyRuleType; sku?: string; quantity: number }) =>
+    api.post<ClientSupply>(`/client-supplies/${supplyId}/rules`, data),
+  removeRule: (ruleId: number) => api.delete<ClientSupply>(`/client-supplies/rules/${ruleId}`),
 };

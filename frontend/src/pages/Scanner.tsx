@@ -12,7 +12,7 @@ import {
   LogOut, Pause, KeyRound, ClipboardList, Plus, ZoomIn, X,
   Ban, RotateCcw,
 } from 'lucide-react';
-import { scanningApi, cadastrosApi, CANONICAL_BOXES } from '../api';
+import { scanningApi, cadastrosApi, CANONICAL_BOXES, PROPRIO_BOXES } from '../api';
 import type { EntryConference } from '../api';
 import toast from 'react-hot-toast';
 import ThemeToggle from '../components/ThemeToggle';
@@ -1299,23 +1299,31 @@ export default function ScannerPage() {
                         >
                           📦 {boxUsed || boxSuggested || 'N.A'}
                         </span>
-                        {CANONICAL_BOXES.map(n => (
-                          <button
-                            key={n}
-                            onClick={() => handleBoxSave(n)}
-                            disabled={boxSaving}
-                            title={n === 'Própria' ? 'Seller usa caixa própria' : `Caixa ${n}`}
-                            className={
-                              'h-6 flex items-center justify-center text-[11px] font-bold rounded border transition '
-                              + (n.length > 2 ? 'px-2 ' : 'w-6 ')
-                              + (boxUsed === n
-                                  ? 'border-violet-400 text-violet-200 bg-violet-500/20'
-                                  : 'border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300')
-                            }
-                          >
-                            {n}
-                          </button>
-                        ))}
+                        {CANONICAL_BOXES.map(n => {
+                          const isProprio = (PROPRIO_BOXES as readonly string[]).includes(n);
+                          const label = n === 'Próprio Saco de Embarque' ? 'P.Saco' : n;
+                          return (
+                            <button
+                              key={n}
+                              onClick={() => handleBoxSave(n)}
+                              disabled={boxSaving}
+                              title={isProprio ? `${n} — caixa/embalagem própria do seller` : `Caixa ${n}`}
+                              className={
+                                'h-6 flex items-center justify-center text-[11px] font-bold rounded border transition '
+                                + (label.length > 2 ? 'px-2 ' : 'w-6 ')
+                                + (boxUsed === n
+                                    ? (isProprio
+                                        ? 'border-ok text-ok bg-ok-soft'
+                                        : 'border-violet-400 text-violet-200 bg-violet-500/20')
+                                    : (isProprio
+                                        ? 'border-ok/40 text-ok/80 hover:border-ok hover:text-ok'
+                                        : 'border-line-soft text-t3 hover:border-violet-400/50 hover:text-violet-300'))
+                              }
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
                       </span>
                     )}
                   </div>

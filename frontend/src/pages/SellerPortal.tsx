@@ -12,7 +12,7 @@ import {
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
   BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal, Receipt,
-  LayoutDashboard,
+  LayoutDashboard, PackagePlus,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -21,6 +21,7 @@ import {
 import { dashboardApi, inventoryApi, authApi } from '../api';
 import SellerFinanceTab from './SellerFinance';
 import SellerDashboardTab from './SellerDashboard';
+import SellerSuppliesTab from './SellerSupplies';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
@@ -35,7 +36,7 @@ import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Tab = 'dashboard' | 'orders' | 'stock' | 'movements' | 'finance';
+type Tab = 'dashboard' | 'orders' | 'stock' | 'movements' | 'finance' | 'supplies';
 type StockSubTab = 'position' | 'chart';
 type SortDir = 'asc' | 'desc' | null;
 interface SortState { col: string; dir: SortDir }
@@ -500,6 +501,7 @@ export default function SellerPortalPage() {
     { id: 'stock',     label: 'Meu Estoque',    icon: Warehouse },
     { id: 'movements', label: 'Movimentações',  icon: List },
     { id: 'finance',   label: 'Financeiro',     icon: Receipt },
+    { id: 'supplies',  label: 'Insumos',        icon: PackagePlus },
   ];
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -718,6 +720,7 @@ export default function SellerPortalPage() {
               {tab === 'stock'     ? 'Posição atual — clique em uma linha para ver o gráfico do SKU' : ''}
               {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
               {tab === 'finance'   ? 'Suas faturas mensais na Kiwkiw' : ''}
+              {tab === 'supplies'  ? 'Materiais sem código de barras — saldo estimado por regras que você define' : ''}
             </p>
           </div>
 
@@ -728,6 +731,9 @@ export default function SellerPortalPage() {
 
           {/* ── FINANCEIRO ───────────────────────────────────────────────── */}
           {tab === 'finance' && sellerId && <SellerFinanceTab sellerId={sellerId} />}
+
+          {/* ── INSUMOS ──────────────────────────────────────────────────── */}
+          {tab === 'supplies' && sellerId && <SellerSuppliesTab sellerId={sellerId} />}
 
           {/* ── PEDIDOS ──────────────────────────────────────────────────── */}
           {tab === 'orders' && (

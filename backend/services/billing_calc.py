@@ -98,19 +98,37 @@ def reajuste_alerta(inicio_contrato: str, ref_month: str) -> Optional[dict]:
 
 # Lista canônica — repetida em todo o sistema (Scanner, faturamento, cadastro
 # do seller). A ordem é a de exibição.
+# 13/09/2026: "Própria" (genérica) foi desdobrada em 4 caixas próprias por
+# tamanho — o histórico anterior a essa data continua com "Própria" solta em
+# `Order.box_used`, sem backfill (mesma decisão de 01/09 pras demais caixas).
 CANONICAL_BOXES = [
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11",
-    "Saco de Embarque", "Própria",
+    "Saco de Embarque",
+    "Própria P", "Própria M", "Própria G", "Próprio Saco de Embarque",
 ]
+
+# Caixas que o próprio seller envia (viram também um "insumo" travado — ver
+# services/supply_calc.py). Usado só para identificar o grupo; a cor/tooltip
+# do botão no Scanner fica no frontend (PROPRIO_BOXES em api.ts).
+PROPRIO_BOXES = ["Própria P", "Própria M", "Própria G", "Próprio Saco de Embarque"]
 
 
 def normaliza_box(raw) -> Optional[str]:
-    """Converte o texto de `Order.box_used` numa chave canônica de caixa."""
+    """Converte o texto de `Order.box_used` numa chave canônica de caixa.
+
+    Checa correspondência EXATA contra `CANONICAL_BOXES` primeiro. Antes disso
+    era só reconhecimento livre por prefixo ("pró"/"pro"/"propr" -> "Própria"),
+    o que colapsaria as 4 caixas próprias novas (todas começam com "pró") numa
+    bucket só. O reconhecimento livre abaixo fica só para texto legado
+    anterior à padronização (pré-01/09/2026), que não tinha tamanho.
+    """
     if raw is None:
         return None
     s = str(raw).strip()
     if not s:
         return None
+    if s in CANONICAL_BOXES:
+        return s
     low = s.lower()
     if low.startswith("pró") or low.startswith("pro") or "propr" in low:
         return "Própria"

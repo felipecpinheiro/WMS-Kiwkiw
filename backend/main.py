@@ -35,6 +35,7 @@ from backend.database import init_db, get_db, SessionLocal
 from backend.routers import (
     auth, orders, scanning, inventory, products, billing, billing_access,
     dashboard, returns as returns_router, settings as settings_router,
+    client_supplies,
 )
 from backend import models
 from backend.auth import hash_password
@@ -410,8 +411,9 @@ def run_light_migrations():
 
         # ── Seed idempotente da tabela GLOBAL de adicional por caixa ───────────
         # A tabela em si é criada por Base.metadata.create_all (init_db). Aqui só
-        # garantimos as 13 chaves canônicas com price NULL (= sem adicional) se
-        # faltarem. Chaves antigas fora da lista (se houver) não são removidas.
+        # garantimos as chaves canônicas (16 desde 13/09/2026, ver CANONICAL_BOXES)
+        # com price NULL (= sem adicional) se faltarem. Chaves antigas fora da
+        # lista (ex.: "Própria" pré-13/09) não são removidas.
         from backend.services.billing_calc import CANONICAL_BOXES
         for _bk in CANONICAL_BOXES:
             db.execute(text(
@@ -556,6 +558,7 @@ app.include_router(billing_access.router)
 app.include_router(dashboard.router)
 app.include_router(returns_router.router)
 app.include_router(settings_router.router)
+app.include_router(client_supplies.router)
 
 
 # ============================================================

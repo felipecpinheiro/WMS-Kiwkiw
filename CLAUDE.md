@@ -39,6 +39,136 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 14/09/2026 — Insumos do Cliente (aba nova no Portal) + caixas próprias
+
+**Sem push anterior — este é o primeiro push desta feature.** Insumo = material **sem código de
+barras** (adesivo, cartão de brinde, caixa própria...) que o seller manda pra Kiwkiw usar no
+próprio pedido. Não dá pra bipar, então isso **nunca** toca em `stock_movements`/`stock_positions`
+nem em faturamento — é um **saldo ESTIMADO**, calculado por regra que o **próprio seller** define e
+gerencia sozinho no Portal (`role=client`), sem participação da operação da Kiwkiw.
+
+### Modelo de dados (3 tabelas novas, sem migração manual)
+
+Nascem por `Base.metadata.create_all` (mesmo padrão do Faturamento) — sem migração idempotente
+no `main.py`.
+
+| Tabela | O quê |
+|---|---|
+| `client_supplies` | O insumo (`name`, `count_from_date` — a partir de quando conta consumo, passado ou futuro por escolha do seller). `locked` + `box_key` marcam os 4 insumos de caixa própria (ver abaixo) |
+| `client_supply_entries` | Entrada: "recebi/enviei N unidades nesta data" (+ observação opcional) |
+| `client_supply_rules` | Regra de consumo. Um insumo pode ter **várias** (somam). `rule_type` ∈ `PER_ORDER` \| `SKU_OCCURRENCE` \| `SKU_QUANTITY` \| `BOX_OCCURRENCE` |
+
+`saldo_estimado = Σ entradas − Σ consumo estimado`. Consumo é calculado **ao vivo** (nunca
+congelado) sobre pedidos de saída não cancelados do seller, a partir de `count_from_date`:
+- `PER_ORDER`: todo pedido consome `quantity`
+- `SKU_OCCURRENCE`: pedido contém o SKU → consome `quantity` (não importa a quantidade do SKU)
+- `SKU_QUANTITY`: consumo = quantidade do SKU enviada × `quantity`
+- `BOX_OCCURRENCE`: pedido saiu com aquela caixa própria → consome `quantity` (só as 4 travadas)
+
+⚠️ **Regra por SKU só aceita produto real, nunca SKU de kit** — decisão tomada com o dono do
+sistema. O SKU de kit some do pedido na explosão do import (ver seção de Kits mais abaixo) e nunca
+aparece em `order_items`; reconstituir "quantos kits saíram" a partir do componente já expandido
+seria frágil. O seletor de SKU da tela só mostra produtos.
+
+### Caixas próprias — "Própria" virou 4 (14/09/2026)
+
+`CANONICAL_BOXES` (`billing_calc.py`) tinha 13 chaves; a antiga **"Própria" única foi substituída**
+por **"Própria P", "Própria M", "Própria G", "Próprio Saco de Embarque"** (16 chaves no total —
+`"Saco de Embarque"`, o saco da própria Kiwkiw, não mudou). Histórico **não é convertido** (mesma
+decisão de 01/09 pras demais caixas) — NF antiga com `"Própria"` solta continua como está.
+
+⚠️ **Bug real corrigido nessa mudança:** `normaliza_box()` colapsava qualquer texto começando com
+"pró" em `"Própria"` — as 4 caixas novas (todas começam com "pró") cairiam na mesma bucket de
+cota/grupo A/preço. Corrigido checando **correspondência exata** contra `CANONICAL_BOXES` primeiro;
+o reconhecimento livre por prefixo só vale pra texto legado anterior a 13/09/2026 (sem tamanho).
+
+No Scanner, os 4 botões usam a cor **verde-água** (`--ok`) em vez de roxo, pra não confundir na
+bancada — só **"Próprio Saco de Embarque" aparece abreviado** ("P.Saco") no botão (nome completo no
+tooltip); "Própria P/M/G" mostram o nome inteiro.
+
+**Cada uma das 4 caixas próprias é também um insumo `client_supplies` TRAVADO** (`locked=True`,
+`box_key` = a chave da caixa), criado automaticamente (idempotente) na primeira vez que o seller
+abre a aba Insumos — via `ensure_locked_box_supplies()`. Travado significa:
+
+| Campo | Pode mudar? |
+|---|---|
+| Nome | **Não** — servidor recusa com 400 mesmo que a tela seja burlada |
+| Regra (`BOX_OCCURRENCE`, qtd 1) | **Não** — não dá pra editar nem apagar |
+| Data "contar desde" | **Sim** |
+| Entradas (quantidade/data/obs) | **Sim** — é a única coisa que o seller mexe |
+| Apagar o insumo | **Não** |
+
+Motivo: quem bipa vê o nome exato do botão ("Própria P" etc.) — se o seller pudesse renomear, o
+saldo pararia de bater com o que a operação realmente usa.
+
+### Backend
+
+`backend/services/supply_calc.py` (novo) — todo o cálculo:
+- `_consumo_rows_regra()` é a **única fonte de verdade**: devolve uma linha por PEDIDO que a regra
+  alcançou (com a quantidade consumida naquele pedido). `compute_balance()` (agregado, alimenta a
+  tabela Resumo) e `list_movements()` (detalhado por pedido, alimenta a sub-aba Movimentos) somam
+  em cima da MESMA função — não têm como divergir.
+- `count(distinct(...))` em vez de `.distinct(col).count()` pra contar pedidos únicos em
+  `SKU_OCCURRENCE` — a segunda forma gera `DISTINCT ON`, que é **só Postgres**.
+
+`backend/routers/client_supplies.py` (novo, prefixo `/client-supplies`):
+- **Só `client`** cria/edita/apaga, e só o próprio `seller_id` (nunca vê o de outro seller).
+- **`admin`** só lê, passando `?seller_id=` — sem tela dedicada ainda, é suporte via API.
+- Manager/operator **não têm acesso nenhum** (decisão do dono do sistema).
+- Toda trava de `locked` é **revalidada no servidor** (não só escondida na tela) — mesmo padrão de
+  "não confiar só na UI" usado em Devoluções.
+- `GET /client-supplies/movements` — extrato combinado (entradas + consumo por pedido) de todos os
+  insumos do seller, ordenado do mais recente pro mais antigo.
+
+⚠️ **Achado durante o teste, não óbvio:** nomear um campo do schema Pydantic `date` enquanto o tipo
+`date` também está importado no topo do arquivo faz o `pydantic`/`get_type_hints` resolver a
+anotação usando o próprio namespace da classe — o campo vira `NoneType` e a resposta quebra em
+**todas** as linhas (`ResponseValidationError: Input should be None`), só aparece rodando de
+verdade, não no `tsc`. Corrigido renomeando pra `movement_date`. Não nomear um campo Pydantic igual
+a um tipo importado no mesmo módulo.
+
+### Frontend
+
+`frontend/src/pages/SellerSupplies.tsx` (novo) — aba **"Insumos"** no Portal
+(`SellerPortal.tsx`, ícone `PackagePlus`), com 2 sub-abas (mesmo espírito de Estoque/Movimentações):
+- **Resumo**: **tabela** (não cards — pedido do dono do sistema em 14/09, pra ficar parecido com a
+  tela de Estoque). Colunas: Insumo (🔒 se travado, clicar expande regras+histórico) | Contando
+  desde | Entradas | Consumo | Saldo | Status | botão **"Lançar"** em toda linha. O botão de
+  lançar sempre visível foi a correção de um problema real relatado: antes ficava escondido atrás
+  de "Ver detalhes" e ninguém achava onde lançar a entrada.
+- **Movimentos**: extrato único (`GET /client-supplies/movements`) com todas as entradas e todo o
+  consumo estimado por pedido, de todos os insumos juntos.
+- **Status da linha é só visual, não gravado em lugar nenhum** — heurística simples (`saldo < 0` →
+  Negativo, `saldo/entradas ≤ 20%` → Baixo, senão Alto; sem entrada nem consumo → "Sem lançamento").
+- **"Novo insumo" já entra com 1 regra** no mesmo formulário (chamada em sequência: cria o insumo,
+  depois a regra — se a regra falhar, o insumo continua criado, dá pra completar depois).
+- Aviso fixo no topo: **"Este saldo é uma ESTIMATIVA"** — não é opcional, tem que estar sempre
+  visível nas duas sub-abas.
+- `SkuPicker` reaproveita o mesmo padrão de Devoluções (busca no servidor, `createPortal` + posição
+  fixa — necessário porque a tabela tem rolagem horizontal e cortaria um painel absoluto).
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Nomear campo Pydantic igual a um tipo importado | `date: Optional[date]` quebra em silêncio pro cliente (resposta 500 só na hora de servir, não no tsc) | Nunca nomear campo com o mesmo nome do tipo importado no módulo — usar `movement_date`, `order_date`, etc. |
+| Regra de insumo apontando pra SKU de kit | SKU de kit nunca aparece em `order_items` (some na explosão) — a regra nunca dispararia | Seletor de SKU da tela só mostra produtos reais, nunca kits |
+| Reintroduzir `normaliza_box` por prefixo "pró" sem checar exato primeiro | Colapsa as 4 caixas próprias numa bucket só de novo | Checar `s in CANONICAL_BOXES` antes de qualquer heurística de prefixo |
+| Editar nome/regra/apagar um insumo com `locked=True` | Quebra a promessa de "bate com o botão que a bipagem usa" | Servidor recusa com 400 independente do que a tela mostrar — nunca confiar só em esconder o botão |
+| Calcular consumo agregado (Resumo) e detalhado (Movimentos) com lógica separada | Os dois já divergiram uma vez durante o teste até eu unificar | Os dois têm que somar em cima de `_consumo_rows_regra()`, nunca duplicar a consulta |
+| `PER_ORDER`/`BOX_OCCURRENCE` numa seller de alto volume | Gera 1 linha por pedido de saída do período inteiro no extrato de Movimentos — pode crescer bastante | Aceito por ora, sem paginação (mesma filosofia de "resolver quando alguém sentir lentidão" já usada noutras telas). Primeiro lugar a olhar se reclamarem de lentidão nessa aba |
+
+**Testes:** 34 verificações E2E via TestClient contra SQLite descartável — as 4 caixas travadas
+nascem certas (nome, regra fixa), rejeição de rename/delete/regra em insumo travado com 400, saldo
+correto pelas 4 regras (incluindo NF cancelada não contar e caixa própria já usada antes do insumo
+existir gerando saldo negativo desde o início), soma do extrato de Movimentos batendo exatamente
+com a soma dos cards do Resumo, escopo admin/client. `tsc --noEmit` limpo. **Não testado
+visualmente no navegador** — evitado de propósito porque o dono do sistema já tinha o app rodando
+localmente na hora (risco de mexer no ambiente ao vivo); aprovado por mockup estático antes de
+implementar.
+
+---
+
 ## Mudanças Recentes — 13/09/2026 (2ª leva) — Migração pontual: 66 SKUs "-OE" da Purpose
 
 **Script único, não versionado** (`scratchpad` da sessão) — não é uma feature, é uma correção de
@@ -1191,10 +1321,12 @@ WMS Kiwkiw/
 │   │   ├── billing.py       ← Configurações de cobrança, relatório, export Excel
 │   │   ├── dashboard.py     ← Cockpit master e portal do seller
 │   │   ├── returns.py       ← Devoluções: modelo Excel, conferência e lançamento
+│   │   ├── client_supplies.py ← Insumos do Cliente: saldo estimado por regra, client-only
 │   │   └── settings.py      ← Configurações gerais + controle do folder_watcher
 │   └── services/
 │       ├── order_import.py  ← Importação de Excel de pedidos (lógica principal)
 │       ├── stock_manager.py ← Atualização de estoque, relatórios, histórico SKU
+│       ├── supply_calc.py   ← Cálculo do saldo estimado de Insumos do Cliente
 │       ├── pdf_generator.py ← PDFs de separação e expedição (ReportLab)
 │       ├── folder_watcher.py← Robô de pasta (background thread, ainda não em produção)
 │       ├── kit_handler.py   ← Expansão de kits em SKUs reais
@@ -1229,7 +1361,8 @@ WMS Kiwkiw/
 │   │       ├── Returns.tsx      ← Devoluções (planilha + lançamento direto)
 │   │       ├── Audit.tsx        ← Auditoria
 │   │       ├── Settings.tsx     ← Configurações do sistema
-│   │       └── SellerPortal.tsx ← Portal somente leitura para o seller (role=client)
+│   │       ├── SellerPortal.tsx ← Portal somente leitura para o seller (role=client)
+│   │       └── SellerSupplies.tsx ← Aba "Insumos" do Portal (saldo estimado, gerido pelo seller)
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vercel.json
@@ -1856,6 +1989,7 @@ esses números** (decisão do dono do sistema).
 | `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026).** `seller-params`/`seller-box-prices` (manager+, sem portão), `/billing/my/...` (Portal do seller, sem portão). Os outros 11 — `box-prices`, `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`) — exigem **admin + Acesso Protegido ao Financeiro liberado** (02/09/2026, ver `billing_access`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
+| `/client-supplies` | `routers/client_supplies.py` | **Insumos do Cliente (14/09/2026), só `client`** (o próprio seller_id) cria/edita/apaga; `admin` só lê via `?seller_id=`. CRUD de insumo/entrada/regra + `GET /client-supplies` (lista com saldo) e `GET /client-supplies/movements` (extrato combinado). **Nunca mexe em estoque nem faturamento** — saldo é estimativa calculada em `services/supply_calc.py` |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |
@@ -2623,4 +2757,6 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Painel flutuante (dropdown/autocomplete) dentro de tabela | Contêiner com `overflow-x-auto` **corta** qualquer painel absoluto, sem erro nenhum: os dados chegam do servidor e a lista simplesmente não aparece (aconteceu no seletor de SKU de Devoluções) | `createPortal` + `position: fixed` ancorado no campo, fechando ao rolar/redimensionar. Ver `SkuPicker` em [Returns.tsx](frontend/src/pages/Returns.tsx) |
 | Endpoint novo que grava a partir de uma conferência na tela | Validar só no `analyze` e confiar que o `lancar` recebe o que foi conferido — a chamada pode ser forjada e aqui o erro vira **estoque errado** | As duas rotas passam pela **mesma** função de validação (`_validate_rows` em `returns.py`), e o gravador revalida sempre |
 | Query/export novo de resumo de estoque (posição atual) | Se não passar por `get_stock_report` nem repetir o filtro de `discontinued_skus` (13/09/2026), SKU descontinuado volta a aparecer — já aconteceu nos exports CSV/Excel e no "Mais Vendidos" do portal, que consultam `StockPosition`/`stock_movements` direto | Toda consulta de "resumo" tem que excluir `discontinued_skus`; `stock_manager.get_stock_report` é a referência |
+| Schema Pydantic novo com um campo chamado igual ao seu próprio tipo | `date: Optional[date]` (ou `int`, `str` etc.) faz o `get_type_hints` resolver a anotação usando o namespace da própria classe — o campo vira `NoneType` e a resposta quebra em **todas** as linhas com `ResponseValidationError`, só na hora de servir de verdade (não aparece no `tsc` nem numa revisão rápida). Achado no schema de Insumos (14/09/2026), corrigido renomeando pra `movement_date` | Nunca nomear um campo igual ao tipo importado no topo do arquivo — `movement_date`, `order_date`, `created_at`, etc. |
+| Endpoint com trava de "campo travado" (nome/regra fixos) | Esconder o botão de editar na tela não impede uma chamada forjada — mesmo espírito da armadilha de Devoluções acima | O servidor recusa com 400 independente do que a UI mostrar (ver `locked` em `client_supplies.py`) |
 | Tratar SKU descontinuado igual "SKU sem produto cadastrado" | São dois motivos diferentes de segurar NF fora do manuseio, com tabelas e mensagens distintas — `card.held_orders` é a UNIÃO dos dois desde 13/09/2026 | Usar `missing_product_orders`/`discontinued_orders` (contagens separadas) nos badges e no `discontinued_skus` de `evaluate_orders_for_stock`, nunca misturar com `missing_skus` (que alimenta o modal de cadastro de produto) |

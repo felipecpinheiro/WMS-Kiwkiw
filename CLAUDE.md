@@ -39,6 +39,74 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 13/09/2026 (2ª leva) — Migração pontual: 66 SKUs "-OE" da Purpose
+
+**Script único, não versionado** (`scratchpad` da sessão) — não é uma feature, é uma correção de
+dado que **só vale para essa vez** (o próprio dono do sistema pediu assim). Reaproveita a tabela
+`discontinued_skus` da seção acima, feita minutos antes.
+
+**O problema:** a Purpose tem produtos duplicados com sufixo `-OE` — mesmo item, dois SKUs, estoque
+partido entre os dois (o padrão já era conhecido desde a conferência de 28/08/2026, ver
+`conferir-estoque-subido-vs-planilha`). O dono mandou uma lista de 66 SKUs `-OE` e pediu: somar o
+saldo do `-OE` no SKU sem sufixo e descontinuar o `-OE`.
+
+**Regra aplicada** (confirmada com o dono, incl. round-trip de esclarecimento no chat):
+- `Y = X sem o sufixo "-OE"` (ex.: `BB-CARD-OE` → `BB-CARD`) — confirmado por amostragem antes de
+  rodar: 65 dos 66 pares já tinham os dois produtos cadastrados com saldo real e coerente.
+- SKU de origem com saldo **zero** (nunca teve movimento) → só descontinua, **sem lançar nada**
+  (lançamento de quantidade 0 não existe nem faz sentido). Foram 6 dos 66.
+- SKU de origem com saldo **positivo** → Saída no X (zera) + Entrada no Y (soma).
+- SKU de origem com saldo **negativo** → **Entrada** no X (zera, de negativo pra 0) + **Saída** no Y
+  (o débito escondido no X passa a descontar do Y também — é a soma matemática correta, `novo_Y =
+  Y + X`, mesmo com X negativo). 3 dos 66 caíram aqui.
+- Observação padronizada: `"Saldo movido para o SKU <Y>"` no X, `"Saldo chegou do SKU <X>"` no Y.
+  Data = dia do lançamento (13/09/2026), não uma data retroativa.
+- `BLS-PTC-JM-OE` foi o único cujo destino (`BLS-PTC-JM`) **não existia** — produto criado na hora
+  (nome = nome do `-OE` sem o sufixo `" - Exclusivo"`, mesmo código de barras do `-OE` — padrão
+  observado em outros pares, ex. `BB-CARD-OE`/`BB-CARD` compartilham o mesmo `barcode_seller`).
+- Depois de mover o saldo, os 66 `-OE` entraram em `discontinued_skus` — bloqueados pra sempre
+  (sem "force"), resumo escondido, movimentação histórica preservada.
+
+**⚠️ Achado que ficou de fora, de propósito:** existem mais 6 SKUs `-OE` no catálogo da Purpose que
+**não estavam** na lista do dono (`BBJ-AZ-OE`, `BBJ-CR-OE`, `BBJ-MO-OE`, `BBJ-RS-OE`, `BBJ-VD-OE`,
+`EB-DEV-SL-OE`). Não foram tocados — decisão pendente do dono do sistema.
+
+**Execução:** dry-run primeiro (padrão do script — só grava com `--commit`), local (Postgres
+`wms_teste_indices`) aprovado pelo dono antes de ir pra produção. Backup de produção tirado antes:
+`wms_kiwkiw_2026-09-13_182603_pre_merge_purpose_oe.dump`.
+
+### ⚠️ Bug real, pego na hora: dois processos concorrentes corromperam 1 par
+
+Ao rodar contra produção pela primeira vez, o comando ficou em background (`timeout` da ferramenta)
+e a chamada seguinte tentou rodar de novo **encadeando um `&` dentro de outro background** — o
+processo "de dentro" continuou vivo, órfão, sem eu perceber, enquanto eu já tinha concluído (por uma
+leitura feita cedo demais) que nada tinha sido gravado. Rodei o script de novo por cima: as duas
+execuções ficaram escrevendo ao mesmo tempo.
+
+**Resultado:** dos 66 pares, **65 saíram perfeitos** (o segundo processo, ao consultar cada SKU,
+via a maioria já com saldo zerado — o outro processo tinha corrido na frente — e simplesmente
+pulava, sem duplicar nada: o script é seguro contra isso, "saldo já é zero" não gera lançamento).
+Só **`BB-CARD-OE`/`BB-CARD`** pegou os dois processos no mesmo instante: cada um leu o saldo antes
+do outro commitar, calculou o mesmo valor final e escreveu — resultado, **2 `StockMovement` iguais
+de cada lado**, mas o saldo em `stock_positions` ficou **certo** por coincidência de "lost update"
+(as duas escritas convergiram pro mesmo total absoluto). Achado só por auditoria explícita
+comparando os 66 pares um a um contra os números do dry-run limpo — **o saldo bater não prova que
+o histórico bate**. Corrigido apagando o par de movimentos mais recente (2 linhas), mantendo o par
+original — conferido de novo, 66/66 limpos depois.
+
+**Lição para não repetir:** nunca encadear `&`/nohup dentro de uma chamada já marcada como
+`run_in_background` — dá pra perder o rastro do processo e ele continuar vivo, invisível, disputando
+o mesmo banco. Rodar contra produção uma única vez, deixar o `run_in_background` nativo da própria
+ferramenta cuidar da espera, e **sempre auditar par a par depois** — não confiar só no "COMMIT
+REALIZADO" nem só no saldo final batendo.
+
+**Verificação final:** 66/66 SKUs de origem com saldo 0, contagem de `stock_movements` com observação
+`Saldo...` bateu exatamente com o esperado (118 = 60 pares que precisaram mover × 2 lados, os 6 de
+saldo zero não contam), 0 duplicata em `discontinued_skus`, produto novo criado 1x só, e checagem via
+API confirmando bloqueio de movimentação em `BB-CARD-OE` e o SKU novo aparecendo no resumo.
+
+---
+
 ## Mudanças Recentes — 13/09/2026 — SKUs Descontinuados
 
 Pedido do dono do sistema numa reunião com a Purpose: alguns SKUs pararam de ser vendidos

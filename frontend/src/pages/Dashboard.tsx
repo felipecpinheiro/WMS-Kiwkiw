@@ -631,6 +631,170 @@ function PendingSkuModal({ missing, onClose, onSave }: {
   );
 }
 
+/** Modal 3 — SKUs descontinuados travando NF, agrupado por seller/SKU (14/09/2026).
+    Duas ações independentes, sem batch: "Reverter descontinuação" reusa o
+    MESMO endpoint da aba Descontinuados do seller (DELETE .../discontinued-skus/{sku},
+    manager+admin) — libera o SKU pra TODO o seller, não só esta NF, e já
+    reaplica o estoque pendente sozinho (release_pending_orders_for_sku). Já
+    "Cancelar" reusa o MESMO endpoint de inativação de NF do Scanner/Pedidos
+    (admin only, pede motivo) — afeta só aquela NF, o SKU continua
+    descontinuado pra tudo mais. Nenhum endpoint novo no backend. */
+function PendingDiscontinuedModal({ orders, isAdmin, onClose, onReverted, onCancelOrder }: {
+  orders: PendingStockOrderInfo[];
+  isAdmin: boolean;
+  onClose: () => void;
+  onReverted: (sellerId: number, sku: string) => Promise<void>;
+  onCancelOrder: (orderId: number, reason: string) => Promise<void>;
+}) {
+  const groups = useMemo(() => {
+    const map = new Map<string, { seller_id: number; seller_name: string; sku: string; orders: PendingStockOrderInfo[] }>();
+    for (const o of orders) {
+      for (const sku of o.discontinued_skus) {
+        const key = `${o.seller_id}:${sku}`;
+        if (!map.has(key)) {
+          map.set(key, { seller_id: o.seller_id, seller_name: o.seller_name || 'Sem seller', sku, orders: [] });
+        }
+        map.get(key)!.orders.push(o);
+      }
+    }
+    return groupBySeller(Array.from(map.values()));
+  }, [orders]);
+
+  const [revertingKey, setRevertingKey] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<PendingStockOrderInfo | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleRevert = async (sellerId: number, sku: string) => {
+    const key = `${sellerId}:${sku}`;
+    setRevertingKey(key);
+    try { await onReverted(sellerId, sku); }
+    finally { setRevertingKey(null); }
+  };
+
+  const handleCancel = async () => {
+    if (!cancelTarget || !cancelReason.trim()) return;
+    setCancelling(true);
+    try {
+      await onCancelOrder(cancelTarget.order_id, cancelReason.trim());
+      setCancelTarget(null);
+      setCancelReason('');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-4xl flex flex-col" style={{ maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line-soft flex-shrink-0">
+          <div>
+            <h3 className="font-semibold text-t1 text-sm">🚫 Resolver SKUs descontinuados</h3>
+            <p className="text-[11px] text-t4 mt-0.5">
+              {orders.length} NF(s) travada(s) por SKU descontinuado
+            </p>
+          </div>
+          <button onClick={onClose} className="text-t4 hover:text-t3"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 pt-3 flex-shrink-0">
+          <div className="text-[11px] text-violet-300/90 bg-violet-900/20 border border-violet-500/25 rounded-lg px-3 py-2">
+            <b>Reverter descontinuação</b> volta o SKU ao normal pra TODO o seller (não só esta NF)
+            e baixa sozinho tudo que estava pendente por causa dele. <b>Cancelar</b> (✕ ao lado da NF)
+            afeta só aquela NF — ela vira inativa, não baixa estoque, e o SKU continua descontinuado
+            pra tudo mais.{!isAdmin && ' Cancelar NF individual é só para admin.'}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0 space-y-3">
+          {groups.map(g => (
+            <div key={g.seller_id}>
+              <div className="text-[11px] font-semibold text-violet-300/80 px-1 py-1 border-b border-line-soft">
+                {g.seller_name}
+              </div>
+              <div className="space-y-2 mt-1">
+                {g.rows.map(r => {
+                  const key = `${r.seller_id}:${r.sku}`;
+                  return (
+                    <div key={key} className="rounded-lg border border-line-soft px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-mono text-t2">{r.sku}</span>
+                        <button
+                          onClick={() => handleRevert(r.seller_id, r.sku)}
+                          disabled={revertingKey === key}
+                          className="text-[11px] font-medium text-t1 bg-ok/80 hover:bg-ok rounded-lg px-2.5 py-1 transition disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {revertingKey === key ? 'Revertendo…' : '↩ Reverter descontinuação'}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {r.orders.map(o => (
+                          <span key={o.order_id} className="inline-flex items-center gap-1 text-[11px] font-mono text-t3 bg-surface-2 rounded px-2 py-0.5">
+                            {o.nf_number}
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => { setCancelTarget(o); setCancelReason(''); }}
+                                title="Cancelar só esta NF"
+                                className="text-bad hover:text-bad/70 leading-none"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-end px-5 py-4 border-t border-line-soft flex-shrink-0">
+          <button onClick={onClose}
+                  className="px-4 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
+            Fechar
+          </button>
+        </div>
+      </div>
+
+      {/* Confirmação de cancelamento de UMA NF — mesmo padrão já usado em Orders.tsx/Scanner.tsx */}
+      {cancelTarget && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4" onClick={() => setCancelTarget(null)}>
+          <div className="bg-surface border border-line rounded-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            <h4 className="text-sm font-semibold text-t1 mb-1">Cancelar NF {cancelTarget.nf_number}?</h4>
+            <p className="text-xs text-t4 mb-3">
+              A NF vira inativa e não baixa estoque. Reversível depois pela tela de Pedidos (Reativar).
+            </p>
+            <textarea
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              placeholder="Motivo (obrigatório)…"
+              rows={2}
+              className="w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-xs text-t2 outline-none focus:border-violet-500"
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setCancelTarget(null)}
+                      className="px-3 py-1.5 text-xs text-t3 border border-line rounded-lg hover:bg-surface-2 transition">
+                Voltar
+              </button>
+              <button
+                onClick={handleCancel}
+                disabled={cancelling || !cancelReason.trim()}
+                className="px-3 py-1.5 text-xs bg-bad text-t1 rounded-lg hover:bg-bad/80 transition disabled:opacity-50"
+              >
+                {cancelling ? 'Cancelando…' : 'Cancelar NF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -690,6 +854,8 @@ export default function DashboardPage() {
   // disponíveis ao mesmo tempo; cada botão some quando aquela pendência acaba.
   const [pendingCarrierOpen, setPendingCarrierOpen] = useState(false);
   const [pendingSkuOpen, setPendingSkuOpen] = useState(false);
+  // SKUs descontinuados travando NF (14/09/2026) — terceiro modal, mesmo espírito.
+  const [pendingDiscontinuedOpen, setPendingDiscontinuedOpen] = useState(false);
   // "Tentar novamente" (19/08/2026): NFs sem motivo aparente (can_apply=true)
   // — nada bloqueia, só nunca foram reaplicadas.
   const [retryingPendingStock, setRetryingPendingStock] = useState(false);
@@ -1181,6 +1347,35 @@ export default function DashboardPage() {
     }
   };
 
+  // SKUs descontinuados travando NF (14/09/2026) — reaproveita os dois
+  // endpoints que já existem (aba Descontinuados do seller / inativar NF),
+  // nenhuma lógica de estoque nova aqui.
+  const handleRevertDiscontinued = async (sellerId: number, sku: string) => {
+    try {
+      const { data } = await cadastrosApi.removeDiscontinuedSku(sellerId, sku);
+      const applied = data?.stock?.applied?.length ?? 0;
+      toast.success(
+        `SKU ${sku} voltou a ser vendido` + (applied ? ` — ${applied} NF(s) baixaram estoque` : ''),
+        { duration: 6000 },
+      );
+      await afterPendingResolved(data?.stock?.negatives ?? [], applied);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao reverter descontinuação');
+    }
+  };
+
+  const handleCancelDiscontinuedOrder = async (orderId: number, reason: string) => {
+    try {
+      const res = await scanningApi.deactivateOrder(orderId, reason);
+      toast.success(res.data.message || 'NF cancelada');
+      qc.invalidateQueries('orders-pending-stock');
+      qc.invalidateQueries(['dashboard', targetDate]);
+      await refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao cancelar NF');
+    }
+  };
+
   const handleCarrierSave = async (updates: Record<number, string>) => {
     const { ordersApi } = await import('../api');
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
@@ -1282,6 +1477,10 @@ export default function DashboardPage() {
         const blocked = pendingStock!.pending_orders.filter(p => !p.can_apply);
         const semTransp = blocked.filter(p => p.missing_carrier).length;
         const semProduto = blocked.filter(p => p.missing_skus.length > 0).length;
+        // SKU descontinuado (14/09/2026) — antes ficava invisível: a NF
+        // aparecia travada sem dizer o motivo.
+        const discontinuedOrders = blocked.filter(p => p.discontinued_skus.length > 0);
+        const semSkuDescontinuado = discontinuedOrders.length;
         return (
           <div className="flex items-start gap-3 bg-bad-soft border border-bad/30 rounded-xl px-4 py-3">
             <span className="text-bad mt-0.5 flex-shrink-0">📦</span>
@@ -1293,12 +1492,21 @@ export default function DashboardPage() {
                 O estoque desses sellers está desatualizado enquanto isso. Resolva a pendência e a
                 baixa acontece sozinha — não precisa reimportar nada.
               </p>
-              {(semTransp > 0 || semProduto > 0) && (
+              {(semTransp > 0 || semProduto > 0 || semSkuDescontinuado > 0) && (
                 <p className="text-xs text-bad/60 mt-1">
                   {[
                     semTransp ? `${semTransp} sem transportadora` : null,
                     semProduto ? `${semProduto} com SKU sem produto cadastrado` : null,
+                    semSkuDescontinuado ? `${semSkuDescontinuado} com SKU descontinuado` : null,
                   ].filter(Boolean).join(' · ')}
+                </p>
+              )}
+              {semSkuDescontinuado > 0 && (
+                <p className="text-xs text-bad/60 mt-1">
+                  {discontinuedOrders.slice(0, 10).map(p =>
+                    `${p.nf_number} (${p.seller_name ?? 'sem seller'} — ${p.discontinued_skus.join(', ')})`
+                  ).join(' · ')}
+                  {discontinuedOrders.length > 10 && ` … e mais ${discontinuedOrders.length - 10}`}
                 </p>
               )}
               {stuck.length > 0 && (
@@ -1331,6 +1539,14 @@ export default function DashboardPage() {
                   className="text-xs font-medium text-t1 bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
                 >
                   📦 Resolver SKUs sem produto
+                </button>
+              )}
+              {semSkuDescontinuado > 0 && (
+                <button
+                  onClick={() => setPendingDiscontinuedOpen(true)}
+                  className="text-xs font-medium text-t1 bg-red-600/80 hover:bg-red-600 rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                >
+                  🚫 Resolver SKUs descontinuados
                 </button>
               )}
               {stuck.length > 0 && (
@@ -2050,6 +2266,15 @@ export default function DashboardPage() {
           missing={pendingStock?.missing_products ?? []}
           onClose={() => setPendingSkuOpen(false)}
           onSave={handleBatchSkuSave}
+        />
+      )}
+      {pendingDiscontinuedOpen && (
+        <PendingDiscontinuedModal
+          orders={(pendingStock?.pending_orders ?? []).filter(p => p.discontinued_skus.length > 0)}
+          isAdmin={user.role === 'admin'}
+          onClose={() => setPendingDiscontinuedOpen(false)}
+          onReverted={handleRevertDiscontinued}
+          onCancelOrder={handleCancelDiscontinuedOrder}
         />
       )}
 

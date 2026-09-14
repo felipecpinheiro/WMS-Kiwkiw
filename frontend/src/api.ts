@@ -325,6 +325,9 @@ export interface PendingStockOrderInfo {
   customer_name: string | null;
   missing_carrier: boolean;
   missing_skus: string[];
+  // SKUs descontinuados travando esta NF (14/09/2026) — diferente de
+  // missing_skus: o SKU já tem produto, só está bloqueado de propósito.
+  discontinued_skus: string[];
   // true = nada bloqueia mais essa NF, mas ela nunca foi reaplicada — ver
   // POST /orders/pending-stock/retry (19/08/2026).
   can_apply: boolean;
@@ -338,10 +341,18 @@ export interface MissingProductInfo {
   nf_numbers: string[];
 }
 
+export interface DiscontinuedStockInfo {
+  seller_id: number;
+  seller_name: string | null;
+  sku: string;
+  nf_numbers: string[];
+}
+
 export interface StockApplyReport {
   applied_orders: number;
   pending_orders: PendingStockOrderInfo[];
   missing_products: MissingProductInfo[];
+  discontinued_products?: DiscontinuedStockInfo[];
   negatives: NegativeStockInfo[];
 }
 

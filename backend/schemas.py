@@ -913,6 +913,12 @@ class PendingStockOrderInfo(BaseModel):
     customer_name: Optional[str] = None
     missing_carrier: bool = False
     missing_skus: List[str] = []
+    # SKUs descontinuados (13/09/2026) que estão travando esta NF — separado de
+    # missing_skus de propósito: o SKU já tem produto, só está bloqueado. Ver
+    # CLAUDE.md, seção "SKUs Descontinuados". Populado em 14/09/2026 (antes o
+    # dado existia em evaluate_orders_for_stock mas nunca chegava aqui — a NF
+    # aparecia travada sem dizer o motivo).
+    discontinued_skus: List[str] = []
     # True = nada bloqueia mais esta NF (transportadora ok, SKUs cadastrados),
     # mas ela nunca foi reaplicada — fica "presa" sem motivo visível (19/08/2026).
     # Acontece quando o SKU que faltava foi cadastrado por um caminho em lote
@@ -937,11 +943,20 @@ class MissingProductInfo(BaseModel):
     nf_numbers: List[str] = []
 
 
+class DiscontinuedStockInfo(BaseModel):
+    """SKU descontinuado que está segurando a baixa de estoque (14/09/2026)."""
+    seller_id: int
+    seller_name: Optional[str] = None
+    sku: str
+    nf_numbers: List[str] = []
+
+
 class StockApplyReport(BaseModel):
     """Resultado da baixa de estoque — usado no import e no destravamento."""
     applied_orders: int = 0
     pending_orders: List[PendingStockOrderInfo] = []
     missing_products: List[MissingProductInfo] = []
+    discontinued_products: List[DiscontinuedStockInfo] = []
     negatives: List[NegativeStockInfo] = []
 
 

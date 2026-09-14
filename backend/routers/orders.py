@@ -554,7 +554,7 @@ def list_pending_stock_orders(
 
     orders = q.all()
 
-    pending, missing = [], {}
+    pending, missing, discontinued = [], {}, {}
 
     def _add_missing(o, sku):
         key = (o.seller_id, sku)
@@ -569,6 +569,18 @@ def list_pending_stock_orders(
         if o.nf_number not in missing[key].nf_numbers:
             missing[key].nf_numbers.append(o.nf_number)
 
+    def _add_discontinued(o, sku):
+        key = (o.seller_id, sku)
+        if key not in discontinued:
+            discontinued[key] = schemas.DiscontinuedStockInfo(
+                seller_id=o.seller_id,
+                seller_name=o.seller.trade_name if o.seller else None,
+                sku=sku,
+                nf_numbers=[],
+            )
+        if o.nf_number not in discontinued[key].nf_numbers:
+            discontinued[key].nf_numbers.append(o.nf_number)
+
     if orders:
         evaluation = evaluate_orders_for_stock(orders, db)
         for o in orders:
@@ -581,10 +593,13 @@ def list_pending_stock_orders(
                 customer_name=o.customer_name,
                 missing_carrier=ev["missing_carrier"],
                 missing_skus=ev["missing_skus"],
+                discontinued_skus=ev["discontinued_skus"],
                 can_apply=ev["can_apply"],
             ))
             for sku in ev["missing_skus"]:
                 _add_missing(o, sku)
+            for sku in ev["discontinued_skus"]:
+                _add_discontinued(o, sku)
 
     # NFs de ENTRADA seguradas por SKU sem produto — mesma pendência da saída,
     # mas transportadora não bloqueia entrada e não há "reprocessar"
@@ -614,6 +629,7 @@ def list_pending_stock_orders(
         applied_orders=0,
         pending_orders=pending,
         missing_products=list(missing.values()),
+        discontinued_products=list(discontinued.values()),
         negatives=[],
     )
 
@@ -659,6 +675,7 @@ def retry_pending_stock_orders(
 
     pending = [schemas.PendingStockOrderInfo(**p, can_apply=False) for p in report["pending"]]
     missing: dict = {}
+    discontinued: dict = {}
     for p in report["pending"]:
         for sku in p["missing_skus"]:
             key = (p["seller_id"], sku)
@@ -669,11 +686,21 @@ def retry_pending_stock_orders(
                 )
             if p["nf_number"] not in missing[key].nf_numbers:
                 missing[key].nf_numbers.append(p["nf_number"])
+        for sku in p.get("discontinued_skus", []):
+            key = (p["seller_id"], sku)
+            if key not in discontinued:
+                discontinued[key] = schemas.DiscontinuedStockInfo(
+                    seller_id=p["seller_id"], seller_name=p["seller_name"],
+                    sku=sku, nf_numbers=[],
+                )
+            if p["nf_number"] not in discontinued[key].nf_numbers:
+                discontinued[key].nf_numbers.append(p["nf_number"])
 
     return schemas.StockApplyReport(
         applied_orders=len(report["applied"]),
         pending_orders=pending,
         missing_products=list(missing.values()),
+        discontinued_products=list(discontinued.values()),
         negatives=[schemas.NegativeStockInfo(**n) for n in report["negatives"]],
     )
 

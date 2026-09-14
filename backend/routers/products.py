@@ -23,7 +23,7 @@ from ..services.order_import import _build_seller_alias_map
 from ..services.stock_manager import (
     release_pending_orders_for_sku, release_pending_orders_for_skus,
     list_discontinued_skus, preview_discontinue_skus, confirm_discontinue_skus,
-    remove_discontinued_sku,
+    remove_discontinued_sku, preview_reactivate_skus, confirm_reactivate_skus,
 )
 from ..services.excel_utils import ensure_xlsx_bytes
 from .. import models, schemas
@@ -2445,3 +2445,70 @@ def delete_discontinued_sku(
     ))
     db.commit()
     return {"removed": True, "stock": result["stock"]}
+
+
+@router.post("/sellers/{seller_id}/discontinued-skus/reactivate-preview")
+def reactivate_preview_discontinued_skus(
+    seller_id: int,
+    body: dict = Body(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Confere a lista colada (uma linha por SKU) SEM gravar nada, para o modo
+    "Reativar" em lote da aba Descontinuados — espelha o `/analyze` de
+    descontinuar, mas o critério aqui é o SKU estar descontinuado agora.
+    """
+    if not db.query(models.Seller.id).filter(models.Seller.id == seller_id).first():
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    raw = body.get("skus", [])
+    if isinstance(raw, str):
+        raw = raw.splitlines()
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail="'skus' deve ser uma lista ou texto multi-linha")
+
+    return preview_reactivate_skus(db, seller_id, raw)
+
+
+@router.post("/sellers/{seller_id}/discontinued-skus/reactivate-confirm")
+def reactivate_confirm_discontinued_skus(
+    seller_id: int,
+    body: dict = Body(...),
+    current_user: models.User = Depends(require_manager_or_above),
+    db: Session = Depends(get_db),
+):
+    """
+    Grava o lote de reativação. Revalida do zero (não confia no preview do
+    frontend) — qualquer SKU que não esteja descontinuado recusa o lote
+    inteiro com 422, igual o `/reactivate-preview` já sinalizou. 1 AuditLog
+    para o lote inteiro (mesmo padrão do `/confirm` de descontinuar).
+    """
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+
+    raw = body.get("skus", [])
+    if isinstance(raw, str):
+        raw = raw.splitlines()
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=422, detail="'skus' é obrigatório")
+
+    try:
+        reactivated = confirm_reactivate_skus(db, seller_id, raw, operator_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if reactivated:
+        db.add(models.AuditLog(
+            entity_type="DiscontinuedSku",
+            entity_id=seller_id,
+            action="DELETE",
+            detail=(
+                f"SKU(s) voltaram a ser vendidos em {seller.trade_name}: "
+                f"{', '.join(reactivated)}"
+            ),
+            user_id=current_user.id,
+        ))
+    db.commit()
+    return {"reactivated": reactivated, "count": len(reactivated)}

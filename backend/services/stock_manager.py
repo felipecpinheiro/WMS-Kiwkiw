@@ -1113,6 +1113,78 @@ def remove_discontinued_sku(
     return {"removed": True, "stock": report}
 
 
+def preview_reactivate_skus(db: Session, seller_id: int, raw_skus: List[str]) -> Dict:
+    """
+    Fase 1 (não grava nada) do REATIVAR em lote — espelha `preview_discontinue_skus`,
+    mas confere contra `DiscontinuedSku` em vez de `Product`: aqui o que precisa
+    "bater" é o SKU estar atualmente descontinuado, não ter produto cadastrado.
+
+    Mesma regra do dono do sistema: erro de digitação bloqueia o lote inteiro —
+    `valid` só vem True quando TODOS os SKUs colados estão descontinuados agora.
+    """
+    skus = [s.strip() for s in raw_skus if s and s.strip()]
+    seen = set()
+    skus_dedup = []
+    for s in skus:
+        if s not in seen:
+            seen.add(s)
+            skus_dedup.append(s)
+
+    if not skus_dedup:
+        return {"rows": [], "valid": False}
+
+    entries = {
+        r.sku: r.discontinued_at for r in db.query(
+            models.DiscontinuedSku.sku, models.DiscontinuedSku.discontinued_at,
+        ).filter(
+            models.DiscontinuedSku.seller_id == seller_id,
+            models.DiscontinuedSku.sku.in_(skus_dedup),
+        ).all()
+    }
+
+    rows = []
+    all_found = True
+    for sku in skus_dedup:
+        found = sku in entries
+        if not found:
+            all_found = False
+        rows.append({
+            "sku": sku,
+            "found": found,
+            "discontinued_at": entries.get(sku),
+        })
+
+    return {"rows": rows, "valid": all_found}
+
+
+def confirm_reactivate_skus(
+    db: Session,
+    seller_id: int,
+    raw_skus: List[str],
+    operator_id: Optional[int] = None,
+) -> List[str]:
+    """
+    Fase 2 do REATIVAR em lote: revalida do zero (a lista pode ter sido
+    forjada) e recusa o lote inteiro se algum SKU não estiver descontinuado.
+    Reaproveita `remove_discontinued_sku` por SKU — mesma reversão do botão
+    individual (apaga a linha e libera NF pendente por causa dele).
+
+    Devolve os SKUs efetivamente reativados (para o AuditLog do lote).
+    """
+    preview = preview_reactivate_skus(db, seller_id, raw_skus)
+    if not preview["valid"]:
+        invalid = [r["sku"] for r in preview["rows"] if not r["found"]]
+        raise ValueError(f"SKU(s) não descontinuado(s) no seller: {', '.join(invalid)}")
+
+    reactivated = []
+    for row in preview["rows"]:
+        result = remove_discontinued_sku(db, seller_id, row["sku"], operator_id=operator_id)
+        if result["removed"]:
+            reactivated.append(row["sku"])
+
+    return reactivated
+
+
 def reverse_stock_for_order(
     order,
     db: Session,

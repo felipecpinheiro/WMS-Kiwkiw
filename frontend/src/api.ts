@@ -1021,6 +1021,10 @@ export const cadastrosApi = {
     api.post(`/cadastros/sellers/${sellerId}/discontinued-skus/confirm`, { skus }),
   removeDiscontinuedSku: (sellerId: number, sku: string) =>
     api.delete(`/cadastros/sellers/${sellerId}/discontinued-skus/${encodeURIComponent(sku)}`),
+  previewReactivateSkus: (sellerId: number, skus: string[]) =>
+    api.post(`/cadastros/sellers/${sellerId}/discontinued-skus/reactivate-preview`, { skus }),
+  confirmReactivateSkus: (sellerId: number, skus: string[]) =>
+    api.post(`/cadastros/sellers/${sellerId}/discontinued-skus/reactivate-confirm`, { skus }),
 };
 
 export interface DiscontinuedSkuRow {
@@ -1034,6 +1038,12 @@ export interface DiscontinuedSkuPreviewRow {
   found: boolean;
   current_stock: number | null;
   already_discontinued: boolean;
+}
+
+export interface ReactivateSkuPreviewRow {
+  sku: string;
+  found: boolean;
+  discontinued_at: string | null;
 }
 
 // ============================================================

@@ -11,7 +11,7 @@ import {
   Building2, Plus, Pencil, Trash2, X, Check, Store,
   ClipboardList, Upload, ExternalLink, Search, Wrench,
 } from 'lucide-react';
-import { cadastrosApi, billingApi, CANONICAL_BOXES, DiscontinuedSkuRow, DiscontinuedSkuPreviewRow } from '../api';
+import { cadastrosApi, billingApi, CANONICAL_BOXES, DiscontinuedSkuRow, DiscontinuedSkuPreviewRow, ReactivateSkuPreviewRow } from '../api';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import FaixaPedidosEditor from '../components/FaixaPedidosEditor';
@@ -155,10 +155,12 @@ export default function SellersPage() {
   // preço de caixa por seller (aba "Caixas"): { box_key: valor como string }
   const [boxPrices, setBoxPrices]     = useState<Record<string, string>>({});
   const [saving, setSaving]           = useState(false);
-  // aba "Descontinuados" (13/09/2026)
+  // aba "Descontinuados" (13/09/2026) + toggle Desativar/Reativar em lote (14/09/2026)
   const [discontinuedList, setDiscontinuedList] = useState<DiscontinuedSkuRow[]>([]);
+  const [discontinuedMode, setDiscontinuedMode] = useState<'deactivate' | 'reactivate'>('deactivate');
   const [discontinuedPaste, setDiscontinuedPaste] = useState('');
   const [discontinuedPreview, setDiscontinuedPreview] = useState<DiscontinuedSkuPreviewRow[] | null>(null);
+  const [reactivatePreview, setReactivatePreview] = useState<ReactivateSkuPreviewRow[] | null>(null);
   const [discontinuedBusy, setDiscontinuedBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -205,8 +207,10 @@ export default function SellersPage() {
     setExpFile(null);
     setBoxPrices({});
     setDiscontinuedList([]);
+    setDiscontinuedMode('deactivate');
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
+    setReactivatePreview(null);
     setShowModal(true);
   };
 
@@ -216,8 +220,10 @@ export default function SellersPage() {
     setExpFile(null);
     setBoxPrices({});
     setDiscontinuedList([]);
+    setDiscontinuedMode('deactivate');
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
+    setReactivatePreview(null);
     // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
@@ -291,6 +297,38 @@ export default function SellersPage() {
       toast.success(`${res.data.count} SKU(s) descontinuado(s)`);
       setDiscontinuedPaste('');
       setDiscontinuedPreview(null);
+      await reloadDiscontinued();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Falha ao confirmar');
+    } finally {
+      setDiscontinuedBusy(false);
+    }
+  };
+
+  const handleAnalyzeReactivate = async () => {
+    if (!editId) return;
+    const skus = discontinuedPaste.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (skus.length === 0) return;
+    setDiscontinuedBusy(true);
+    try {
+      const res = await cadastrosApi.previewReactivateSkus(editId, skus);
+      setReactivatePreview(res.data.rows || []);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Falha ao verificar os SKUs');
+    } finally {
+      setDiscontinuedBusy(false);
+    }
+  };
+
+  const handleConfirmReactivate = async () => {
+    if (!editId || !reactivatePreview) return;
+    const skus = reactivatePreview.map(r => r.sku);
+    setDiscontinuedBusy(true);
+    try {
+      const res = await cadastrosApi.confirmReactivateSkus(editId, skus);
+      toast.success(`${res.data.count} SKU(s) reativado(s)`);
+      setDiscontinuedPaste('');
+      setReactivatePreview(null);
       await reloadDiscontinued();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail?.message || err?.response?.data?.detail || 'Falha ao confirmar');
@@ -788,37 +826,75 @@ export default function SellersPage() {
                       normalmente na aba Movimentações. É reversível a qualquer momento.
                     </p>
 
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setDiscontinuedMode('deactivate'); setDiscontinuedPaste(''); setDiscontinuedPreview(null); setReactivatePreview(null); }}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition ${
+                          discontinuedMode === 'deactivate'
+                            ? 'bg-bad text-white border-bad'
+                            : 'border-line text-t3 hover:bg-surface-2'
+                        }`}
+                      >
+                        Desativar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDiscontinuedMode('reactivate'); setDiscontinuedPaste(''); setDiscontinuedPreview(null); setReactivatePreview(null); }}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition ${
+                          discontinuedMode === 'reactivate'
+                            ? 'bg-ok text-white border-ok'
+                            : 'border-line text-t3 hover:bg-surface-2'
+                        }`}
+                      >
+                        Reativar
+                      </button>
+                    </div>
+
                     <div>
                       <label className="block text-xs text-t3 mb-1">Colar SKUs (um por linha)</label>
                       <textarea
                         value={discontinuedPaste}
-                        onChange={e => { setDiscontinuedPaste(e.target.value); setDiscontinuedPreview(null); }}
+                        onChange={e => {
+                          setDiscontinuedPaste(e.target.value);
+                          setDiscontinuedPreview(null);
+                          setReactivatePreview(null);
+                        }}
                         rows={5}
                         className={cls}
                         style={clsStyle}
-                        placeholder={'CANECA-HEROI\nCAMISETA-P-2023'}
+                        placeholder={discontinuedMode === 'deactivate' ? 'CANECA-HEROI\nCAMISETA-P-2023' : 'CANECA-HEROI'}
                       />
                       <div className="flex gap-2 mt-2">
                         <button
-                          onClick={handleAnalyzeDiscontinued}
+                          onClick={discontinuedMode === 'deactivate' ? handleAnalyzeDiscontinued : handleAnalyzeReactivate}
                           disabled={discontinuedBusy || !discontinuedPaste.trim()}
                           className="px-3 py-1.5 text-xs border border-line rounded-lg text-t3 hover:bg-surface-2 transition disabled:opacity-50"
                         >
                           Verificar
                         </button>
-                        {discontinuedPreview && (
+                        {discontinuedMode === 'deactivate' && discontinuedPreview && (
                           <button
                             onClick={handleConfirmDiscontinued}
                             disabled={discontinuedBusy || discontinuedPreview.some(r => !r.found)}
-                            className="px-3 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-500 transition disabled:opacity-50"
+                            className="px-3 py-1.5 text-xs bg-bad text-white rounded-lg hover:opacity-90 transition disabled:opacity-50"
                           >
-                            Confirmar
+                            Confirmar desativação
+                          </button>
+                        )}
+                        {discontinuedMode === 'reactivate' && reactivatePreview && (
+                          <button
+                            onClick={handleConfirmReactivate}
+                            disabled={discontinuedBusy || reactivatePreview.some(r => !r.found)}
+                            className="px-3 py-1.5 text-xs bg-ok text-white rounded-lg hover:opacity-90 transition disabled:opacity-50"
+                          >
+                            Confirmar reativação
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {discontinuedPreview && (
+                    {discontinuedMode === 'deactivate' && discontinuedPreview && (
                       <div className="border border-line-soft rounded-lg overflow-hidden">
                         <div className="grid grid-cols-[1fr_100px_140px] gap-2 px-3 py-2 bg-surface-2 text-[10px] uppercase text-t4">
                           <span>SKU</span><span className="text-right">Saldo atual</span><span>Situação</span>
@@ -844,6 +920,35 @@ export default function SellersPage() {
                           <p className="text-xs text-bad px-3 py-2 border-t border-line-soft">
                             Corrija ou remova os SKUs não encontrados antes de confirmar — nada será
                             gravado enquanto houver erro na lista.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {discontinuedMode === 'reactivate' && reactivatePreview && (
+                      <div className="border border-line-soft rounded-lg overflow-hidden">
+                        <div className="grid grid-cols-[1fr_140px_140px] gap-2 px-3 py-2 bg-surface-2 text-[10px] uppercase text-t4">
+                          <span>SKU</span><span>Descontinuado desde</span><span>Situação</span>
+                        </div>
+                        {reactivatePreview.map((r, i) => (
+                          <div key={i}
+                            className={`grid grid-cols-[1fr_140px_140px] gap-2 px-3 py-1.5 items-center border-t text-sm ${
+                              r.found ? 'border-line-soft' : 'border-red-500/30 bg-red-500/10'
+                            }`}
+                          >
+                            <span className={r.found ? 'text-t2' : 'text-bad font-medium'}>{r.sku}</span>
+                            <span className="text-t3">
+                              {r.discontinued_at ? new Date(r.discontinued_at).toLocaleDateString('pt-BR') : '—'}
+                            </span>
+                            <span className="text-xs">
+                              {r.found ? 'OK' : 'Não está descontinuado'}
+                            </span>
+                          </div>
+                        ))}
+                        {reactivatePreview.some(r => !r.found) && (
+                          <p className="text-xs text-bad px-3 py-2 border-t border-line-soft">
+                            Corrija ou remova os SKUs que não estão descontinuados antes de confirmar
+                            — nada será gravado enquanto houver erro na lista.
                           </p>
                         )}
                       </div>

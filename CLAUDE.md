@@ -39,6 +39,53 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 14/09/2026 (2ª leva) — Reativar SKU descontinuado em lote (toggle na aba Descontinuados)
+
+Até aqui, reverter um SKU descontinuado só dava um por um (botão "Reverter" na lista "Já
+descontinuados"). Pedido do dono do sistema: colar VÁRIOS SKUs de uma vez para reativar, no mesmo
+espírito de colar/conferir/confirmar já usado para descontinuar.
+
+**A mesma caixa de colar serve para os dois sentidos agora.** Um toggle "Desativar"/"Reativar"
+(2 pills) foi acrescentado acima da caixa de texto, na aba **Descontinuados** do cadastro do
+seller — trocar o modo limpa o texto colado e qualquer preview pendente. Cor diferencia os dois
+sentidos: **vermelho** (`bg-bad`/`text-bad`) para Desativar, **verde** (`bg-ok`/`text-ok`) para
+Reativar — reaproveitando os tokens semânticos que o arquivo já usa, no lugar do roxo genérico que
+o botão "Confirmar" de descontinuar usava antes.
+
+**Regra de validação igual à de descontinuar** (mesma decisão do dono, por consistência): SKU
+colado que não estiver descontinuado no momento **bloqueia o lote inteiro** — a linha fica
+destacada em vermelho no preview e o botão "Confirmar reativação" trava até tudo bater. O preview
+de reativar mostra "Descontinuado desde" (a data) em vez do saldo atual, que é o que o preview de
+descontinuar mostra.
+
+**Backend:** dois endpoints novos, ao lado dos de descontinuar, **sem mexer no `DELETE`
+individual** (que continua servindo o botão "Reverter" da lista):
+- `POST /cadastros/sellers/{seller_id}/discontinued-skus/reactivate-preview` — não grava nada.
+- `POST /cadastros/sellers/{seller_id}/discontinued-skus/reactivate-confirm` — revalida do zero
+  (não confia no preview do frontend) e grava. **1 `AuditLog` para o lote inteiro** (mesmo padrão
+  do `/confirm` de descontinuar), não um por SKU como o `DELETE` individual já fazia.
+
+`backend/services/stock_manager.py` ganhou `preview_reactivate_skus()` e `confirm_reactivate_skus()`,
+espelhando `preview_discontinue_skus()`/`confirm_discontinue_skus()` — a diferença é que aqui o
+"cadastro de referência" é a própria tabela `DiscontinuedSku` (SKU tem que estar lá para bater),
+não `Product`. `confirm_reactivate_skus()` reaproveita `remove_discontinued_sku()` por SKU dentro
+do laço — mesma reversão do botão individual (apaga a linha e libera NF pendente por causa dele
+via `release_pending_orders_for_sku`), só que chamada N vezes dentro de uma única transação/commit.
+
+**Armadilha evitada:** o preview de reativar **não pode reusar `preview_discontinue_skus()`** —
+aquele confere contra `Product` (existe cadastro?), e o critério aqui é o oposto (está
+descontinuado?). São duas consultas diferentes por design, não duplicação acidental.
+
+**Testes:** verificação E2E via TestClient contra SQLite descartável cobrindo preview bloqueando
+lote com SKU inválido, confirm recusando com 422 sem gravar nada quando forjado, reativação em
+lote gravando os SKUs certos, exatamente 1 `AuditLog` para o lote (não 2 separados), e regressão do
+`DELETE` individual continuando a funcionar. `tsc --noEmit` limpo. Conferência visual ponta a ponta
+no app local (banco `wms_kiwkiw_local`, não produção): toggle trocando cor/texto/placeholder,
+descontinuar em lote, preview de reativar bloqueando SKU inexistente, reativação em lote com
+sucesso e lista "Já descontinuados" voltando a zero.
+
+---
+
 ## Mudanças Recentes — 14/09/2026 — Insumos do Cliente (aba nova no Portal) + caixas próprias
 
 **Sem push anterior — este é o primeiro push desta feature.** Insumo = material **sem código de
@@ -1985,7 +2032,7 @@ esses números** (decisão do dono do sistema).
 | `/orders` | `routers/orders.py` | Import Excel (**baixa o estoque, só SAÍDA**), listagem, config de pedido, transportadora (**destrava a baixa**), `pending-stock` (NFs de saída que não baixaram — **entrada fica fora**), PDFs (**recusam sessão de entrada**) |
 | `/scanning` | `routers/scanning.py` | Sessões, scan, open-by-nfe, interrupt (**recusa entrada**), **finalize-entry** e **pause** (só entrada, 24/08/2026), force-complete, cancel-handling (admin, **estorna desde 06/08/2026**), **cancel-duplicate-orders** (admin/manager, com reversão de estoque), deactivate/reactivate NF, **audit-log** (paginado, filtros combinados de seller/transportadora/operador/busca — 31/08/2026) + **audit-log/carriers** e **audit-log/export/csv** (CSV sem teto), session-cards, suggested-box. **Todo o estoque de ENTRADA entra por aqui, no `finalize-entry`; na saída daqui só se estorna/re-lança** |
 | `/inventory` | `routers/inventory.py` | Estoque, movimentações manuais, import de histórico (Excel), bulk import, histórico SKU, export CSV. **Sem botão na tela desde 24/07/2026:** `POST /inventory/movements/bulk` e `POST /inventory/bulk-stock-upload` continuam funcionando, mas foram retirados da interface por confundirem com o import de histórico — não recriar os botões sem combinar com o usuário |
-| `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`, `discontinued-skus` + `analyze`/`confirm` — 13/09/2026), unidades, usuários, experience-file |
+| `/cadastros` | `routers/products.py` | Produtos, kits (incl. `expansion-log`, `unlinked-components`, `items/{id}/link`, `import-file/analyze`, `import-file/execute`), box-algorithm, sellers (incl. `without-unit`, `assign-unit`, `merge-orders-into`, `discontinued-skus` + `analyze`/`confirm` — 13/09/2026 — e `reactivate-preview`/`reactivate-confirm` em lote — 14/09/2026), unidades, usuários, experience-file |
 | `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026).** `seller-params`/`seller-box-prices` (manager+, sem portão), `/billing/my/...` (Portal do seller, sem portão). Os outros 11 — `box-prices`, `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`) — exigem **admin + Acesso Protegido ao Financeiro liberado** (02/09/2026, ver `billing_access`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |

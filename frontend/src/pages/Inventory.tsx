@@ -2265,6 +2265,19 @@ export default function InventoryPage() {
                 {filteredMovements.length} registros
               </span>
 
+              {/* Exportar Movimentações — operador é view-only, não exporta (mesmo padrão do "Exportar Estoque") */}
+              {user?.role !== 'operator' && (
+                <button
+                  onClick={() => sellerId && inventoryApi.exportMovementsCsv(sellerId, dateFrom, dateTo)}
+                  disabled={!sellerId}
+                  title="Exporta as movimentações do período selecionado (de/até acima)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
+                >
+                  <Download size={13} />
+                  Exportar CSV
+                </button>
+              )}
+
               <button
                 onClick={() => setShowPasteModal(true)}
                 disabled={!sellerId}

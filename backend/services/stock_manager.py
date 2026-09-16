@@ -11,7 +11,8 @@ from typing import List, Optional, Dict, Set, Tuple
 from collections import defaultdict
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, text, bindparam
+from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy import func, text, bindparam, case, select
 
 from .. import models
 from ..timezone_utils import now_brasilia, today_brasilia
@@ -385,7 +386,13 @@ def apply_stock_for_orders(
         ).filter(
             models.StockPosition.seller_id.in_(seller_ids),
             models.StockPosition.sku.in_(skus),
-        ).all():
+        # Trava as posições do lote SEMPRE na mesma ordem antes de somar
+        # (16/09/2026). A soma em update_stock_position já trava linha a linha;
+        # sem ordem fixa, dois lotes com os mesmos SKUs em ordens diferentes
+        # podiam travar um esperando o outro (deadlock). No SQLite é ignorado.
+        ).order_by(
+            models.StockPosition.seller_id, models.StockPosition.sku,
+        ).with_for_update().all():
             before[(row[0], row[1])] = row[2] or 0
 
     touched_all: Dict = {}
@@ -1304,14 +1311,41 @@ def update_stock_position(
         # mesmo SKU em dois pedidos da mesma sessão de bipagem).
         db.flush()
 
-    if movement_type == models.MovementType.IN:
-        position.total_in += quantity
-    else:
-        position.total_out += quantity
-
-    position.current_stock = position.initial_stock + position.total_in - position.total_out
-    position.level = calculate_stock_level(position.current_stock)
-    position.updated_at = now_brasilia()
+    # ⚠️ SOMA ATÔMICA NO BANCO (16/09/2026) — não voltar para `position.total_out += q`.
+    # Ler o saldo em Python, somar e regravar o valor absoluto perdia baixa quando
+    # duas transações tocavam o mesmo SKU ao mesmo tempo (lost update): o modal de
+    # transportadora pós-import mandava um PATCH por NF em paralelo e a tela chegou
+    # a mostrar 66 saídas a menos que as movimentações (Mineraux). Aqui o banco soma
+    # sobre o valor que está gravado e trava a linha até o commit — a segunda
+    # transação espera e soma em cima da primeira.
+    d_in = quantity if movement_type == models.MovementType.IN else 0
+    d_out = 0 if movement_type == models.MovementType.IN else quantity
+    t = models.StockPosition.__table__
+    new_stock = (
+        func.coalesce(t.c.initial_stock, 0) + func.coalesce(t.c.total_in, 0) + d_in
+        - func.coalesce(t.c.total_out, 0) - d_out
+    )
+    db.execute(
+        t.update().where(t.c.id == position.id).values(
+            total_in=func.coalesce(t.c.total_in, 0) + d_in,
+            total_out=func.coalesce(t.c.total_out, 0) + d_out,
+            current_stock=new_stock,
+            level=case(
+                (new_stock > 600, "ALTO"),
+                (new_stock > 300, "MÉDIO"),
+                else_="BAIXO",
+            ),
+            updated_at=now_brasilia(),
+        )
+    )
+    # Devolve o objeto com os valores que ficaram gravados, sem marcá-lo como
+    # alterado — senão o flush do ORM regravaria total_in/total_out por cima.
+    row = db.execute(
+        select(t.c.total_in, t.c.total_out, t.c.current_stock, t.c.level, t.c.updated_at)
+        .where(t.c.id == position.id)
+    ).one()
+    for col, val in zip(("total_in", "total_out", "current_stock", "level", "updated_at"), row):
+        set_committed_value(position, col, val)
 
     if not position.product_name:
         position.product_name = product_name

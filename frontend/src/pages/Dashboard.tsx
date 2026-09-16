@@ -1381,17 +1381,18 @@ export default function DashboardPage() {
     const entries = Object.entries(updates).filter(([, v]) => v.trim());
     if (!entries.length) { setCarrierModalOrders([]); return; }
     try {
-      const results = await Promise.all(
-        entries.map(([id, carrier]) =>
-          ordersApi.updateCarrier(Number(id), carrier)
-        )
+      // ⚠️ UMA chamada para o lote inteiro (16/09/2026). Era um updateCarrier
+      // por NF em Promise.all: as baixas de estoque rodavam em paralelo e o
+      // saldo da tela perdia saída quando o mesmo SKU estava em várias NFs.
+      const { data } = await ordersApi.batchCarrier(
+        entries.map(([id, carrier]) => ({ order_id: Number(id), carrier }))
       );
-      toast.success(`${entries.length} transportadora(s) salva(s)`);
+      toast.success(`${data.updated} transportadora(s) salva(s)`);
 
       // Preencher a transportadora destrava a baixa de estoque (06/08/2026).
       // Se isso jogou algum SKU pra negativo, mostra no MESMO modal do import.
-      const applied = results.filter(r => r.data?.stock_applied).length;
-      const negatives = results.flatMap(r => r.data?.negatives ?? []);
+      const applied = data.stock_applied;
+      const negatives = data.negatives ?? [];
       if (applied > 0) toast.success(`Estoque baixado em ${applied} NF(s)`);
       if (negatives.length > 0) {
         setStockReport({

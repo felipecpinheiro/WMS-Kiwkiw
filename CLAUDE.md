@@ -39,6 +39,49 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 16/09/2026 — Saldo da tela perdia saídas (baixas em paralelo)
+
+**Sintoma:** na Mineraux, o Spray (0725765894908) mostrava **45** na tela de Estoque/Portal, mas as
+movimentações somavam −21 e o certo (planilha + saídas) era −6. `stock_positions` tinha **66 saídas a
+menos** que `stock_movements`. Mesmo desvio em mais 7 sellers (Nuudo, Mawaho, Pilates em Casa, YUGEN,
+Kastania, Feel, AH Bordados).
+
+**Causa (provada por reprodução):** o modal de transportadora que abre logo após o import
+(`handleCarrierSave` em `Dashboard.tsx`) mandava **um `PATCH /orders/{id}/carrier` por NF em
+`Promise.all`**. Cada requisição baixava o estoque na própria transação, e `update_stock_position`
+lia `total_out` em Python, somava e regravava o valor absoluto → **lost update** quando o mesmo SKU
+estava em várias NFs do lote. **O movimento sempre foi gravado certo**; só o contador da tela perdia.
+Backups diários mostram o desvio crescendo exatamente nos dias de import; as NFs da Mineraux baixavam
+15–50 s depois do import, todas em ~100 ms (o clique no "salvar" do modal).
+
+**Correção (2 camadas):**
+- `Dashboard.tsx` — o modal pós-import usa `ordersApi.batchCarrier` (1 chamada, mesma do modal de
+  pendências). Não voltar ao `updateCarrier` em laço.
+- `stock_manager.py` `update_stock_position` — **soma atômica no banco**
+  (`UPDATE ... SET total_out = total_out + :q`, `current_stock` e `level` no mesmo UPDATE) e devolve o
+  objeto com `set_committed_value` (sem marcá-lo sujo, senão o flush regravaria por cima). Protege
+  qualquer caminho concorrente (devolução, manual, estorno, dois admins).
+- `apply_stock_for_orders` — a consulta "foto antes" passou a `ORDER BY seller_id, sku FOR UPDATE`:
+  trava as posições do lote sempre na mesma ordem, evitando deadlock entre lotes. SQLite ignora.
+
+**Dados corrigidos em produção:** estorno do `AJUSTE CONFERENCIA 31/08` da Mineraux (o ajuste foi
+feito sobre o saldo errado da tela) + recálculo de `stock_positions` a partir de `stock_movements`
+nas posições divergentes, com `AuditLog` `RECALC_FROM_MOVEMENTS` por seller.
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Mexer em `update_stock_position` | Voltar a `position.total_out += q` reintroduz a perda em qualquer escrita concorrente — o teste sequencial passa e não pega | Manter o UPDATE atômico. Teste de concorrência tem que ser em **PostgreSQL** com transações simultâneas |
+| Tela nova que resolve várias NFs | `Promise.all` de endpoints que baixam estoque, um por NF | Endpoint de lote (`batch-carrier`, `pending-stock/retry`) — uma transação só |
+| "Conferência" de estoque que parte de `stock_positions` | Se a tela estiver desalinhada, o ajuste corrige o número errado (foi o que houve em 31/08) | Conferir **movimentações** contra a planilha; `stock_positions` é só cache |
+| Escritas diretas em `stock_positions` fora dessa função | `inventory.py` (import de histórico, editar/excluir movimento) ainda lê-soma-grava em Python | Uso raro e manual; se virar concorrente, aplicar o mesmo UPDATE atômico |
+
+**Testes:** bateria de concorrência em Postgres local sobre o backup de 15/09 (10 sessões reais,
+335 NFs, 8 sellers): NF a NF em paralelo, lotes sobrepostos em ordem embaralhada (deadlock), lote
+sequencial com relatório de negativos, idempotência, estornos simultâneos, SKU sem posição —
+**31/31 com o código novo; o código antigo falha 10** (reproduz a perda). SQLite ok. `tsc --noEmit` limpo.
+
+---
+
 ## Mudanças Recentes — 14/09/2026 (2ª leva) — Reativar SKU descontinuado em lote (toggle na aba Descontinuados)
 
 Até aqui, reverter um SKU descontinuado só dava um por um (botão "Reverter" na lista "Já

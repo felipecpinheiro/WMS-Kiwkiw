@@ -598,7 +598,7 @@ class BillingBoxPrice(Base):
     __tablename__ = "billing_box_prices"
 
     id = Column(Integer, primary_key=True, index=True)
-    box_key = Column(String(20), nullable=False)      # '1'..'8', 'Própria'
+    box_key = Column(String(30), nullable=False)      # '1'..'8', 'Própria P/M/G', 'Próprio Saco de Embarque'
     price = Column(Float, nullable=True)              # NULL = sem adicional
 
     __table_args__ = (UniqueConstraint("box_key", name="uq_billing_box_key"),)

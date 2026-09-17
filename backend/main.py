@@ -167,6 +167,17 @@ def run_light_migrations():
             )).fetchone()
             if nf_key_len and nf_key_len[0] is not None and nf_key_len[0] < 150:
                 index_migrations.append("ALTER TABLE orders ALTER COLUMN nf_key TYPE VARCHAR(150)")
+            # 17/09/2026: billing_box_prices.box_key era VARCHAR(20) e a caixa
+            # "Próprio Saco de Embarque" (24 chars, 14/09/2026) estourava
+            # StringDataRightTruncation no seed idempotente abaixo, todo boot —
+            # silencioso em produção (cai no except de migrações leves), mas a
+            # linha global dessa caixa nunca chegava a ser criada.
+            box_key_len = db.execute(text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name='billing_box_prices' AND column_name='box_key'"
+            )).fetchone()
+            if box_key_len and box_key_len[0] is not None and box_key_len[0] < 30:
+                index_migrations.append("ALTER TABLE billing_box_prices ALTER COLUMN box_key TYPE VARCHAR(30)")
             # Faturamento (01/09/2026): adicional por produto na NF B2B. Coluna
             # aditiva (default 0) nas duas tabelas de parâmetro. Vai em
             # index_migrations (print texto puro) — regra do emoji.

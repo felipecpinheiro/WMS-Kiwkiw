@@ -174,9 +174,11 @@ function pct(card: SessionCard) {
 
 function uploadTime(card: SessionCard) {
   const ts = card.created_at;
-  if (!ts) return '--:--';
+  if (!ts) return '--/-- --:--';
   const d = new Date(ts.includes('T') ? ts : ts + 'T00:00:00');
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return `${date} ${time}`;
 }
 
 function statusInfo(status: string, isEntrada = false) {

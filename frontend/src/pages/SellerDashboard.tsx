@@ -195,11 +195,12 @@ export default function SellerDashboardTab({
 
           {/* ── Bloco 5 — Estoque agora ──────────────────────────────────── */}
           <Card title="Estoque agora" subtitle={`${data.stock_summary.total_skus} SKU(s) com posição`}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Tile label="Nível alto"  value={data.stock_summary.alto} />
-              <Tile label="Nível médio" value={data.stock_summary.medio} tone="warn" />
-              <Tile label="Nível baixo" value={data.stock_summary.baixo} tone="bad" />
-              <Tile label="Em ruptura"  value={data.stock_summary.ruptura} tone="bad" />
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <Tile label="Nível alto"       value={data.stock_summary.alto} />
+              <Tile label="Nível médio"      value={data.stock_summary.medio} tone="warn" />
+              <Tile label="Nível baixo"      value={data.stock_summary.baixo} tone="bad" />
+              <Tile label="Sem saídas (60d)" value={data.stock_summary.sem_saida} tone="t1" />
+              <Tile label="Em ruptura"       value={data.stock_summary.ruptura} tone="bad" />
             </div>
           </Card>
 

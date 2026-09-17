@@ -24,17 +24,23 @@ import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
 
+// Classificação por GIRO (dias de cobertura, mesmo critério do Portal e do
+// Dashboard) — não por quantidade absoluta. Ver CLAUDE.md 17/09/2026.
 const LEVEL_CONFIG: Record<string, { label: string; color: string }> = {
-  ALTO:  { label: 'Alto',  color: 'bg-violet-900/40 text-violet-300' },
-  MÉDIO: { label: 'Médio', color: 'bg-warn-soft text-warn border border-warn/20' },
-  BAIXO: { label: 'Baixo', color: 'bg-bad-soft text-bad border border-bad/20' },
+  'Alto':           { label: 'Alto',           color: 'bg-violet-900/40 text-violet-300' },
+  'Médio':          { label: 'Médio',          color: 'bg-warn-soft text-warn border border-warn/20' },
+  'Baixo':          { label: 'Baixo',          color: 'bg-bad-soft text-bad border border-bad/20' },
+  'Sem Saídas 60d': { label: 'Sem saídas 60d', color: 'bg-line-strong/40 text-t4' },
+  'Sem Produto':    { label: 'Sem produto',    color: 'bg-bad-soft text-bad border border-bad/20 font-bold' },
 };
 
-// Faixa de cor lateral do cartão (mobile) — mesma semântica do pill de Nível
+// Faixa de cor lateral do cartão (mobile) — mesma semântica do pill de Status
 const STRIPE_COLOR: Record<string, string> = {
-  ALTO: '#7B63E8',
-  MÉDIO: '#F0C87E',
-  BAIXO: '#E24B4A',
+  'Alto': '#7B63E8',
+  'Médio': '#F0C87E',
+  'Baixo': '#E24B4A',
+  'Sem Saídas 60d': '#6B7280',
+  'Sem Produto': '#E24B4A',
 };
 
 const SORT_OPTIONS: { label: string; col: string }[] = [
@@ -2080,8 +2086,8 @@ export default function InventoryPage() {
             ) : isMobile ? (
               <div className="space-y-2">
                 {sortedStock.map((item: any) => {
-                  const level    = item.level || 'ALTO';
-                  const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['ALTO'];
+                  const level    = item.forecast_status || 'Alto';
+                  const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['Alto'];
                   const days     = item.days_remaining;
                   return (
                     <div
@@ -2089,7 +2095,7 @@ export default function InventoryPage() {
                       onClick={() => setDetailSku(item.sku)}
                       className="flex gap-2.5 p-3 rounded-xl border border-line-soft bg-white/[0.03] active:bg-surface-2 cursor-pointer"
                     >
-                      <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: STRIPE_COLOR[level] || STRIPE_COLOR.ALTO }} />
+                      <div className="w-[3px] rounded-full flex-shrink-0" style={{ background: STRIPE_COLOR[level] || STRIPE_COLOR.Alto }} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline justify-between gap-2">
                           {item.product_registered === false ? (
@@ -2152,8 +2158,8 @@ export default function InventoryPage() {
                   </thead>
                   <tbody>
                     {sortedStock.map((item: any) => {
-                      const level    = item.level || 'ALTO';
-                      const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['ALTO'];
+                      const level    = item.forecast_status || 'Alto';
+                      const levelCfg = LEVEL_CONFIG[level] || LEVEL_CONFIG['Alto'];
                       const days     = item.days_remaining;
                       return (
                         <tr

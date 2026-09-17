@@ -799,7 +799,7 @@ def seller_dashboard_analytics(
       - resumo de estoque + SKUs prestes a romper (previsão <= 15 dias)
     """
     seller_id = _portal_seller_id(current_user)
-    from ..services.stock_manager import get_stock_report
+    from ..services.stock_manager import get_stock_report, compute_forecast_status
 
     today = today_brasilia()
     S = models.OrderStatus
@@ -874,20 +874,28 @@ def seller_dashboard_analytics(
     ]
 
     # ── Estoque ─────────────────────────────────────────────────────────
+    # Classificação por GIRO (dias de cobertura), a mesma de compute_forecast_status
+    # usada na coluna "Status" da tela de Estoque — não por quantidade absoluta.
+    # Ver CLAUDE.md "Alto/Médio/Baixo têm um critério só" (17/09/2026).
     report = get_stock_report(seller_id, db)
-    summary = {"alto": 0, "medio": 0, "baixo": 0, "ruptura": 0, "total_skus": len(report)}
+    summary = {
+        "alto": 0, "medio": 0, "baixo": 0, "sem_saida": 0, "ruptura": 0,
+        "total_skus": len(report),
+    }
     rupture = []
     for r in report:
         cur = r.get("current_stock") or 0
-        lvl = (r.get("level") or "").upper()
-        if cur <= 0:
+        status, _ = compute_forecast_status(cur, r.get("avg_daily_sales_60d") or 0)
+        if status == "Sem Produto":
             summary["ruptura"] += 1
-        if lvl == "ALTO":
-            summary["alto"] += 1
-        elif lvl in ("MÉDIO", "MEDIO"):
+        elif status == "Sem Saídas 60d":
+            summary["sem_saida"] += 1
+        elif status == "Baixo":
+            summary["baixo"] += 1
+        elif status == "Médio":
             summary["medio"] += 1
         else:
-            summary["baixo"] += 1
+            summary["alto"] += 1
         dp = r.get("days_projection")
         if cur > 0 and dp is not None and dp <= 15:
             rupture.append({

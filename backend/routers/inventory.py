@@ -23,6 +23,7 @@ from ..timezone_utils import now_brasilia, today_brasilia
 from .. import models
 from ..services.stock_manager import (
     get_stock_report, update_stock_position, get_sku_history, calculate_stock_level,
+    compute_forecast_status,
 )
 
 import os as _os
@@ -144,23 +145,11 @@ def get_stock(
         # ── Previsão de dias restantes ────────────────────────────────────────
         current       = pos_dict.get("current_stock", 0) or 0
         total_out_60d = sales_60d.get(sku) or 0
+        avg_daily     = total_out_60d / 60.0
 
-        if current <= 0:
-            pos_dict["days_remaining"]  = 0
-            pos_dict["forecast_status"] = "Sem Produto"
-        elif total_out_60d == 0:
-            pos_dict["days_remaining"]  = None
-            pos_dict["forecast_status"] = "Sem Saídas 60d"
-        else:
-            avg_daily = total_out_60d / 60.0
-            days_rem  = round(current / avg_daily)
-            pos_dict["days_remaining"] = days_rem
-            if days_rem < 30:
-                pos_dict["forecast_status"] = "Baixo"
-            elif days_rem <= 60:
-                pos_dict["forecast_status"] = "Médio"
-            else:
-                pos_dict["forecast_status"] = "Alto"
+        forecast_status, days_remaining = compute_forecast_status(current, avg_daily)
+        pos_dict["forecast_status"] = forecast_status
+        pos_dict["days_remaining"]  = days_remaining
 
         result.append(pos_dict)
 

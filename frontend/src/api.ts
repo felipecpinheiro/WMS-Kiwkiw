@@ -504,7 +504,7 @@ export interface SellerAnalytics {
   };
   orders_per_day: { date: string; count: number }[];
   nfs_per_month: { month: string; count: number }[];
-  stock_summary: { alto: number; medio: number; baixo: number; ruptura: number; total_skus: number };
+  stock_summary: { alto: number; medio: number; baixo: number; sem_saida: number; ruptura: number; total_skus: number };
   rupture_soon: { sku: string; product_name: string; current_stock: number; days_remaining: number }[];
 }
 

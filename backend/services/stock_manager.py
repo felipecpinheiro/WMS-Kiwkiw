@@ -50,6 +50,29 @@ def calculate_stock_level(current_stock: int) -> str:
         return "BAIXO"
 
 
+def compute_forecast_status(current_stock: int, avg_daily_sales_60d: float) -> Tuple[str, Optional[int]]:
+    """
+    Classifica o SKU por giro (dias de cobertura), não por quantidade absoluta.
+    Fonte única — usada pela tela de Estoque, pelo Portal e pelo Dashboard do
+    seller, pra "Alto"/"Médio"/"Baixo" sempre significar a mesma coisa em
+    qualquer tela: quantos dias esse saldo dura no ritmo de venda dos últimos
+    60 dias.
+    """
+    current_stock = current_stock or 0
+    if current_stock <= 0:
+        return "Sem Produto", 0
+    if not avg_daily_sales_60d:
+        return "Sem Saídas 60d", None
+
+    days_remaining = round(current_stock / avg_daily_sales_60d)
+    if days_remaining < 30:
+        return "Baixo", days_remaining
+    elif days_remaining <= 60:
+        return "Médio", days_remaining
+    else:
+        return "Alto", days_remaining
+
+
 # ==================================================================
 # BAIXA DE ESTOQUE NA IMPORTAÇÃO (06/08/2026)
 # ==================================================================

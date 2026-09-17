@@ -156,6 +156,17 @@ def run_light_migrations():
             # order_has_stock_applied() em services/stock_manager.py.
             if not col_exists("orders", "stock_applied_at"):
                 index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at TIMESTAMP")
+            # 17/09/2026: nf_key era VARCHAR(50) e estourava quando o import
+            # monta a chave automática "NF_nome-do-seller" (sem coluna própria
+            # na planilha) e o seller tem nome longo — StringDataRightTruncation
+            # derrubava o import inteiro. Alargar é troca só de metadado no
+            # Postgres (não reescreve a tabela).
+            nf_key_len = db.execute(text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name='orders' AND column_name='nf_key'"
+            )).fetchone()
+            if nf_key_len and nf_key_len[0] is not None and nf_key_len[0] < 150:
+                index_migrations.append("ALTER TABLE orders ALTER COLUMN nf_key TYPE VARCHAR(150)")
             # Faturamento (01/09/2026): adicional por produto na NF B2B. Coluna
             # aditiva (default 0) nas duas tabelas de parâmetro. Vai em
             # index_migrations (print texto puro) — regra do emoji.

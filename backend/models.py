@@ -317,7 +317,7 @@ class Order(Base):
     expedition_date = Column(Date, nullable=True)           # data expedicao
     nature = Column(String(200), nullable=True)             # natureza da operação
     danfe_key = Column(String(100), nullable=True, index=True)  # chave danfe (44 dígitos)
-    nf_key = Column(String(50), nullable=True)              # chave = NF+seller
+    nf_key = Column(String(150), nullable=True)              # chave = NF+seller
     file_type = Column(Enum(FileType), default=FileType.EXPORT)  # entrada ou saída
     for_billing = Column(Boolean, default=True)             # considerar para faturamento
     imported_at = Column(DateTime, default=now_brasilia)

@@ -30,6 +30,7 @@ backend/run_local_teste_indices.py
 backend/run_local_reset_billing_access.py
 backend/run_local_wms_kiwkiw_local.py
 .claude/launch.json
+.claude/commands/tirarprints.md
 
 # Bateria de performance — protocolo, histórico e relatórios (uso local)
 # O comando .claude/commands/perf.md CONTINUA versionado de propósito.

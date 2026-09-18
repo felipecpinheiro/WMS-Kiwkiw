@@ -39,6 +39,60 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 17/09/2026 — Nível de estoque (Alto/Médio/Baixo) tinha dois critérios diferentes
+
+**Sintoma:** um seller (Naturology/Benatural) reportou números diferentes entre telas — a coluna
+"Status" do Meu Estoque mostrava 7 dos 11 SKUs como "Alto", mas o card "Estoque agora" do Dashboard
+do Portal mostrava Alto=0/Baixo=11 pros mesmos 11 SKUs.
+
+**Causa:** dois critérios diferentes escondidos atrás do mesmo rótulo. O card do Dashboard (e
+também a tela interna de Estoque) classificava por **quantidade absoluta**
+(`StockPosition.level`, >600 ALTO / >300 MÉDIO / ≤300 BAIXO — herdado da planilha antiga). A
+coluna Status do Meu Estoque/Portal já classificava por **giro** (`forecast_status`, dias de
+cobertura = saldo ÷ velocidade de venda dos últimos 60 dias), calculado só dentro de
+`routers/inventory.py`. Um SKU que vende pouco tem saldo baixo em unidades mas dias de cobertura
+enormes — as duas contas nunca iam bater.
+
+**Decisão (com o dono do sistema):** giro vira o critério único em toda a operação — é o que
+importa pra decidir se precisa repor ou não; quantidade absoluta sozinha não diz nada sem saber a
+velocidade de venda daquele SKU.
+
+**Correção:**
+- `backend/services/stock_manager.py` — nova função `compute_forecast_status(current_stock,
+  avg_daily_sales_60d)`, fonte única do cálculo (antes só existia dentro de `inventory.py`).
+- `backend/routers/inventory.py` — passou a chamar essa função em vez de calcular inline.
+- `backend/routers/dashboard.py` (`/dashboard/seller/analytics`, bloco `stock_summary`) — trocou
+  de `level` pra `compute_forecast_status`; ganhou o bucket **`sem_saida`** que faltava (SKU com
+  saldo mas sem nenhuma venda em 60 dias).
+- `frontend/src/pages/SellerDashboard.tsx` — 5º bloco "Sem saídas (60d)" no card "Estoque agora".
+- `frontend/src/pages/Inventory.tsx` (tela interna de Estoque) — trocou o badge de `item.level`
+  pra `item.forecast_status`; `LEVEL_CONFIG`/`STRIPE_COLOR` ganharam as 5 chaves certas (`Alto`,
+  `Médio`, `Baixo`, `Sem Saídas 60d`, `Sem Produto`) no lugar das 3 antigas em CAIXA ALTA.
+- `frontend/src/api.ts` — tipo de `stock_summary` ganhou o campo `sem_saida`.
+
+⚠️ **`StockPosition.level` (quantidade absoluta) continua sendo gravado no banco** — não foi
+removido, só parou de ser **exibido**. Nenhuma tela usa mais esse campo pra classificar hoje; se
+aparecer um uso novo dele, checar se é isso mesmo que se quer (ver armadilha na tabela geral mais
+abaixo).
+
+**Achado no caminho, corrigido à parte:** `billing_box_prices.box_key` era `VARCHAR(20)` e a caixa
+"Próprio Saco de Embarque" (24 caracteres, criada em 14/09/2026) estourava
+`StringDataRightTruncation` no seed idempotente da tabela global de caixas, **em todo boot de
+produção desde aquele deploy** — falha silenciosa (cai no aviso de migrações leves), mas a linha
+global dessa caixa nunca chegava a ser criada. Coluna alargada pra `VARCHAR(30)`
+(`backend/models.py` + migração idempotente em `backend/main.py`, mesmo padrão usado pro `nf_key`
+em 17/09). Sem efeito financeiro — essa caixa não é cobrada, o seller manda o próprio material —
+mas o boot parava de repetir esse erro no log a cada deploy.
+
+**Testes:** `tsc --noEmit` limpo. Verificado contra dump fresco de produção restaurado no banco
+local, com o seller real que reportou o problema (11 SKUs) — os números batem exatamente entre
+Dashboard e Meu Estoque depois da correção. Conferência visual no navegador (desktop e mobile,
+tela interna de Estoque e Portal, admin e client). O fix do `box_key` foi testado reproduzindo o
+estado "antes" no banco local (coluna estreita, sem a linha da caixa) e confirmando que o boot se
+autocorrige sozinho, sem erro.
+
+---
+
 ## Mudanças Recentes — 16/09/2026 — Saldo da tela perdia saídas (baixas em paralelo)
 
 **Sintoma:** na Mineraux, o Spray (0725765894908) mostrava **45** na tela de Estoque/Portal, mas as
@@ -2850,3 +2904,4 @@ três colunas: Operador, Total Bipagens, Total Itens.
 | Schema Pydantic novo com um campo chamado igual ao seu próprio tipo | `date: Optional[date]` (ou `int`, `str` etc.) faz o `get_type_hints` resolver a anotação usando o namespace da própria classe — o campo vira `NoneType` e a resposta quebra em **todas** as linhas com `ResponseValidationError`, só na hora de servir de verdade (não aparece no `tsc` nem numa revisão rápida). Achado no schema de Insumos (14/09/2026), corrigido renomeando pra `movement_date` | Nunca nomear um campo igual ao tipo importado no topo do arquivo — `movement_date`, `order_date`, `created_at`, etc. |
 | Endpoint com trava de "campo travado" (nome/regra fixos) | Esconder o botão de editar na tela não impede uma chamada forjada — mesmo espírito da armadilha de Devoluções acima | O servidor recusa com 400 independente do que a UI mostrar (ver `locked` em `client_supplies.py`) |
 | Tratar SKU descontinuado igual "SKU sem produto cadastrado" | São dois motivos diferentes de segurar NF fora do manuseio, com tabelas e mensagens distintas — `card.held_orders` é a UNIÃO dos dois desde 13/09/2026 | Usar `missing_product_orders`/`discontinued_orders` (contagens separadas) nos badges e no `discontinued_skus` de `evaluate_orders_for_stock`, nunca misturar com `missing_skus` (que alimenta o modal de cadastro de produto) |
+| Classificar estoque por `StockPosition.level` (quantidade absoluta) numa tela nova | Até 17/09/2026 o Dashboard do Portal usava isso e a coluna Status do Meu Estoque usava giro (dias de cobertura) — o mesmo SKU aparecia com selo oposto em cada tela | Giro é o critério único desde 17/09/2026: usar `compute_forecast_status()` (`stock_manager.py`). `level` continua gravado no banco mas não é mais exibido em nenhuma tela |

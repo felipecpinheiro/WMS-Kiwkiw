@@ -43,15 +43,22 @@ interface SortState { col: string; dir: SortDir }
 
 // ─── Configurações ────────────────────────────────────────────────────────────
 
+// Mesma nomenclatura da tela interna de Pedidos (17/09/2026) — antes o Portal
+// usava palavras próprias ("Separação do Produto", "Em Preparação") que não
+// batiam com o resto do site.
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  pending:     { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
-  validated:   { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
-  separating:  { label: 'Separação do Produto', cls: 'bg-info-soft text-info' },
-  scanning:    { label: 'Em Preparação',        cls: 'bg-violet-900/40 text-violet-300' },
-  completed:   { label: 'Concluído',            cls: 'bg-ok-soft text-ok' },
-  interrupted: { label: 'Interrompido',         cls: 'bg-warn-soft text-warn' },
-  cancelled:   { label: 'Cancelado',            cls: 'bg-bad-soft text-bad' },
+  pending:     { label: 'Pendente',          cls: 'bg-surface-2 text-t3 border border-line' },
+  validated:   { label: 'Separando Produto', cls: 'bg-info-soft text-info' },
+  separating:  { label: 'Separando Produto', cls: 'bg-info-soft text-info' },
+  scanning:    { label: 'Bipando',           cls: 'bg-violet-900/40 text-violet-300' },
+  completed:   { label: 'Concluído',         cls: 'bg-ok-soft text-ok' },
+  interrupted: { label: 'Interrompido',      cls: 'bg-warn-soft text-warn' },
+  cancelled:   { label: 'Cancelado',         cls: 'bg-bad-soft text-bad' },
 };
+
+// Filtro "Não Concluídos" — mesma definição do KPI "Pendentes" da sidebar
+// (total - concluídos): valor de filtro que não colide com nenhum status real.
+const STATUS_FILTER_NOT_COMPLETED = '__NAO_CONCLUIDOS__';
 
 // ─── Opções de ordenação / filtro do Estoque ──────────────────────────────────
 
@@ -289,6 +296,10 @@ export default function SellerPortalPage() {
   const MOV_PAGE = 3000;
   const [movVisible, setMovVisible] = useState(MOV_PAGE);
   const movSentinelRef = useRef<HTMLDivElement | null>(null);
+  // Pedidos: mesmo mecanismo (ver comentário acima) — 17/09/2026, depois de
+  // tirar o limit(500) do backend.
+  const [ordersVisible, setOrdersVisible] = useState(500);
+  const ordersSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // ── Dados ──────────────────────────────────────────────────────────────────
 
@@ -352,8 +363,20 @@ export default function SellerPortalPage() {
   const orders = dashboard?.recent_orders ?? [];
   const filteredOrders = orders.filter((o: any) =>
     (!search || o.nf_number?.includes(search) || o.customer_name?.toLowerCase().includes(search.toLowerCase())) &&
-    (!statusFilter || (STATUS_CONFIG[o.status]?.label ?? o.status) === statusFilter),
+    (!statusFilter || (
+      statusFilter === STATUS_FILTER_NOT_COMPLETED
+        ? o.status !== 'completed'
+        : (STATUS_CONFIG[o.status]?.label ?? o.status) === statusFilter
+    )),
   );
+
+  // Renderização incremental (mesmo mecanismo de Movimentações) — a lista de
+  // pedidos não tem mais teto no backend (17/09/2026), então sellers grandes
+  // podem ter milhares de linhas; só a exibição é paginada, filtro/busca
+  // continuam operando sobre o conjunto completo.
+  const ORD_PAGE = 500;
+  const ordersShown = filteredOrders.slice(0, ordersVisible);
+  const ordersHasMore = ordersVisible < filteredOrders.length;
 
   // ── Estoque com sort ───────────────────────────────────────────────────────
 
@@ -482,6 +505,27 @@ export default function SellerPortalPage() {
     io.observe(el);
     return () => io.disconnect();
   }, [tab, movHasMore, filteredMovements.length]);
+
+  // Pedidos: mesmo mecanismo de carregar mais ao rolar (17/09/2026).
+  useEffect(() => {
+    setOrdersVisible(500);
+  }, [search, statusFilter, dateFrom, dateTo, tab]);
+
+  useEffect(() => {
+    if (tab !== 'orders' || !ordersHasMore) return;
+    const el = ordersSentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setOrdersVisible(v => Math.min(v + ORD_PAGE, filteredOrders.length));
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [tab, ordersHasMore, filteredOrders.length]);
 
   const completionPct  = dashboard?.completion_rate ?? 0;
   const sellerName     = dashboard?.seller_name ?? user.seller_name ?? 'Seller';
@@ -773,9 +817,20 @@ export default function SellerPortalPage() {
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
                   className="border border-line rounded-lg px-3 py-1.5 text-sm bg-surface text-t1 outline-none focus:ring-2 focus:ring-violet-500">
                   <option value="">Todos os status</option>
+                  <option value={STATUS_FILTER_NOT_COMPLETED}>Não Concluídos</option>
                   {Array.from(new Set(Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([, v]) => v.label)))
                     .map(label => <option key={label} value={label}>{label}</option>)}
                 </select>
+              </div>
+
+              {/* Total no topo — antes só aparecia no rodapé, obrigando rolar a lista
+                  inteira pra saber quantos pedidos existem no período. */}
+              <div className="text-xs text-t4 px-1">
+                {filteredOrders.length} pedido(s)
+                {dateFrom === dateTo
+                  ? ` · ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy")}`
+                  : ` · ${format(new Date(dateFrom + 'T00:00:00'), 'dd/MM')} → ${format(new Date(dateTo + 'T00:00:00'), 'dd/MM/yyyy')}`
+                }
               </div>
 
               <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
@@ -788,7 +843,7 @@ export default function SellerPortalPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOrders.length > 0 ? filteredOrders.map((o: any) => {
+                    {filteredOrders.length > 0 ? ordersShown.map((o: any) => {
                       const st = STATUS_CONFIG[o.status] ?? { label: o.status, cls: 'bg-line-strong text-t3' };
                       return (
                         <tr key={o.id} className="border-b border-line-soft hover:bg-surface-2">
@@ -808,13 +863,11 @@ export default function SellerPortalPage() {
                     )}
                   </tbody>
                 </table>
-                <div className="px-4 py-2.5 border-t border-line-soft text-xs text-t4">
-                  {filteredOrders.length} pedido(s)
-                  {dateFrom === dateTo
-                    ? ` · ${format(new Date(dateFrom + 'T00:00:00'), "dd/MM/yyyy")}`
-                    : ` · ${format(new Date(dateFrom + 'T00:00:00'), 'dd/MM')} → ${format(new Date(dateTo + 'T00:00:00'), 'dd/MM/yyyy')}`
-                  }
-                </div>
+                {ordersHasMore && (
+                  <div ref={ordersSentinelRef} className="px-4 py-2.5 border-t border-line-soft text-xs text-t4 text-center">
+                    exibindo {ordersShown.length.toLocaleString('pt-BR')} de {filteredOrders.length.toLocaleString('pt-BR')} — role para carregar mais
+                  </div>
+                )}
               </div>
             </>
           )}

@@ -712,9 +712,28 @@ def seller_dashboard(
     ).scalar() or 0
     completion_rate = round(((completed + interrupted) / total * 100) if total > 0 else 0, 1)
 
+    # 17/09/2026: SEM limite — um `limit(500)` fixo aqui escondia a maioria dos
+    # pedidos de sellers grandes (Feel MG: 2-3 mil pedidos no período) e, pior,
+    # o corte era instável (sem `id` de desempate, pedidos importados no mesmo
+    # instante entravam/saíam da amostra entre uma consulta e outra — mesma
+    # armadilha do "Manuseios mostrava só parte do período" de 31/08/2026). O
+    # frontend agora pagina a renderização (carrega mais ao rolar), então a
+    # lista pode vir inteira.
     recent_orders = db.query(models.Order).filter(
         *base_filter
-    ).order_by(models.Order.imported_at.desc()).limit(500).all()
+    ).order_by(models.Order.imported_at.desc(), models.Order.id.desc()).all()
+
+    # items_count em consulta agrupada — 1 query pro lote inteiro, não 1 lazy-load
+    # de `order.items` por pedido (o mesmo N+1 já corrigido em 01-02/08/2026 no
+    # dashboard master; sem isso, tirar o limit(500) tornaria a tela pesada pra
+    # sellers grandes).
+    items_count_map = dict(
+        db.query(models.OrderItem.order_id, func.count(models.OrderItem.id))
+        .join(models.Order, models.Order.id == models.OrderItem.order_id)
+        .filter(*base_filter)
+        .group_by(models.OrderItem.order_id)
+        .all()
+    )
 
     orders_list = [
         {
@@ -725,7 +744,7 @@ def seller_dashboard(
             "order_date": str(o.order_date) if o.order_date else None,
             "imported_at": o.imported_at.isoformat() if o.imported_at else None,
             "status": o.status.value if hasattr(o.status, 'value') else o.status,
-            "items_count": len(o.items),
+            "items_count": items_count_map.get(o.id, 0),
         }
         for o in recent_orders
     ]

@@ -164,7 +164,7 @@ def request_code(
     except Exception as e:
         # Log do erro real pro Railway (a mensagem pro usuário fica genérica de propósito).
         print(f"[billing_access] Falha ao enviar e-mail: {type(e).__name__}: {e}")
-        raise HTTPException(500, detail="Falha ao enviar e-mail. Verifique a configuração SMTP e tente de novo.")
+        raise HTTPException(500, detail="Falha ao enviar e-mail. Verifique as credenciais do Gmail no servidor e tente de novo.")
 
     now = now_brasilia()
     db.add(models.BillingAccessCode(

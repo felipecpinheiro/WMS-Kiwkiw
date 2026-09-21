@@ -109,8 +109,12 @@ def _gmail_access_token(cfg: dict) -> str:
         GOOGLE_TOKEN_URL, data=payload, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        tokens = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            tokens = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Google recusou a troca do refresh_token (HTTP {e.code}): {body}") from e
     return tokens["access_token"]
 
 

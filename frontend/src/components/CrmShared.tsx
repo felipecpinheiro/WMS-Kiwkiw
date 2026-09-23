@@ -191,6 +191,8 @@ export function StageSelect({ lead, onPick, className = '' }: {
 }
 
 // ── Nova interação ───────────────────────────────────────────────────────────
+// Opção do dropdown de etapa que encerra o lead como Perdido (motivo "Não evoluiu").
+const NAO_EVOLUIU = '__nao_evoluiu';
 export function InteractionModal({ lead, onClose, onDone }: {
   lead: CrmLead; onClose: () => void; onDone: () => void;
 }) {
@@ -236,7 +238,10 @@ export function InteractionModal({ lead, onClose, onDone }: {
       await crmApi.addInteraction(lead.id, {
         occurred_date: date, occurred_time: time, contact_type: type, channel,
         owner_id: owner || null, summary, effective, responded,
-        stage, next_action_type: naType, next_action_date: naDate || null,
+        stage: stage === NAO_EVOLUIU ? 'Perdido' : stage,
+        loss_reason: stage === NAO_EVOLUIU ? 'Não evoluiu' : null,
+        next_action_type: stage === NAO_EVOLUIU ? null : naType,
+        next_action_date: stage === NAO_EVOLUIU ? null : naDate || null,
       });
       toast.success('Interação registrada');
       onDone();
@@ -245,6 +250,7 @@ export function InteractionModal({ lead, onClose, onDone }: {
 
   if (!meta) return null;
   const stages = meta.stages.filter(s => s !== 'Perdido');
+  const naoEvoluiu = stage === NAO_EVOLUIU;
   return (
     <Modal title={`Nova interação — ${lead.company}`} onClose={onClose} wide>
       <div className="grid grid-cols-2 gap-3">
@@ -301,20 +307,23 @@ export function InteractionModal({ lead, onClose, onDone }: {
           <select className={inputCls} style={inputStyle} value={stage}
                   onChange={e => { touched.current.stage = true; setStage(e.target.value); }}>
             {stages.map(s => <option key={s}>{s}</option>)}
+            <option value={NAO_EVOLUIU}>Perdido — Não evoluiu</option>
           </select>
-          <select className={inputCls} style={inputStyle} value={naType}
+          <select className={inputCls} style={inputStyle} value={naType} disabled={naoEvoluiu}
                   onChange={e => { touched.current.type = true; setNaType(e.target.value); }}>
             {meta.action_types.map(s => <option key={s}>{s}</option>)}
           </select>
-          <input type="date" className={inputCls} style={inputStyle} value={naDate}
+          <input type="date" className={inputCls} style={inputStyle} value={naDate} disabled={naoEvoluiu}
                  onChange={e => { touched.current.date = true; setNaDate(e.target.value); }} />
         </div>
-        {reason && <div className="text-[11px] text-t3">{reason}</div>}
+        {naoEvoluiu
+          ? <div className="text-[11px] text-bad">O lead será encerrado como Perdido — motivo “Não evoluiu”.</div>
+          : reason && <div className="text-[11px] text-t3">{reason}</div>}
       </div>
 
       <div className="flex justify-end gap-2 pt-1">
         <button className={btnGhost} onClick={onClose}>Cancelar</button>
-        <button className={btnPrimary} disabled={busy || (stage !== 'Ganho' && !naDate)} onClick={save}>
+        <button className={btnPrimary} disabled={busy || (stage !== 'Ganho' && !naoEvoluiu && !naDate)} onClick={save}>
           <Save size={14} />Registrar
         </button>
       </div>

@@ -1101,6 +1101,7 @@ class CrmInteractionIn(BaseModel):
     effective: bool = True
     responded: bool = False
     stage: Optional[str] = None              # etapa depois da interação
+    loss_reason: Optional[str] = None        # obrigatório se stage == "Perdido"
     next_action_type: Optional[str] = None
     next_action_date: Optional[date] = None
 

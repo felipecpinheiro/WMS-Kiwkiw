@@ -31,7 +31,7 @@ ACTION_TYPES = [
 ]
 
 LOSS_REASONS = [
-    "Sem retorno", "Preço", "Escolheu concorrente", "Momento inadequado",
+    "Sem retorno", "Não evoluiu", "Preço", "Escolheu concorrente", "Momento inadequado",
     "Operação ainda pequena", "Operação incompatível com a Kiwkiw",
     "Desistiu do projeto", "Solução interna", "Outro",
 ]

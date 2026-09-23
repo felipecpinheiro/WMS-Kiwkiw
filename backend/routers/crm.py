@@ -397,8 +397,6 @@ def add_interaction(lead_id: int, body: schemas.CrmInteractionIn, db: Session = 
     _check_owner(db, body.owner_id)
     _check_lists(db, "", body.next_action_type)
     stage = body.stage or lead.stage
-    if stage == "Perdido":
-        raise HTTPException(422, "Para marcar como Perdido use a troca de etapa (exige motivo)")
     try:
         hh, mm = (body.occurred_time or "00:00").split(":")[:2]
         occurred = datetime.combine(body.occurred_date, datetime.min.time()).replace(
@@ -407,7 +405,8 @@ def add_interaction(lead_id: int, body: schemas.CrmInteractionIn, db: Session = 
         raise HTTPException(422, "Hora inválida (use HH:MM)")
 
     effective = body.effective or body.responded
-    _apply_stage(lead, stage, None, None,
+    # Perdido exige motivo (validado dentro de _apply_stage); a interação fica no histórico.
+    _apply_stage(lead, stage, body.loss_reason, None,
                  body.next_action_type, body.next_action_date, today_brasilia())
 
     # Datas resumidas: 1º/2º/3º contato efetivo e envio da proposta (só preenche o que está vazio)

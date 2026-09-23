@@ -19,7 +19,7 @@ STAGES = [
 CLOSED_STAGES = {"Ganho", "Perdido"}
 
 DEFAULT_ORIGINS = [
-    "Indicação", "Instagram", "Google", "Site Kiwkiw", "WhatsApp", "Evento",
+    "Indicação", "Instagram", "Google", "Anúncio", "Site Kiwkiw", "WhatsApp", "Evento",
     "Outbound / prospecção ativa", "Cliente atual / indicação de cliente",
     "Parceiro", "Outro",
 ]
@@ -43,6 +43,7 @@ CHANNELS = ["WhatsApp", "E-mail", "Telefone", "Videochamada", "Presencial", "Out
 # Resultado de uma interação COM resposta do cliente.
 OUTCOMES = {
     "interesse":   "Cliente demonstrou interesse",
+    "reuniao_marcada": "Reunião marcada",
     "reuniao":     "Reunião realizada",
     "proposta":    "Proposta enviada",
     "negociacao":  "Cliente em negociação",
@@ -93,6 +94,7 @@ def suggest_next_action(
     if responded:
         rule = {
             "interesse":  (1, "Enviar informações", "Em follow-up"),
+            "reuniao_marcada": (1, "Reunião", "Em follow-up"),  # data da reunião vem em client_date
             "reuniao":    (1, "Follow-up da proposta", "Em follow-up"),
             "proposta":   (2, "Follow-up da proposta", "Proposta enviada"),
             "negociacao": (2, "Negociação", "Negociação"),

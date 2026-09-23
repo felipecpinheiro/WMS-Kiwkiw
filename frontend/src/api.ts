@@ -1369,3 +1369,111 @@ export const clientSuppliesApi = {
     api.post<ClientSupply>(`/client-supplies/${supplyId}/rules`, data),
   removeRule: (ruleId: number) => api.delete<ClientSupply>(`/client-supplies/rules/${ruleId}`),
 };
+
+
+// ── CRM comercial (23/09/2026) ───────────────────────────────────────────────
+export type CrmAlert = 'atrasado' | 'hoje' | 'proximos2' | 'agendado' | 'sem_acao' | null;
+
+export interface CrmLead {
+  id: number;
+  company: string;
+  contact_name: string;
+  role_title: string;
+  email: string;
+  phone: string;
+  origin: string;
+  owner_id: number | null;
+  owner_name: string | null;
+  first_contact_date: string | null;
+  second_contact_date: string | null;
+  third_contact_date: string | null;
+  proposal_date: string | null;
+  stage: string;
+  next_action_type: string | null;
+  next_action_date: string | null;
+  alert: CrmAlert;
+  closed_at: string | null;
+  loss_reason: string | null;
+  reactivation_date: string | null;
+  notes: string;
+  created_at: string;
+  last_contact_date: string | null;
+  days_since_last_contact: number | null;
+  days_in_funnel: number;
+  effective_count: number;
+  has_responded: boolean;
+  suggest_close: boolean;
+  interactions?: CrmInteraction[];
+}
+
+export interface CrmInteraction {
+  id: number;
+  occurred_at: string;
+  contact_type: string;
+  channel: string;
+  owner_name: string | null;
+  summary: string;
+  effective: boolean;
+  responded: boolean;
+  stage_after: string | null;
+  next_action_type: string | null;
+  next_action_date: string | null;
+}
+
+export interface CrmMeta {
+  stages: string[];
+  origins: string[];
+  action_types: string[];
+  loss_reasons: string[];
+  loss_momento: string;
+  contact_types: string[];
+  channels: string[];
+  outcomes: { key: string; label: string }[];
+  owners: { id: number; name: string }[];
+  me: number;
+}
+
+export interface CrmSuggestion {
+  next_action_type: string;
+  next_action_date: string;
+  stage: string;
+  reason: string;
+  effective_count: number;
+}
+
+export interface CrmDashboardData {
+  period: { from: string; to: string };
+  kpis: {
+    active: number; new_in_period: number; followup: number; proposals: number;
+    negotiation: number; won: number; lost: number; overdue: number; no_action: number;
+    conversion_pct: number | null; avg_days_to_close: number | null;
+  };
+  by_origin: { name: string; count: number }[];
+  by_stage: { name: string; count: number }[];
+  by_loss_reason: { name: string; count: number }[];
+}
+
+export interface CrmTodayData {
+  today: string;
+  overdue: CrmLead[];
+  due_today: CrmLead[];
+  next2: CrmLead[];
+  no_action: CrmLead[];
+  reactivate: CrmLead[];
+}
+
+export const crmApi = {
+  meta: () => api.get<CrmMeta>('/crm/meta').then(r => r.data),
+  addOrigin: (name: string) => api.post<{ origins: string[] }>('/crm/origins', { name }).then(r => r.data),
+  leads: (params?: Record<string, any>) => api.get<CrmLead[]>('/crm/leads', { params }).then(r => r.data),
+  lead: (id: number) => api.get<CrmLead>(`/crm/leads/${id}`).then(r => r.data),
+  createLead: (body: Record<string, any>) => api.post<CrmLead>('/crm/leads', body).then(r => r.data),
+  updateLead: (id: number, body: Record<string, any>) => api.put<CrmLead>(`/crm/leads/${id}`, body).then(r => r.data),
+  changeStage: (id: number, body: Record<string, any>) => api.post<CrmLead>(`/crm/leads/${id}/stage`, body).then(r => r.data),
+  reopen: (id: number) => api.post<CrmLead>(`/crm/leads/${id}/reopen`).then(r => r.data),
+  suggest: (body: Record<string, any>) => api.post<CrmSuggestion>('/crm/suggest', body).then(r => r.data),
+  addInteraction: (id: number, body: Record<string, any>) =>
+    api.post<CrmLead>(`/crm/leads/${id}/interactions`, body).then(r => r.data),
+  today: (params?: Record<string, any>) => api.get<CrmTodayData>('/crm/today', { params }).then(r => r.data),
+  dashboard: (params?: Record<string, any>) => api.get<CrmDashboardData>('/crm/dashboard', { params }).then(r => r.data),
+};

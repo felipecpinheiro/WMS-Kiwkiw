@@ -8,7 +8,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ScanLine, Warehouse, Tag,
   PackagePlus, Box, Users, Building2, DollarSign,
-  ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2,
+  ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2, CalendarCheck, Users2, BarChart3,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
@@ -25,6 +25,12 @@ const navItems = [
     { to: '/inventory', icon: Warehouse,   label: 'Estoque'          },
     { to: '/billing',   icon: DollarSign,  label: 'Faturamento'      },
     { to: '/audit',     icon: ScanLine,    label: 'Trilha Auditoria' },
+  ]},
+  // Comercial (CRM, 23/09/2026): admin e manager — não entra no navOperator.
+  { group: 'Comercial', items: [
+    { to: '/comercial',           icon: CalendarCheck, label: 'O que fazer hoje' },
+    { to: '/comercial/leads',     icon: Users2,        label: 'Leads'            },
+    { to: '/comercial/dashboard', icon: BarChart3,     label: 'Dashboard comercial' },
   ]},
   { group: 'Cadastros', items: [
     { to: '/products',      icon: Tag,        label: 'Produtos'        },
@@ -122,6 +128,7 @@ export default function Layout() {
                 <NavLink
                   key={to}
                   to={to}
+                  end={to === '/comercial'}
                   className={({ isActive }) =>
                     `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all mb-0.5 ${
                       isActive
@@ -197,6 +204,7 @@ export default function Layout() {
               <NavLink
                 key={to}
                 to={to}
+                end={to === '/comercial'}
                 className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
                 style={({ isActive }) => ({ color: isActive ? 'rgb(var(--brand))' : 'rgb(var(--t4))' })}
               >
@@ -238,6 +246,7 @@ export default function Layout() {
                 <NavLink
                   key={to}
                   to={to}
+                  end={to === '/comercial'}
                   onClick={() => setDrawerOpen(false)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm mb-0.5"
                   style={({ isActive }) => isActive ? {

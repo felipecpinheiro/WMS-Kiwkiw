@@ -39,6 +39,34 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 23/09/2026 — CRM comercial (módulo novo, admin e manager)
+
+**Sem push.** Jornada do lead da Kiwkiw do 1º contato ao fechamento. Princípio: **todo lead ativo
+tem próxima ação** — o servidor recusa (422) gravação que deixe um lead ativo sem tipo+data.
+Não toca em estoque, pedidos nem faturamento.
+
+- **Tabelas novas** (nascem pelo `create_all`, sem migração): `crm_leads`, `crm_interactions`
+  (histórico só cresce), `crm_origins` (origens criadas pelo usuário). Etapa, origem, tipo de ação e
+  motivo são **texto** validado em `services/crm_calc.py` (sem enum nativo no Postgres).
+- **`services/crm_calc.py`** é a fonte única: listas, dias úteis (só sáb/dom fora, **sem feriados**),
+  cadência sem resposta (+2, +3, +5, +7 úteis; 4º contato efetivo = última tentativa; depois sugere
+  "Sem retorno"), cadência com resposta (interesse +1, reunião +1, proposta +2, negociação +2,
+  documento mesmo dia/próximo útil) e alerta. **Data indicada pelo cliente prevalece.**
+- **Interação:** `effective` (conta no 1º/2º/3º contato) e `responded` (cliente respondeu — define qual
+  cadência). Respondeu implica efetivo. Datas de 1º/2º/3º contato e proposta só preenchem se vazias.
+- **Perdido** exige motivo; "Momento inadequado" aceita data de reativação — chegando a data o lead
+  **aparece em "O que fazer hoje" (seção Reativação)**, não volta sozinho. `POST /crm/leads/{id}/reopen`.
+- **Dashboard:** período vale para novos, ganhos/perdidos (por `closed_at`), conversão
+  (ganhos ÷ ganhos+perdidos), tempo médio e origem; ativos/etapas/atrasados/sem ação são a foto de hoje.
+- **Arquivos:** `routers/crm.py`, `services/crm_calc.py`, `schemas.py` (Crm*), `models.py`;
+  frontend `CrmToday.tsx` (`/comercial`), `CrmLeads.tsx` (`/comercial/leads`, tabela + funil com
+  arrastar), `CrmDashboard.tsx`, `components/CrmShared.tsx`. Menu "Comercial" só admin/manager.
+- **Responsável** = usuário admin/manager ativo. Não há importação de leads (planilha) ainda.
+- **Testes:** 28 verificações E2E em PostgreSQL descartável + `tsc --noEmit` limpo + conferência
+  visual do fluxo "O que fazer hoje" → interação → lista, sem erro no console.
+
+---
+
 ## Mudanças Recentes — 17/09/2026 — Nível de estoque (Alto/Médio/Baixo) tinha dois critérios diferentes
 
 **Sintoma:** um seller (Naturology/Benatural) reportou números diferentes entre telas — a coluna

@@ -25,6 +25,9 @@ import SellersPage from './pages/Sellers';
 import SellerFixesPage from './pages/SellerFixes';
 import UnitsPage from './pages/Units';
 import ReturnsPage from './pages/Returns';
+import CrmTodayPage from './pages/CrmToday';
+import CrmLeadsPage from './pages/CrmLeads';
+import CrmDashboardPage from './pages/CrmDashboard';
 import BillingPage from './pages/Billing';
 import AuditPage from './pages/Audit';
 import SettingsPage from './pages/Settings';
@@ -306,6 +309,30 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'manager']}>
                     <ReturnsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="comercial"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <CrmTodayPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="comercial/leads"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <CrmLeadsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="comercial/dashboard"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                    <CrmDashboardPage />
                   </ProtectedRoute>
                 }
               />

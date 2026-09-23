@@ -795,10 +795,86 @@ class ClientSupplyRule(Base):
     supply = relationship("ClientSupply", back_populates="rules")
 
 
+
+# ============================================================
+# CRM COMERCIAL (23/09/2026)
+# Jornada do lead da Kiwkiw, do primeiro contato ao fechamento. Nada aqui toca
+# estoque, pedidos ou faturamento. Etapa, origem, tipo de ação e motivo de perda
+# são TEXTO (listas fechadas validadas em services/crm_calc.py) — evita enum
+# nativo no Postgres, que exigiria migração a cada opção nova.
+# ============================================================
+
+class CrmLead(Base):
+    __tablename__ = "crm_leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company = Column(String(150), nullable=False)          # Seller / Empresa
+    contact_name = Column(String(150), default="", nullable=False)
+    role_title = Column(String(100), default="", nullable=False)
+    email = Column(String(150), default="", nullable=False)
+    phone = Column(String(50), default="", nullable=False)  # WhatsApp / telefone
+    origin = Column(String(80), default="", nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    first_contact_date = Column(Date, nullable=True)
+    second_contact_date = Column(Date, nullable=True)
+    third_contact_date = Column(Date, nullable=True)
+    proposal_date = Column(Date, nullable=True)
+    stage = Column(String(30), default="Novo lead", nullable=False)
+    next_action_type = Column(String(40), nullable=True)
+    next_action_date = Column(Date, nullable=True)
+    closed_at = Column(Date, nullable=True)
+    loss_reason = Column(String(60), nullable=True)
+    reactivation_date = Column(Date, nullable=True)
+    notes = Column(Text, default="", nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=now_brasilia)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia)
+
+    owner = relationship("User", foreign_keys=[owner_id])
+    interactions = relationship(
+        "CrmInteraction", back_populates="lead",
+        order_by="CrmInteraction.occurred_at.desc()",
+    )
+
+    __table_args__ = (
+        Index("ix_crm_leads_next_action", "next_action_date"),
+    )
+
+
+class CrmInteraction(Base):
+    """Histórico cronológico — só cresce, nunca é editado nem apagado."""
+    __tablename__ = "crm_interactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("crm_leads.id"), nullable=False, index=True)
+    occurred_at = Column(DateTime, nullable=False)          # data + hora
+    contact_type = Column(String(40), nullable=False)
+    channel = Column(String(40), default="", nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    summary = Column(Text, default="", nullable=False)
+    effective = Column(Boolean, default=True, nullable=False)   # conta como contato (1º/2º/3º)
+    responded = Column(Boolean, default=False, nullable=False)  # cliente respondeu
+    stage_after = Column(String(30), nullable=True)
+    next_action_type = Column(String(40), nullable=True)
+    next_action_date = Column(Date, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=now_brasilia)
+
+    lead = relationship("CrmLead", back_populates="interactions")
+    owner = relationship("User", foreign_keys=[owner_id])
+
+
+class CrmOrigin(Base):
+    """Origens de lead criadas pelo usuário (as pré-definidas ficam no código)."""
+    __tablename__ = "crm_origins"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(80), unique=True, nullable=False)
+
+
 # ============================================================
 # AUDITORIA
 # ============================================================
-
 class AuditLog(Base):
     """
     Log de auditoria geral do sistema.

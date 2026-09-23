@@ -1055,3 +1055,64 @@ class ImportProgressInfo(BaseModel):
     total: int = 0
     done: bool = False
     success: Optional[bool] = None
+
+
+# ============================================================
+# CRM COMERCIAL (23/09/2026)
+# Listas fechadas (etapa, origem, tipo de ação, motivo) são validadas no router
+# contra services/crm_calc.py. Nenhum campo tem o mesmo nome de um tipo importado.
+# ============================================================
+
+class CrmLeadIn(BaseModel):
+    company: str
+    contact_name: str = ""
+    role_title: str = ""
+    email: str = ""
+    phone: str = ""
+    origin: str = ""
+    owner_id: Optional[int] = None
+    first_contact_date: Optional[date] = None
+    second_contact_date: Optional[date] = None
+    third_contact_date: Optional[date] = None
+    proposal_date: Optional[date] = None
+    stage: str = "Novo lead"
+    next_action_type: Optional[str] = None
+    next_action_date: Optional[date] = None
+    loss_reason: Optional[str] = None
+    reactivation_date: Optional[date] = None
+    notes: str = ""
+
+
+class CrmStageIn(BaseModel):
+    stage: str
+    loss_reason: Optional[str] = None
+    reactivation_date: Optional[date] = None
+    next_action_type: Optional[str] = None
+    next_action_date: Optional[date] = None
+
+
+class CrmInteractionIn(BaseModel):
+    occurred_date: date
+    occurred_time: Optional[str] = None      # "HH:MM"
+    contact_type: str
+    channel: str = ""
+    owner_id: Optional[int] = None
+    summary: str = ""
+    effective: bool = True
+    responded: bool = False
+    stage: Optional[str] = None              # etapa depois da interação
+    next_action_type: Optional[str] = None
+    next_action_date: Optional[date] = None
+
+
+class CrmSuggestIn(BaseModel):
+    lead_id: int
+    effective: bool = True
+    responded: bool = False
+    outcome: Optional[str] = None
+    client_date: Optional[date] = None       # data que o cliente pediu (prevalece)
+    base_date: Optional[date] = None         # default: hoje
+
+
+class CrmOriginIn(BaseModel):
+    name: str

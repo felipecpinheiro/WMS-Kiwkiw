@@ -35,7 +35,7 @@ from backend.database import init_db, get_db, SessionLocal
 from backend.routers import (
     auth, orders, scanning, inventory, products, billing, billing_access,
     dashboard, returns as returns_router, settings as settings_router,
-    client_supplies,
+    client_supplies, crm,
 )
 from backend import models
 from backend.auth import hash_password
@@ -581,6 +581,7 @@ app.include_router(dashboard.router)
 app.include_router(returns_router.router)
 app.include_router(settings_router.router)
 app.include_router(client_supplies.router)
+app.include_router(crm.router)
 
 
 # ============================================================

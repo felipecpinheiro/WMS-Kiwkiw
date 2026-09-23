@@ -3,7 +3,7 @@
  * Posição atual, movimentações, projeção de duração e análise por SKU.
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Fragment } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import { useForm } from 'react-hook-form';
 import {
@@ -18,6 +18,7 @@ import {
   ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts';
 import { inventoryApi, cadastrosApi, authApi } from '../api';
+import type { SheetAnalyzeResult } from '../api';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
@@ -397,6 +398,425 @@ function ImportHistoryModal({
     </div>
   );
 }
+
+// ── Modal "Lançar por Excel" (23/09/2026) ────────────────────────────────────
+// Modelo → subir → conferir → confirmar. Um arquivo por seller (o do topo da
+// tela). Tudo-ou-nada: qualquer erro trava o lote; avisos só avisam. Regras e
+// motivos em backend/routers/stock_excel.py.
+type SheetPhase = 'upload' | 'analyzing' | 'review' | 'submitting' | 'done';
+
+const fmtIsoDate = (v: string | null) => {
+  if (!v) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : v;
+};
+
+function SheetUploadModal({
+  sellerId,
+  sellerName,
+  onClose,
+  onSuccess,
+}: {
+  sellerId: number;
+  sellerName: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [phase, setPhase] = useState<SheetPhase>('upload');
+  const [file, setFile] = useState<File | null>(null);
+  const [analysis, setAnalysis] = useState<SheetAnalyzeResult | null>(null);
+  const [result, setResult] = useState<{ total: number; entradas: number; saidas: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitErrors, setSubmitErrors] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const busy = phase === 'analyzing' || phase === 'submitting';
+
+  const errorMessage = (err: any) => {
+    const detail = err?.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (detail?.message) return detail.message;
+    return `Erro de conexão: ${err?.message || 'desconhecido'}`;
+  };
+
+  const handleTemplate = async () => {
+    try {
+      await inventoryApi.downloadSheetTemplate();
+    } catch (err: any) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!file) return;
+    setPhase('analyzing');
+    setError(null);
+    setSubmitErrors([]);
+    try {
+      const res = await inventoryApi.analyzeSheet(sellerId, file);
+      setAnalysis(res.data);
+      setPhase('review');
+    } catch (err: any) {
+      setError(errorMessage(err));
+      setPhase('upload');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!analysis?.can_submit) return;
+    setPhase('submitting');
+    setSubmitErrors([]);
+    try {
+      const res = await inventoryApi.submitSheet(sellerId, analysis.rows);
+      setResult(res.data);
+      setPhase('done');
+    } catch (err: any) {
+      // 422 do tudo-ou-nada: o servidor revalidou e achou problema (algo mudou
+      // entre a conferência e a confirmação, ex.: SKU descontinuado no meio).
+      const detail = err?.response?.data?.detail;
+      setSubmitErrors(Array.isArray(detail?.errors) ? detail.errors : [errorMessage(err)]);
+      setPhase('review');
+    }
+  };
+
+  const resetFile = () => {
+    setPhase('upload');
+    setAnalysis(null);
+    setFile(null);
+    setError(null);
+    setSubmitErrors([]);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const errorRows = analysis ? analysis.rows.filter(r => r.errors.length > 0).length : 0;
+  const warnRows = analysis ? analysis.rows.filter(r => r.errors.length === 0 && r.warnings.length > 0).length : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div
+        className="w-full max-w-4xl rounded-2xl border border-line shadow-2xl flex flex-col max-h-[92vh]"
+        style={{ background: 'linear-gradient(135deg, rgb(var(--surface)) 0%, rgb(var(--surface-2)) 100%)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileSpreadsheet size={18} style={{ color: 'rgb(var(--brand))' }} />
+            <span className="text-t1 font-semibold text-base">Lançar por Excel</span>
+            <span className="text-t4 text-sm truncate">— {sellerName}</span>
+          </div>
+          <button onClick={onClose} disabled={busy} className="text-t4 hover:text-t2 transition disabled:opacity-30">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5 flex flex-col gap-5 overflow-y-auto">
+
+          {/* PASSO 1 e 2: modelo + arquivo */}
+          {(phase === 'upload' || phase === 'analyzing') && (
+            <div className="flex flex-col gap-4">
+              <p className="text-t3 text-sm leading-relaxed">
+                Entradas e saídas de estoque para o seller <span className="text-t1 font-medium">{sellerName}</span>.
+                Um arquivo por seller. Nada é gravado antes da sua confirmação, e se qualquer linha tiver
+                problema <span className="text-t1 font-medium">nada é lançado</span>.
+              </p>
+
+              <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-line px-4 py-3"
+                style={{ background: 'rgb(var(--surface-2))' }}>
+                <div className="text-sm">
+                  <p className="text-t1 font-medium">1. Baixe o modelo e preencha</p>
+                  <p className="text-t4 text-xs mt-0.5">Data · Tipo · SKU · Quantidade · NF · Observação (NF ou Observação obrigatória)</p>
+                </div>
+                <button
+                  onClick={handleTemplate}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition"
+                >
+                  <Download size={13} /> Baixar modelo
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <p className="text-t1 text-sm font-medium">2. Suba o arquivo preenchido</p>
+                <label
+                  onClick={() => !busy && fileRef.current?.click()}
+                  className="flex flex-col items-center justify-center gap-3 border-2 border-dashed border-line-strong rounded-xl py-8 cursor-pointer hover:border-violet-500/50 hover:bg-violet-500/5 transition"
+                >
+                  <FileUp size={32} className="text-t4" />
+                  <div className="text-center">
+                    <p className="text-t2 text-sm font-medium">
+                      {file ? file.name : 'Clique para selecionar o arquivo .xlsx'}
+                    </p>
+                    {file && <p className="text-t4 text-xs mt-1">{(file.size / 1024).toFixed(1)} KB</p>}
+                  </div>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".xlsx"
+                    className="sr-only"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) { setFile(f); setError(null); } }}
+                  />
+                </label>
+              </div>
+
+              {error && (
+                <div className="bg-red-500/10 border border-bad/30 rounded-lg p-3">
+                  <span className="text-bad text-xs leading-relaxed">{error}</span>
+                </div>
+              )}
+
+              {phase === 'analyzing' && (
+                <div className="flex items-center justify-center gap-3 py-2">
+                  <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-t3 text-sm">Conferindo arquivo...</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PASSO 3: conferência */}
+          {(phase === 'review' || phase === 'submitting') && analysis && (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-t1">{analysis.total}</p>
+                  <p className="text-t3 text-xs mt-0.5">Linhas</p>
+                </div>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-ok">{analysis.entradas}</p>
+                  <p className="text-t3 text-xs mt-0.5">Entradas</p>
+                </div>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-2xl font-bold text-bad">{analysis.saidas}</p>
+                  <p className="text-t3 text-xs mt-0.5">Saídas</p>
+                </div>
+                <div className="rounded-xl p-3 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className={`text-2xl font-bold ${errorRows ? 'text-bad' : analysis.warnings.length ? 'text-warn' : 'text-ok'}`}>
+                    {errorRows || analysis.warnings.length}
+                  </p>
+                  <p className="text-t3 text-xs mt-0.5">{errorRows ? 'Linhas com erro' : 'Avisos'}</p>
+                </div>
+              </div>
+
+              {!analysis.can_submit ? (
+                <div className="bg-red-500/10 border border-bad/40 rounded-lg p-3">
+                  <p className="text-bad text-sm font-semibold">
+                    Lançamento bloqueado — {errorRows} linha(s) com problema
+                  </p>
+                  <p className="text-t3 text-xs mt-1 leading-relaxed">
+                    As linhas em vermelho abaixo dizem o que corrigir. Nada foi gravado: corrija a planilha e suba de novo.
+                  </p>
+                </div>
+              ) : analysis.warnings.length > 0 ? (
+                <div className="bg-amber-500/10 border border-warn/40 rounded-lg p-3">
+                  <p className="text-warn text-sm font-semibold">{analysis.warnings.length} aviso(s) — confira antes de confirmar</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {warnRows > 0 && (
+                      <li className="text-t3 text-xs leading-relaxed">
+                        • {warnRows} linha(s) destacada(s) em amarelo abaixo (repetida no arquivo ou parece já lançada antes)
+                      </li>
+                    )}
+                    {analysis.skus.filter(s => s.goes_negative).map(s => (
+                      <li key={s.sku} className="text-t3 text-xs leading-relaxed">
+                        • SKU <span className="font-mono text-t2">{s.sku}</span> vai ficar com saldo negativo ({s.stock_before} → {s.stock_after})
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-t4 text-xs mt-1">Avisos não impedem o lançamento.</p>
+                </div>
+              ) : (
+                <div className="bg-emerald-500/10 border border-ok/30 rounded-lg p-3">
+                  <span className="text-ok text-sm">✓ Tudo certo. Confira e confirme o lançamento.</span>
+                </div>
+              )}
+
+              {submitErrors.length > 0 && (
+                <div className="bg-red-500/10 border border-bad/40 rounded-lg p-3">
+                  <p className="text-bad text-sm font-semibold">Nada foi lançado — o servidor encontrou problemas:</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {submitErrors.map((e, i) => (
+                      <li key={i} className="text-t3 text-xs leading-relaxed">• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Linhas do arquivo */}
+              <div>
+                <p className="text-t2 text-sm font-medium mb-2">Linhas do arquivo</p>
+                <div className="rounded-xl border border-line overflow-x-auto max-h-80 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0" style={{ background: 'rgb(var(--surface-2))' }}>
+                      <tr className="text-t4 text-left">
+                        <th className="px-3 py-2 font-medium">Linha</th>
+                        <th className="px-3 py-2 font-medium">Data</th>
+                        <th className="px-3 py-2 font-medium">Tipo</th>
+                        <th className="px-3 py-2 font-medium">SKU</th>
+                        <th className="px-3 py-2 font-medium text-right">Qtd</th>
+                        <th className="px-3 py-2 font-medium">NF</th>
+                        <th className="px-3 py-2 font-medium">Observação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.rows.map(r => {
+                        const hasErr = r.errors.length > 0;
+                        const hasWarn = !hasErr && r.warnings.length > 0;
+                        const rowCls = hasErr ? 'bg-red-500/10' : hasWarn ? 'bg-amber-500/10' : '';
+                        return (
+                          <Fragment key={r.line}>
+                            <tr className={`border-t border-line ${rowCls}`}>
+                              <td className="px-3 py-2 text-t4 font-mono">{r.line}</td>
+                              <td className="px-3 py-2 text-t2 whitespace-nowrap">{fmtIsoDate(r.movement_date)}</td>
+                              <td className={`px-3 py-2 whitespace-nowrap ${r.movement_type === 'Entrada' ? 'text-ok' : r.movement_type === 'Saída' ? 'text-bad' : 'text-t3'}`}>
+                                {r.movement_type || '—'}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className="text-t1 font-mono">{r.sku || '—'}</span>
+                                {r.product_name && <span className="block text-t4 truncate max-w-[220px]" title={r.product_name}>{r.product_name}</span>}
+                              </td>
+                              <td className="px-3 py-2 text-t1 text-right font-mono">{r.quantity ?? '—'}</td>
+                              <td className="px-3 py-2 text-t2">{r.nf_number || '—'}</td>
+                              <td className="px-3 py-2 text-t3 max-w-[220px] truncate" title={r.observation}>{r.observation || '—'}</td>
+                            </tr>
+                            {(hasErr || hasWarn) && (
+                              <tr className={rowCls}>
+                                <td />
+                                <td colSpan={6} className={`px-3 pb-2 text-xs ${hasErr ? 'text-bad' : 'text-warn'}`}>
+                                  {(hasErr ? r.errors : r.warnings).join(' · ')}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Saldo por SKU — só com o lote liberado: bloqueado, ele só somaria as linhas válidas e enganaria */}
+              {analysis.can_submit && analysis.skus.length > 0 && (
+                <div>
+                  <p className="text-t2 text-sm font-medium mb-2">Saldo por SKU</p>
+                  <div className="rounded-xl border border-line overflow-x-auto max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0" style={{ background: 'rgb(var(--surface-2))' }}>
+                        <tr className="text-t4 text-left">
+                          <th className="px-3 py-2 font-medium">SKU</th>
+                          <th className="px-3 py-2 font-medium text-right">Antes</th>
+                          <th className="px-3 py-2 font-medium text-right">Entradas</th>
+                          <th className="px-3 py-2 font-medium text-right">Saídas</th>
+                          <th className="px-3 py-2 font-medium text-right">Depois</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analysis.skus.map(s => (
+                          <tr key={s.sku} className={`border-t border-line ${s.goes_negative ? 'bg-amber-500/10' : ''}`}>
+                            <td className="px-3 py-2">
+                              <span className="text-t1 font-mono">{s.sku}</span>
+                              {s.product_name && <span className="block text-t4 truncate max-w-[260px]" title={s.product_name}>{s.product_name}</span>}
+                            </td>
+                            <td className={`px-3 py-2 text-right font-mono ${s.stock_before < 0 ? 'text-bad' : 'text-t2'}`}>{s.stock_before}</td>
+                            <td className="px-3 py-2 text-right font-mono text-ok">{s.total_in ? `+${s.total_in}` : '—'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-bad">{s.total_out ? `−${s.total_out}` : '—'}</td>
+                            <td className={`px-3 py-2 text-right font-mono font-semibold ${s.stock_after < 0 ? 'text-bad' : 'text-t1'}`}>{s.stock_after}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {phase === 'submitting' && (
+                <div className="flex items-center justify-center gap-3 py-2">
+                  <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-t3 text-sm">Lançando movimentações...</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Concluído */}
+          {phase === 'done' && result && (
+            <div className="flex flex-col gap-4 items-center py-4">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: 'rgba(46,158,107,0.15)' }}>
+                <span className="text-4xl text-ok">✓</span>
+              </div>
+              <p className="text-t1 font-semibold text-lg">Lançamento concluído</p>
+              <div className="grid grid-cols-3 gap-3 w-full">
+                <div className="rounded-xl p-4 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-3xl font-bold text-t1">{result.total}</p>
+                  <p className="text-t3 text-xs mt-1">Movimentações</p>
+                </div>
+                <div className="rounded-xl p-4 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-3xl font-bold text-ok">{result.entradas}</p>
+                  <p className="text-t3 text-xs mt-1">Entradas</p>
+                </div>
+                <div className="rounded-xl p-4 text-center" style={{ background: 'rgb(var(--surface-2))' }}>
+                  <p className="text-3xl font-bold text-bad">{result.saidas}</p>
+                  <p className="text-t3 text-xs mt-1">Saídas</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-line flex-wrap">
+          {phase === 'done' ? (
+            <button
+              onClick={onSuccess}
+              className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
+              style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
+            >
+              Concluir
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                disabled={busy}
+                className="px-4 py-2 rounded-lg text-sm text-t3 hover:text-t1 transition disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              {(phase === 'review' || phase === 'submitting') && (
+                <button
+                  onClick={resetFile}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
+                >
+                  Trocar arquivo
+                </button>
+              )}
+              {(phase === 'upload' || phase === 'analyzing') && (
+                <button
+                  onClick={handleAnalyze}
+                  disabled={!file || busy}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white transition disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
+                >
+                  Conferir arquivo
+                </button>
+              )}
+              {(phase === 'review' || phase === 'submitting') && analysis && (
+                <button
+                  onClick={handleSubmit}
+                  disabled={!analysis.can_submit || busy}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white transition disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg,#7B63E8,#5B47C8)' }}
+                >
+                  Confirmar lançamento ({analysis.total})
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ── Modal de Lançamento Manual ────────────────────────────────
 interface MovementForm {
@@ -1801,6 +2221,7 @@ export default function InventoryPage() {
   const [detailSku, setDetailSku] = useState<string | null>(null);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
   const [editMovement, setEditMovement] = useState<any | null>(null);
   const [deleteMovement, setDeleteMovement] = useState<any | null>(null);
 
@@ -1987,6 +2408,20 @@ export default function InventoryPage() {
             >
               <Upload size={13} />
               Lançamento Manual
+            </button>
+          )}
+
+          {/* Lançar por Excel (23/09/2026): modelo → conferência → confirmação, um seller por arquivo.
+              NÃO confundir com "Importar Histórico" (planilha ESTOQUE antiga do seller). */}
+          {user?.role !== 'operator' && (
+            <button
+              onClick={() => setShowSheet(true)}
+              disabled={!sellerId}
+              title="Sobe entradas e saídas de estoque a partir do modelo Excel (confere antes de gravar)"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-t1 border border-violet-500/40 hover:bg-violet-500/10 transition disabled:opacity-40"
+            >
+              <FileSpreadsheet size={13} />
+              Lançar por Excel
             </button>
           )}
 
@@ -2422,6 +2857,16 @@ export default function InventoryPage() {
           sellerId={sellerId}
           onClose={() => setShowHistory(false)}
           onSuccess={() => { setShowHistory(false); invalidate(); }}
+        />
+      )}
+
+      {/* Modal Lançar por Excel */}
+      {showSheet && sellerId && (
+        <SheetUploadModal
+          sellerId={sellerId}
+          sellerName={(sellers as any[]).find(s => s.id === sellerId)?.name ?? ''}
+          onClose={() => setShowSheet(false)}
+          onSuccess={() => { setShowSheet(false); invalidate(); }}
         />
       )}
 

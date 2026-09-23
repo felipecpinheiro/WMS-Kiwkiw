@@ -39,6 +39,65 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 23/09/2026 — "Lançar por Excel" na tela de Estoque (interna)
+
+Botão novo **"Lançar por Excel"** ao lado de "Lançamento Manual" (admin e gerente; operador não vê).
+Serve para acerto de inventário, entrada que chegou sem NF e afins — antes era um a um pelo
+Lançamento Manual. **Sem tabela, coluna ou migração.** Regras decididas com o dono do sistema.
+
+Fluxo de 3 passos, mesmo desenho de Devoluções (`backend/routers/stock_excel.py`, prefixo
+`/inventory/planilha`, `require_manager_or_above` + escopo `get_user_seller_ids`):
+
+| Endpoint | O quê |
+|---|---|
+| `GET /inventory/planilha/modelo` | Excel modelo em memória (aba `MOVIMENTACOES` + `INSTRUCOES`). Colunas: `Data · Tipo · SKU · Quantidade · NF · Observação` |
+| `POST /inventory/planilha/{seller_id}/analyze` | Confere. **Não grava nada.** Devolve linhas com `errors`/`warnings` por linha + saldo antes→depois por SKU |
+| `POST /inventory/planilha/{seller_id}/lancar` | **Revalida do zero** (mesma `_validate_rows`) e grava. Tudo-ou-nada: qualquer erro → 422 sem gravar |
+
+- **Um arquivo por seller** — o selecionado no topo da tela; a planilha não tem coluna Seller.
+- **Bloqueiam o lote:** data vazia/inválida/**futura** (a data vem da planilha, pode ser
+  retroativa, nunca vira "hoje" sozinha), tipo fora de `Entrada/Saída/E/S`, SKU sem produto
+  **ativo** no seller, SKU descontinuado, quantidade que não seja inteiro > 0, **NF e Observação
+  as duas vazias** (uma das duas é obrigatória) e NF com mais de 20 caracteres (tamanho da coluna —
+  bloqueia em vez de cortar).
+- **Só avisam:** saldo que fica negativo, linha idêntica no mesmo arquivo e linha que **parece já
+  lançada** (já existe movimento do seller com mesmo SKU, data, tipo, quantidade, NF e observação) —
+  é o que pega o mesmo arquivo subido duas vezes. Não existe trava dura contra reenvio.
+- SKU casado **sem diferenciar caixa** e gravado com a **grafia do cadastro** (armadilha de 28/08).
+- Movimento nasce com `nature="Lançamento de planilha"` (aparece no filtro de Natureza do Portal do
+  Seller; a observação não aparece lá), `product_id`, `operator_id` e **sem `order_id`** (mesmo
+  motivo de Devoluções: `reverse_stock_for_order` varreria o lançamento junto com a NF).
+- Saldo via `update_stock_position` (soma atômica de 16/09) — **não somar em Python aqui** —, uma
+  chamada por SKU e tipo, **sempre em ordem de SKU**: dois lotes ao mesmo tempo travam as posições
+  na mesma ordem e não entram em deadlock.
+- 1 `AuditLog` por lote: `entity_type="StockMovement"`, `action="BULK_UPLOAD"` (já tem filtro e cor
+  na Trilha de Auditoria).
+- Linha devolvida = **número da linha no Excel** (1ª linha de dados = 2), pra achar na planilha.
+- Tela (`SheetUploadModal` em `Inventory.tsx`): modelo → arquivo → conferência (linhas com erro em
+  vermelho, com aviso em amarelo, tabela "Saldo por SKU" só quando o lote está liberado) →
+  confirmar. `inventoryApi.downloadSheetTemplate/analyzeSheet/submitSheet` em `api.ts`.
+
+**Os dois endpoints antigos de lote continuam como estavam, sem uso por esta tela** (decisão do
+dono): `POST /inventory/movements/bulk` (parcial, SKU com caixa exata, sem checar produto) e
+`POST /inventory/bulk-stock-upload` (CSV multi-seller, não checa descontinuado). Não reaproveitar.
+
+⚠️ **Achado, não mexido:** a aba Movimentações ainda tem o botão **"Colar Movimentações"**
+(`PasteMovementsModal`), que chama `/inventory/movements/manual` **uma vez por linha** — não é
+tudo-ou-nada (uma linha que falha no meio deixa as anteriores gravadas), e linha sem data/tipo cai
+em "hoje"/"Saída". Convive com o "Lançar por Excel"; decisão pendente do dono se fica.
+
+**Testes:** 75 verificações E2E via TestClient em **SQLite** e 73 em **PostgreSQL** (bancos
+descartáveis; as 2 a mais do SQLite cobrem `movement_type` legado `'Entrada'`, que o enum do Postgres
+não aceita) — modelo, conferência sem gravar, lançamento (campos, posição, AuditLog), cada erro
+na linha certa, tudo-ou-nada com linhas forjadas, avisos de negativo/idêntica/reenvio, formatos de
+data (datetime, série do Excel, dd/mm/aaaa, ISO) e de tipo, escopo (gerente fora do seller 403,
+operador/cliente 403, seller inativo 404), mesmo SKU várias vezes no lote (1 posição, soma certa).
+Mais **teste de concorrência em PostgreSQL** (uvicorn com 4 workers): 3 rodadas de 16 lotes em
+paralelo com os mesmos SKUs em ordens trocadas — 0 erro/deadlock e saldo da tela = antes + movimentos.
+`tsc --noEmit` limpo. Conferência visual (claro, escuro e celular) sem erro novo no console.
+
+---
+
 ## Mudanças Recentes — 23/09/2026 — CRM comercial (módulo novo, admin e manager)
 
 **Sem push.** Jornada do lead da Kiwkiw do 1º contato ao fechamento. Princípio: **todo lead ativo
@@ -1493,6 +1552,7 @@ WMS Kiwkiw/
 │   │   ├── billing.py       ← Configurações de cobrança, relatório, export Excel
 │   │   ├── dashboard.py     ← Cockpit master e portal do seller
 │   │   ├── returns.py       ← Devoluções: modelo Excel, conferência e lançamento
+│   │   ├── stock_excel.py   ← "Lançar por Excel" na tela de Estoque (modelo, conferência, lançamento)
 │   │   ├── client_supplies.py ← Insumos do Cliente: saldo estimado por regra, client-only
 │   │   └── settings.py      ← Configurações gerais + controle do folder_watcher
 │   └── services/
@@ -2161,6 +2221,7 @@ esses números** (decisão do dono do sistema).
 | `/billing` | `routers/billing.py` | **Faturamento reescrito (31/08/2026).** `seller-params`/`seller-box-prices` (manager+, sem portão), `/billing/my/...` (Portal do seller, sem portão). Os outros 11 — `box-prices`, `closing/{seller}/{YYYY-MM}` (GET/PUT rascunho, `close`, `reopen`, `pdf`, `excel`), `consolidated/{YYYY-MM}` (+ `excel`, `pdfs.zip`) — exigem **admin + Acesso Protegido ao Financeiro liberado** (02/09/2026, ver `billing_access`). `apply-forward` **removido**. Cálculo em `services/billing_calc.py`, documentos em `services/billing_docs.py`. **Não mexe em estoque.** |
 | `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
+| `/inventory/planilha` | `routers/stock_excel.py` | **Lançar por Excel (23/09/2026), manager+ (gerente só nos sellers que atende).** `modelo`, `{seller_id}/analyze` (**não grava**), `{seller_id}/lancar` (revalida, **tudo-ou-nada**). Um seller por arquivo; movimento com `nature="Lançamento de planilha"` e **sem `order_id`**. Sem tabela nova |
 | `/client-supplies` | `routers/client_supplies.py` | **Insumos do Cliente (14/09/2026), só `client`** (o próprio seller_id) cria/edita/apaga; `admin` só lê via `?seller_id=`. CRUD de insumo/entrada/regra + `GET /client-supplies` (lista com saldo) e `GET /client-supplies/movements` (extrato combinado). **Nunca mexe em estoque nem faturamento** — saldo é estimativa calculada em `services/supply_calc.py` |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |

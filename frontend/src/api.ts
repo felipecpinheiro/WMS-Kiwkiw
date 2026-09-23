@@ -872,7 +872,62 @@ export const inventoryApi = {
       timeout: 300000, // 5 min para 1M+ linhas
       onUploadProgress,
     }),
+  /** Lançar por Excel (23/09/2026) — baixa o modelo. Precisa do Bearer token (window.open daria 401). */
+  downloadSheetTemplate: () =>
+    downloadAuthenticatedFile('/inventory/planilha/modelo', 'MODELO_LANCAMENTO_ESTOQUE.xlsx'),
+  /** Lançar por Excel — confere a planilha do seller sem gravar nada. */
+  analyzeSheet: (sellerId: number, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<SheetAnalyzeResult>(`/inventory/planilha/${sellerId}/analyze`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
+  /** Lançar por Excel — grava. Tudo-ou-nada: 422 com a lista de erros quando alguma linha trava. */
+  submitSheet: (sellerId: number, rows: SheetMovementRow[]) =>
+    api.post<{ total: number; entradas: number; saidas: number; warnings: number }>(
+      `/inventory/planilha/${sellerId}/lancar`,
+      { rows },
+    ),
 };
+
+// Lançar por Excel (23/09/2026) — ver backend/routers/stock_excel.py
+export interface SheetMovementRow {
+  line: number;
+  movement_date: string | null;
+  movement_type: string;
+  sku: string;
+  product_name: string | null;
+  quantity: number | string | null;
+  nf_number: string;
+  observation: string;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface SheetSkuSummary {
+  sku: string;
+  product_name: string | null;
+  stock_before: number;
+  total_in: number;
+  total_out: number;
+  stock_after: number;
+  goes_negative: boolean;
+}
+
+export interface SheetAnalyzeResult {
+  seller_id: number;
+  seller_name: string;
+  total: number;
+  entradas: number;
+  saidas: number;
+  rows: SheetMovementRow[];
+  errors: string[];
+  warnings: string[];
+  skus: SheetSkuSummary[];
+  can_submit: boolean;
+}
 
 
 // ============================================================

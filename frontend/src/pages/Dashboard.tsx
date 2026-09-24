@@ -1364,6 +1364,32 @@ export default function DashboardPage() {
     }
   };
 
+  // Reativar direto do modal pós-import: mesmo endpoint de handleRevertDiscontinued,
+  // mas depois atualiza a lista do próprio modal (NFs liberadas somem daqui).
+  const handleRevertDiscontinuedFromReport = async (sellerId: number, sku: string) => {
+    try {
+      const { data } = await cadastrosApi.removeDiscontinuedSku(sellerId, sku);
+      const applied = data?.stock?.applied?.length ?? 0;
+      toast.success(
+        `SKU ${sku} reativado` + (applied ? ` — ${applied} NF(s) baixaram estoque` : ''),
+        { duration: 6000 },
+      );
+      const { data: fresh } = await ordersApi.pendingStock();
+      setStockReport(prev => ({
+        applied_orders: (prev?.applied_orders ?? 0) + applied,
+        negatives: [...(prev?.negatives ?? []), ...(data?.stock?.negatives ?? [])],
+        pending_orders: fresh.pending_orders,
+        missing_products: fresh.missing_products,
+        discontinued_products: fresh.discontinued_products ?? [],
+      }));
+      qc.invalidateQueries('orders-pending-stock');
+      qc.invalidateQueries(['dashboard', targetDate]);
+      refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao reativar SKU');
+    }
+  };
+
   const handleCancelDiscontinuedOrder = async (orderId: number, reason: string) => {
     try {
       const res = await scanningApi.deactivateOrder(orderId, reason);
@@ -2677,7 +2703,44 @@ export default function DashboardPage() {
                         {p.missing_carrier && 'Sem transportadora'}
                         {p.missing_carrier && p.missing_skus.length > 0 && ' · '}
                         {p.missing_skus.length > 0 && `SKU sem cadastro: ${p.missing_skus.join(', ')}`}
+                        {(p.discontinued_skus?.length ?? 0) > 0 && (
+                          <span className="text-bad">
+                            {(p.missing_carrier || p.missing_skus.length > 0) && ' · '}
+                            SKU descontinuado: {p.discontinued_skus.join(', ')}
+                          </span>
+                        )}
                       </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── SKUs descontinuados retendo NF (reativar libera a NF) ── */}
+            {(stockReport.discontinued_products?.length ?? 0) > 0 && (
+              <div className="mb-5">
+                <p className="text-sm font-semibold text-bad mb-1">
+                  🚫 SKU(s) descontinuado(s) segurando NF
+                </p>
+                <p className="text-xs text-t3 mb-2">
+                  Reativar volta o SKU ao normal para todo o seller e libera as NFs abaixo. Se não for
+                  reativar, cancele a NF em Manuseios.
+                </p>
+                <div className="border border-line-soft rounded-lg divide-y divide-line-soft">
+                  {stockReport.discontinued_products!.map((dp) => (
+                    <div key={`${dp.seller_id}:${dp.sku}`} className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <p className="text-sm text-t1">
+                          <span className="font-mono">{dp.sku}</span> — {dp.seller_name ?? 'sem seller'}
+                        </p>
+                        <p className="text-xs text-t4">NF {dp.nf_numbers.join(', ')}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRevertDiscontinuedFromReport(dp.seller_id, dp.sku)}
+                        className="text-[11px] font-medium text-t1 bg-ok/80 hover:bg-ok rounded-lg px-2.5 py-1 transition whitespace-nowrap"
+                      >
+                        ↩ Reativar SKU
+                      </button>
                     </div>
                   ))}
                 </div>

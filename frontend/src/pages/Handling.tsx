@@ -258,12 +258,16 @@ function HandlingCard({
   onClick,
   onCtxMenu,
   onRegister,
+  onReactivateSku,
+  onCancelHeld,
   isEntrada,
 }: {
   card: SessionCard;
   onClick: () => void;
   onCtxMenu?: (e: React.MouseEvent) => void;
   onRegister?: () => void;
+  onReactivateSku?: () => void;
+  onCancelHeld?: () => void;
   isEntrada?: boolean;
 }) {
   const info = statusInfo(card.status, isEntrada);
@@ -313,15 +317,49 @@ function HandlingCard({
           {/* NF com SKU descontinuado (13/09/2026): tratado como se o SKU não
               existisse mais. Diferente do "sem produto", não há nada para
               cadastrar — só reverter na aba do seller em Cadastros. */}
-          {!!card.discontinued_orders && (
-            <span
-              title="Essas NFs têm SKU descontinuado e não podem ser bipadas. Reverta na aba 'Descontinuados' do cadastro do seller, se for o caso."
-              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
-              text-bad bg-bad-soft border border-bad/20"
-            >
-              🚫 {card.discontinued_orders} SKU descontinuado
-            </span>
-          )}
+          {!!card.discontinued_orders && (() => {
+            const skus = card.discontinued_skus ?? [];
+            const uniq = Array.from(new Set(skus.map(s => s.sku)));
+            const shown = uniq.slice(0, 2).join(', ');
+            const extra = uniq.length > 2 ? ` +${uniq.length - 2}` : '';
+            const tip = skus.length
+              ? 'SKU descontinuado (NF): ' + skus.map(s => `${s.sku} (NF ${s.nf_number})`).join(' · ')
+              : 'Essas NFs têm SKU descontinuado e não podem ser bipadas.';
+            return (
+              <div className="mt-1 flex flex-col items-start gap-1">
+                <span
+                  title={tip}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold
+                  text-bad bg-bad-soft border border-bad/20"
+                >
+                  🚫 {card.discontinued_orders} SKU descontinuado{shown ? `: ${shown}${extra}` : ''}
+                  {skus[0]?.nf_number ? ` (NF ${skus[0].nf_number})` : ''}
+                </span>
+                {(onReactivateSku || onCancelHeld) && (
+                  <div className="flex flex-wrap gap-1">
+                    {onReactivateSku && uniq.length > 0 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onReactivateSku(); }}
+                        title="Volta o SKU ao normal para todo o seller e libera as NFs retidas por ele"
+                        className="px-2 py-0.5 rounded-full text-[9px] font-semibold text-t1 bg-ok/80 hover:bg-ok transition"
+                      >
+                        ↩ Reativar SKU
+                      </button>
+                    )}
+                    {onCancelHeld && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onCancelHeld(); }}
+                        title="Cancela o manuseio deste card (admin)"
+                        className="px-2 py-0.5 rounded-full text-[9px] font-semibold text-bad border border-bad/40 hover:bg-bad-soft transition"
+                      >
+                        ✕ Cancelar manuseio
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {!!card.missing_product_orders && !!(card.held_skus && card.held_skus.length) && onRegister && (
             <button
               onClick={(e) => { e.stopPropagation(); onRegister(); }}
@@ -399,7 +437,7 @@ function HandlingCard({
 // ── Kanban Column ─────────────────────────────────────────────────────────────
 
 function KanbanColumn({
-  title, status, cards, onCardClick, onCardCtxMenu, onCardRegister, isEntrada,
+  title, status, cards, onCardClick, onCardCtxMenu, onCardRegister, onCardReactivateSku, onCardCancelHeld, isEntrada,
 }: {
   title: string;
   status: string;
@@ -407,6 +445,8 @@ function KanbanColumn({
   onCardClick: (card: SessionCard) => void;
   onCardCtxMenu?: (e: React.MouseEvent, card: SessionCard) => void;
   onCardRegister?: (card: SessionCard) => void;
+  onCardReactivateSku?: (card: SessionCard) => void;
+  onCardCancelHeld?: (card: SessionCard) => void;
   isEntrada?: boolean;
 }) {
   const info = statusInfo(status, isEntrada);
@@ -445,6 +485,8 @@ function KanbanColumn({
             onClick={() => onCardClick(c)}
             onCtxMenu={onCardCtxMenu ? (e) => onCardCtxMenu(e, c) : undefined}
             onRegister={onCardRegister ? () => onCardRegister(c) : undefined}
+            onReactivateSku={onCardReactivateSku ? () => onCardReactivateSku(c) : undefined}
+            onCancelHeld={onCardCancelHeld && c.held_only ? () => onCardCancelHeld(c) : undefined}
             isEntrada={isEntrada}
           />
         ))
@@ -670,6 +712,27 @@ export default function HandlingPage() {
     setCtxMenu({ x: e.clientX, y: e.clientY, card });
   }
 
+  // Reativa (reverte a descontinuação) os SKUs que seguram as NFs do card.
+  // Mesmo endpoint da aba Descontinuados do seller; vale para o seller inteiro.
+  async function handleReactivateSkus(card: SessionCard) {
+    const skus = Array.from(new Set((card.discontinued_skus ?? []).map(s => s.sku)));
+    if (!skus.length) return;
+    if (!window.confirm(
+      `Reativar ${skus.join(', ')} de ${card.seller_name}?\n\n` +
+      `O SKU volta a ser vendido para TODO o seller e as NFs retidas por ele voltam ao manuseio.`
+    )) return;
+    try {
+      for (const sku of skus) {
+        await cadastrosApi.removeDiscontinuedSku(card.seller_id as number, sku);
+      }
+      toast.success(`SKU ${skus.join(', ')} reativado`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao reativar SKU');
+    } finally {
+      refetch();
+    }
+  }
+
   function handleAdminAction(action: AdminAction, card: SessionCard) {
     setConfirmAction({ action, card });
   }
@@ -808,9 +871,9 @@ export default function HandlingPage() {
         <FulfillmentLoader show={showFulfillmentLoader} title="Preparando os manuseios" />
         {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
-          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
-          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="A Iniciar"   status="pending"     cards={groups.pending}     onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} onCardReactivateSku={(isAdmin || isManager) ? handleReactivateSkus : undefined} onCardCancelHeld={isAdmin ? (c) => handleAdminAction("cancel_handling", c) : undefined} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Em Processo" status="in_progress" cards={groups.in_progress} onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} onCardReactivateSku={(isAdmin || isManager) ? handleReactivateSkus : undefined} onCardCancelHeld={isAdmin ? (c) => handleAdminAction("cancel_handling", c) : undefined} isEntrada={fileTypeView === 'entrada'} />
+          <KanbanColumn title="Finalizado"  status="completed"   cards={groups.completed}   onCardClick={handleCardClick} onCardCtxMenu={isAdmin ? handleCardCtxMenu : undefined} onCardRegister={setHeldCard} onCardReactivateSku={(isAdmin || isManager) ? handleReactivateSkus : undefined} onCardCancelHeld={isAdmin ? (c) => handleAdminAction("cancel_handling", c) : undefined} isEntrada={fileTypeView === 'entrada'} />
         </div>
         )}
       </div>

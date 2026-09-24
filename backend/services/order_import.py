@@ -14,7 +14,7 @@ import re
 from sqlalchemy.orm import Session, joinedload
 from .. import models, schemas
 from .kit_handler import process_order_items
-from .stock_manager import apply_stock_for_orders, orders_missing_product_skus
+from .stock_manager import apply_stock_for_orders, orders_missing_product_skus, orders_with_discontinued_skus
 from .excel_utils import ensure_xlsx_path
 from . import import_progress
 from ..timezone_utils import now_brasilia, today_brasilia
@@ -1168,15 +1168,22 @@ def import_excel_orders(
         #   - can_apply = False: entrada nunca "reprocessa" — a única saída é
         #     cadastrar o produto.
         if session_file_type == models.FileType.IMPORT:
-            held_map = orders_missing_product_skus(db, [o.id for o in session_orders])
-            if held_map:
+            ids_all = [o.id for o in session_orders]
+            held_map = orders_missing_product_skus(db, ids_all)
+            # SKU descontinuado também segura a NF de entrada fora do manuseio:
+            # o aviso diz QUAL SKU e o modal oferece reativar.
+            disc_map = orders_with_discontinued_skus(db, ids_all)
+            if held_map or disc_map:
                 by_order = {o.id: o for o in session_orders}
                 missing_acc: dict = {}
+                disc_acc: dict = {}
                 pending_acc: list = []
-                for oid, skus in held_map.items():
+                for oid in list(dict.fromkeys(list(held_map.keys()) + list(disc_map.keys()))):
                     o = by_order.get(oid)
                     if o is None:
                         continue
+                    skus = held_map.get(oid, [])
+                    disc_skus = disc_map.get(oid, [])
                     pending_acc.append(schemas.PendingStockOrderInfo(
                         order_id=o.id,
                         nf_number=o.nf_number,
@@ -1185,6 +1192,7 @@ def import_excel_orders(
                         customer_name=o.customer_name,
                         missing_carrier=False,
                         missing_skus=skus,
+                        discontinued_skus=disc_skus,
                         can_apply=False,
                     ))
                     for sku in skus:
@@ -1201,11 +1209,23 @@ def import_excel_orders(
                             )
                         if o.nf_number not in missing_acc[key].nf_numbers:
                             missing_acc[key].nf_numbers.append(o.nf_number)
+                    for sku in disc_skus:
+                        key = (o.seller_id, sku)
+                        if key not in disc_acc:
+                            disc_acc[key] = schemas.DiscontinuedStockInfo(
+                                seller_id=o.seller_id,
+                                seller_name=o.seller.trade_name if o.seller else None,
+                                sku=sku,
+                                nf_numbers=[],
+                            )
+                        if o.nf_number not in disc_acc[key].nf_numbers:
+                            disc_acc[key].nf_numbers.append(o.nf_number)
                 stock_report.pending_orders = pending_acc
                 stock_report.missing_products = list(missing_acc.values())
+                stock_report.discontinued_products = list(disc_acc.values())
                 warnings.append(
                     f"{len(pending_acc)} NF(s) de entrada não podem ser bipadas "
-                    f"até cadastrar o produto"
+                    f"(SKU sem cadastro ou descontinuado)"
                 )
 
         # Log de auditoria

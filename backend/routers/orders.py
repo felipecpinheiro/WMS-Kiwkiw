@@ -27,6 +27,7 @@ from ..services.stock_manager import (
     reverse_stock_for_order,
     evaluate_orders_for_stock,
     orders_missing_product_skus,
+    orders_with_discontinued_skus,
     release_pending_orders_for_sku,
     relink_sku_in_pending_orders,
     order_has_scan_overage,
@@ -532,7 +533,15 @@ def _entrada_held_orders(db: Session, session_id: Optional[int] = None) -> list:
     if not orders:
         return []
     held = orders_missing_product_skus(db, [o.id for o in orders])
-    return [o for o in orders if o.id in held]
+    # SKU descontinuado também segura a NF de entrada fora do manuseio (o aviso
+    # tem que dizer qual SKU e permitir reativar). NF já concluída/interrompida
+    # não conta: já foi processada antes da descontinuação.
+    open_ids = [
+        o.id for o in orders
+        if o.status not in (models.OrderStatus.COMPLETED, models.OrderStatus.INTERRUPTED)
+    ]
+    held_disc = orders_with_discontinued_skus(db, open_ids)
+    return [o for o in orders if o.id in held or o.id in held_disc]
 
 
 @router.get("/pending-stock", response_model=schemas.StockApplyReport)
@@ -607,8 +616,10 @@ def list_pending_stock_orders(
     entrada_held = _entrada_held_orders(db, session_id)
     if entrada_held:
         held_map = orders_missing_product_skus(db, [o.id for o in entrada_held])
+        held_disc_map = orders_with_discontinued_skus(db, [o.id for o in entrada_held])
         for o in entrada_held:
             skus = held_map.get(o.id, [])
+            disc_skus = held_disc_map.get(o.id, [])
             pending.append(schemas.PendingStockOrderInfo(
                 order_id=o.id,
                 nf_number=o.nf_number,
@@ -617,10 +628,13 @@ def list_pending_stock_orders(
                 customer_name=o.customer_name,
                 missing_carrier=False,
                 missing_skus=skus,
+                discontinued_skus=disc_skus,
                 can_apply=False,
             ))
             for sku in skus:
                 _add_missing(o, sku)
+            for sku in disc_skus:
+                _add_discontinued(o, sku)
 
     if not pending:
         return schemas.StockApplyReport()

@@ -3062,7 +3062,16 @@ def session_cards(
     # de "Cadastrar produto": não há nada para cadastrar, só reverter a
     # descontinuação na aba do seller. Por isso ficam num mapa separado, para
     # não misturar as duas razões no mesmo `held_skus`.
-    discontinued_map_all = orders_with_discontinued_skus(db, all_order_ids)
+    # NF já concluída/interrompida não fica "retida": já foi processada antes do
+    # SKU ser descontinuado (não há mais o que bipar nem o que liberar). Sem este
+    # recorte o card ficava eternamente "A Iniciar 0/0" com o selo de descontinuado
+    # e o "Cancelar manuseio" recusava ("nenhum pedido ativo").
+    _done_status = ("completed", "interrupted")
+    open_order_ids = [
+        o.id for s in sessions for o in s.orders
+        if (o.status.value if hasattr(o.status, "value") else o.status) not in _done_status
+    ]
+    discontinued_map_all = orders_with_discontinued_skus(db, open_order_ids)
     held_ids = set(held_map_all.keys()) | set(discontinued_map_all.keys())
     # Nome do produto (do próprio OrderItem) por (order_id, sku) — só das NFs
     # seguradas, para o card poder listar QUAL SKU falta sem carregar

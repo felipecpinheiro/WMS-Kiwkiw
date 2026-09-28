@@ -8,7 +8,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ScanLine, Warehouse, Tag,
   PackagePlus, Box, Users, Building2, DollarSign,
-  ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2, CalendarCheck, Users2, BarChart3,
+  ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2, CalendarCheck, Users2, BarChart3, FileText,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
@@ -48,11 +48,13 @@ const navItems = [
   ]},
 ];
 
-// Nav reduzido para operadores: Manuseios + Estoque (somente visualização)
+// Nav reduzido para operadores: Manuseios + Estoque (somente visualização) +
+// Documentos (Uploads do Dia, todas as unidades, sem "Excluir sellers")
 const navOperator = [
   { group: 'Operação', items: [
     { to: '/manuseios', icon: Layers,    label: 'Manuseios' },
     { to: '/inventory', icon: Warehouse, label: 'Estoque'   },
+    { to: '/documents', icon: FileText,  label: 'Documentos' },
   ]},
 ];
 

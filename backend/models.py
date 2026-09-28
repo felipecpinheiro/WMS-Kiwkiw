@@ -43,7 +43,8 @@ class SupplyRuleType(str, enum.Enum):
     PER_ORDER = "PER_ORDER"            # todo pedido de saída consome `quantity`
     SKU_OCCURRENCE = "SKU_OCCURRENCE"  # pedido contém o SKU -> consome `quantity` (não importa a qtd do SKU)
     SKU_QUANTITY = "SKU_QUANTITY"      # consumo = qtd do SKU enviada x `quantity`
-    BOX_OCCURRENCE = "BOX_OCCURRENCE"  # pedido saiu com `box_key` -> consome `quantity` (só as caixas próprias travadas)
+    BOX_OCCURRENCE = "BOX_OCCURRENCE"  # pedido saiu com `box_key` -> consome `quantity` (qualquer caixa canônica, 23/09/2026)
+    SUPPLY_OCCURRENCE = "SUPPLY_OCCURRENCE"  # cada unidade consumida do insumo `source_supply_id` -> consome `quantity` (23/09/2026, permite encadeamento)
 
 class FileType(str, enum.Enum):
     IMPORT = "entrada"
@@ -757,7 +758,10 @@ class ClientSupply(Base):
 
     seller = relationship("Seller")
     entries = relationship("ClientSupplyEntry", back_populates="supply", cascade="all, delete-orphan")
-    rules = relationship("ClientSupplyRule", back_populates="supply", cascade="all, delete-orphan")
+    rules = relationship(
+        "ClientSupplyRule", back_populates="supply", cascade="all, delete-orphan",
+        foreign_keys="ClientSupplyRule.supply_id",
+    )
 
     __table_args__ = (
         UniqueConstraint("seller_id", "box_key", name="uq_client_supply_seller_box"),
@@ -770,9 +774,13 @@ class ClientSupplyEntry(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     supply_id = Column(Integer, ForeignKey("client_supplies.id"), nullable=False)
-    quantity = Column(Integer, nullable=False)
+    quantity = Column(Integer, nullable=False)  # pode ser negativo quando is_balance=True (ajuste de Balanço)
     entry_date = Column(Date, nullable=False)
     note = Column(String(300), default="", nullable=False)
+    # Ajuste de "Balanço" (23/09/2026): lançamento automático que corrige o
+    # saldo pro valor físico informado pelo seller, sem mexer nas entradas e
+    # no consumo já registrados. Sempre datado de hoje (ver client_supplies.py).
+    is_balance = Column(Boolean, default=False, nullable=False)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=now_brasilia)
 
@@ -788,11 +796,16 @@ class ClientSupplyRule(Base):
     rule_type = Column(Enum(SupplyRuleType), nullable=False)
     sku = Column(String(100), nullable=True)       # SKU_OCCURRENCE / SKU_QUANTITY
     box_key = Column(String(30), nullable=True)    # BOX_OCCURRENCE
+    # SUPPLY_OCCURRENCE (23/09/2026): dispara sobre o consumo de OUTRO insumo do
+    # mesmo seller (permite encadear). Checado contra ciclo na criação — ver
+    # client_supplies.py `_assert_no_supply_cycle`.
+    source_supply_id = Column(Integer, ForeignKey("client_supplies.id"), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=now_brasilia)
 
-    supply = relationship("ClientSupply", back_populates="rules")
+    supply = relationship("ClientSupply", back_populates="rules", foreign_keys=[supply_id])
+    source_supply = relationship("ClientSupply", foreign_keys=[source_supply_id])
 
 
 

@@ -1363,13 +1363,17 @@ export const returnsApi = {
 // que o seller manda pra Kiwkiw. Saldo ESTIMADO por regra, gerenciado pelo
 // próprio seller no Portal — nunca toca em estoque de produto nem faturamento.
 
-export type SupplyRuleType = 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY' | 'BOX_OCCURRENCE';
+// 23/09/2026: BOX_OCCURRENCE (qualquer caixa canônica) e SUPPLY_OCCURRENCE
+// (por consumo de outro insumo, com encadeamento) liberadas pro próprio seller.
+export type SupplyRuleType = 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY' | 'BOX_OCCURRENCE' | 'SUPPLY_OCCURRENCE';
 
 export interface ClientSupplyRule {
   id: number;
   rule_type: SupplyRuleType;
   sku: string | null;
   box_key: string | null;
+  source_supply_id: number | null;
+  source_supply_name: string | null;
   quantity: number;
 }
 
@@ -1378,6 +1382,7 @@ export interface ClientSupplyEntry {
   quantity: number;
   entry_date: string;
   note: string;
+  is_balance: boolean;
 }
 
 export interface ClientSupply {
@@ -1396,7 +1401,7 @@ export interface ClientSupply {
 
 export interface ClientSupplyMovement {
   movement_date: string | null;
-  type: 'entrada' | 'consumo';
+  type: 'entrada' | 'balanco' | 'consumo';
   supply_id: number;
   supply_name: string;
   quantity: number;
@@ -1420,7 +1425,10 @@ export const clientSuppliesApi = {
   updateEntry: (entryId: number, data: { quantity: number; entry_date: string; note?: string }) =>
     api.put<ClientSupply>(`/client-supplies/entries/${entryId}`, data),
   removeEntry: (entryId: number) => api.delete<ClientSupply>(`/client-supplies/entries/${entryId}`),
-  addRule: (supplyId: number, data: { rule_type: SupplyRuleType; sku?: string; quantity: number }) =>
+  /** Balanço (23/09/2026): informa o saldo físico atual; o servidor lança o ajuste (sempre hoje). */
+  setBalance: (supplyId: number, newBalance: number) =>
+    api.post<ClientSupply>(`/client-supplies/${supplyId}/balance`, { new_balance: newBalance }),
+  addRule: (supplyId: number, data: { rule_type: SupplyRuleType; sku?: string; box_key?: string; source_supply_id?: number; quantity: number }) =>
     api.post<ClientSupply>(`/client-supplies/${supplyId}/rules`, data),
   removeRule: (ruleId: number) => api.delete<ClientSupply>(`/client-supplies/rules/${ruleId}`),
 };

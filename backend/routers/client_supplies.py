@@ -31,10 +31,16 @@ from ..auth import get_current_user
 from ..timezone_utils import today_brasilia
 from .. import models, schemas
 from ..services import supply_calc
+from ..services.billing_calc import CANONICAL_BOXES
 
 router = APIRouter(prefix="/client-supplies", tags=["Insumos do Cliente"])
 
-_RULE_TYPES_SELLER = {"PER_ORDER", "SKU_OCCURRENCE", "SKU_QUANTITY"}
+# 23/09/2026: BOX_OCCURRENCE (por caixa usada, qualquer uma das 16 canônicas)
+# e SUPPLY_OCCURRENCE (por consumo de outro insumo do próprio seller, com
+# encadeamento) passaram a ser configuráveis pelo próprio seller — antes só
+# existiam pelos 4 insumos travados de caixa própria (que continuam usando
+# BOX_OCCURRENCE por baixo, mas travados via `locked`).
+_RULE_TYPES_SELLER = {"PER_ORDER", "SKU_OCCURRENCE", "SKU_QUANTITY", "BOX_OCCURRENCE", "SUPPLY_OCCURRENCE"}
 
 
 def _seller_id_for_write(current_user: models.User) -> int:
@@ -64,13 +70,28 @@ def _seller_id_for_read(current_user: models.User, seller_id_param: Optional[int
 def _get_supply(db: Session, seller_id: int, supply_id: int) -> models.ClientSupply:
     supply = (
         db.query(models.ClientSupply)
-        .options(joinedload(models.ClientSupply.entries), joinedload(models.ClientSupply.rules))
+        .options(
+            joinedload(models.ClientSupply.entries),
+            joinedload(models.ClientSupply.rules).joinedload(models.ClientSupplyRule.source_supply),
+        )
         .filter(models.ClientSupply.id == supply_id, models.ClientSupply.seller_id == seller_id)
         .first()
     )
     if not supply:
         raise HTTPException(status_code=404, detail="Insumo não encontrado")
     return supply
+
+
+def _rule_to_out(r: models.ClientSupplyRule) -> dict:
+    return {
+        "id": r.id,
+        "rule_type": r.rule_type.value if hasattr(r.rule_type, "value") else r.rule_type,
+        "sku": r.sku,
+        "box_key": r.box_key,
+        "source_supply_id": r.source_supply_id,
+        "source_supply_name": r.source_supply.name if r.source_supply else None,
+        "quantity": r.quantity,
+    }
 
 
 def _to_out(db: Session, supply: models.ClientSupply) -> dict:
@@ -83,7 +104,7 @@ def _to_out(db: Session, supply: models.ClientSupply) -> dict:
         "locked": supply.locked,
         "box_key": supply.box_key,
         "entries": [e for e in supply.entries if e.active],
-        "rules": [r for r in supply.rules if r.active],
+        "rules": [_rule_to_out(r) for r in supply.rules if r.active],
         **bal,
     }
 
@@ -107,7 +128,10 @@ def list_supplies(
 
     supplies = (
         db.query(models.ClientSupply)
-        .options(joinedload(models.ClientSupply.entries), joinedload(models.ClientSupply.rules))
+        .options(
+            joinedload(models.ClientSupply.entries),
+            joinedload(models.ClientSupply.rules).joinedload(models.ClientSupplyRule.source_supply),
+        )
         .filter(models.ClientSupply.seller_id == sid, models.ClientSupply.active == True)  # noqa: E712
         .order_by(models.ClientSupply.locked.desc(), models.ClientSupply.name.asc())
         .all()
@@ -253,8 +277,69 @@ def delete_entry(
 
 
 # ─────────────────────────────────────────────────────────
+# BALANÇO (23/09/2026) — ajusta o saldo pro valor físico informado, sem mexer
+# nas entradas/consumo já registrados. Lançado como uma entrada especial
+# (`is_balance=True`, quantidade pode ser negativa), sempre datada de hoje.
+# ─────────────────────────────────────────────────────────
+
+@router.post("/{supply_id}/balance", response_model=schemas.ClientSupplyOut)
+def set_balance(
+    supply_id: int,
+    body: schemas.ClientSupplyBalanceIn,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    sid = _seller_id_for_write(current_user)
+    supply = _get_supply(db, sid, supply_id)
+    atual = supply_calc.compute_balance(db, supply)["saldo_estimado"]
+    delta = body.new_balance - atual
+    if delta == 0:
+        return _to_out(db, supply)
+    db.add(models.ClientSupplyEntry(
+        supply_id=supply.id, quantity=delta, entry_date=today_brasilia(),
+        note="", is_balance=True, active=True,
+    ))
+    db.commit()
+    return _to_out(db, _get_supply(db, sid, supply_id))
+
+
+# ─────────────────────────────────────────────────────────
 # REGRAS
 # ─────────────────────────────────────────────────────────
+
+def _assert_no_supply_cycle(db: Session, seller_id: int, target_id: int, source_id: int) -> None:
+    """
+    Impede criar uma regra SUPPLY_OCCURRENCE que feche um ciclo (ex.: A passa
+    a depender de B, mas B já depende de A, direta ou indiretamente através de
+    outros insumos no meio). Anda pela cadeia de `source_supply_id` a partir
+    de `source_id`; se chegar em `target_id`, é ciclo.
+    """
+    if source_id == target_id:
+        raise HTTPException(status_code=400, detail="Um insumo não pode depender de si mesmo")
+    seen = {target_id}
+    frontier = [source_id]
+    rules_by_supply = (
+        db.query(models.ClientSupplyRule)
+        .join(models.ClientSupply, models.ClientSupply.id == models.ClientSupplyRule.supply_id)
+        .filter(
+            models.ClientSupply.seller_id == seller_id,
+            models.ClientSupplyRule.rule_type == models.SupplyRuleType.SUPPLY_OCCURRENCE,
+            models.ClientSupplyRule.active == True,  # noqa: E712
+        )
+        .all()
+    )
+    while frontier:
+        current = frontier.pop()
+        if current in seen:
+            raise HTTPException(
+                status_code=400,
+                detail="Essa regra fecharia um ciclo entre insumos (um dependeria do outro em círculo)",
+            )
+        seen.add(current)
+        for r in rules_by_supply:
+            if r.supply_id == current and r.source_supply_id:
+                frontier.append(r.source_supply_id)
+
 
 @router.post("/{supply_id}/rules", response_model=schemas.ClientSupplyOut, status_code=201)
 def add_rule(
@@ -269,14 +354,34 @@ def add_rule(
         raise HTTPException(status_code=400, detail="Este insumo é travado — a regra não pode ser alterada")
     if body.rule_type not in _RULE_TYPES_SELLER:
         raise HTTPException(status_code=422, detail=f"Tipo de regra inválido: {body.rule_type}")
-    if body.rule_type != "PER_ORDER" and not (body.sku or "").strip():
-        raise HTTPException(status_code=422, detail="Informe o SKU para esta regra")
     if body.quantity <= 0:
         raise HTTPException(status_code=422, detail="Quantidade precisa ser maior que zero")
+
+    box_key = None
+    source_supply_id = None
+    sku = None
+
+    if body.rule_type == "BOX_OCCURRENCE":
+        box_key = (body.box_key or "").strip()
+        if box_key not in CANONICAL_BOXES:
+            raise HTTPException(status_code=422, detail="Escolha uma caixa válida")
+    elif body.rule_type == "SUPPLY_OCCURRENCE":
+        if not body.source_supply_id:
+            raise HTTPException(status_code=422, detail="Escolha o insumo de origem")
+        source = _get_supply(db, sid, body.source_supply_id)  # 404 se não existir/for de outro seller
+        _assert_no_supply_cycle(db, sid, supply.id, source.id)
+        source_supply_id = source.id
+    elif body.rule_type != "PER_ORDER":
+        sku = (body.sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=422, detail="Informe o SKU para esta regra")
+
     db.add(models.ClientSupplyRule(
         supply_id=supply.id,
         rule_type=models.SupplyRuleType(body.rule_type),
-        sku=(body.sku or "").strip() or None,
+        sku=sku,
+        box_key=box_key,
+        source_supply_id=source_supply_id,
         quantity=body.quantity,
         active=True,
     ))

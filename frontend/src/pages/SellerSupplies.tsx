@@ -24,11 +24,11 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 import {
   AlertTriangle, Plus, Trash2, Pencil, Lock, X, ChevronDown, ChevronUp,
-  PackagePlus, List as ListIcon,
+  PackagePlus, List as ListIcon, Scale,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  clientSuppliesApi, cadastrosApi, ClientSupply, ClientSupplyRule, SupplyRuleType,
+  clientSuppliesApi, cadastrosApi, ClientSupply, ClientSupplyRule, SupplyRuleType, CANONICAL_BOXES,
 } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -41,7 +41,16 @@ const RULE_LABEL: Record<SupplyRuleType, string> = {
   SKU_OCCURRENCE: 'Se o SKU sair no pedido, consome',
   SKU_QUANTITY: 'Por unidade do SKU enviada, consome',
   BOX_OCCURRENCE: 'Toda vez que essa caixa é usada, consome',
+  SUPPLY_OCCURRENCE: 'A cada unidade consumida de outro insumo, consome',
 };
+
+/** Regra incompleta pro tipo escolhido — trava o botão de salvar. */
+function ruleIncomplete(type: SupplyRuleType, sku: string, boxKey: string, sourceId: string): boolean {
+  if (type === 'SKU_OCCURRENCE' || type === 'SKU_QUANTITY') return !sku;
+  if (type === 'BOX_OCCURRENCE') return !boxKey;
+  if (type === 'SUPPLY_OCCURRENCE') return !sourceId;
+  return false;
+}
 
 const brDate = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -142,17 +151,23 @@ function SkuPicker({ sellerId, value, onPick }: { sellerId: number; value: strin
   );
 }
 
-/** Bloco de regra (tipo + SKU condicional + quantidade) — reaproveitado na criação e no card. */
+/** Bloco de regra (tipo + alvo condicional + quantidade) — reaproveitado na criação e no card. */
 function RuleBuilder({
-  sellerId, ruleType, setRuleType, ruleSku, setRuleSku, ruleQty, setRuleQty, compact,
+  sellerId, ruleType, setRuleType, ruleSku, setRuleSku, ruleBoxKey, setRuleBoxKey,
+  ruleSourceId, setRuleSourceId, ruleQty, setRuleQty, supplyOptions, compact,
 }: {
   sellerId: number;
   ruleType: SupplyRuleType;
   setRuleType: (v: SupplyRuleType) => void;
   ruleSku: string;
   setRuleSku: (v: string) => void;
+  ruleBoxKey: string;
+  setRuleBoxKey: (v: string) => void;
+  ruleSourceId: string;
+  setRuleSourceId: (v: string) => void;
   ruleQty: string;
   setRuleQty: (v: string) => void;
+  supplyOptions: ClientSupply[];
   compact?: boolean;
 }) {
   return (
@@ -163,12 +178,35 @@ function RuleBuilder({
           <option value="PER_ORDER">Todo pedido consome</option>
           <option value="SKU_OCCURRENCE">Se o SKU sair no pedido, consome</option>
           <option value="SKU_QUANTITY">Por unidade do SKU enviada, consome</option>
+          <option value="BOX_OCCURRENCE">Toda vez que uma caixa é usada, consome</option>
+          <option value="SUPPLY_OCCURRENCE">A cada unidade consumida de outro insumo, consome</option>
         </select>
       </div>
-      {ruleType !== 'PER_ORDER' && (
+      {(ruleType === 'SKU_OCCURRENCE' || ruleType === 'SKU_QUANTITY') && (
         <div className="w-52">
           {!compact && <label className="text-[10px] text-t5 uppercase tracking-wide">SKU</label>}
           <SkuPicker sellerId={sellerId} value={ruleSku} onPick={setRuleSku} />
+        </div>
+      )}
+      {ruleType === 'BOX_OCCURRENCE' && (
+        <div className="w-52">
+          {!compact && <label className="text-[10px] text-t5 uppercase tracking-wide">Caixa</label>}
+          <select value={ruleBoxKey} onChange={e => setRuleBoxKey(e.target.value)} className={inputCls} style={inputStyle}>
+            <option value="">Selecionar caixa...</option>
+            {CANONICAL_BOXES.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      )}
+      {ruleType === 'SUPPLY_OCCURRENCE' && (
+        <div className="w-52">
+          {!compact && <label className="text-[10px] text-t5 uppercase tracking-wide">Insumo de origem</label>}
+          <select value={ruleSourceId} onChange={e => setRuleSourceId(e.target.value)} className={inputCls} style={inputStyle}>
+            <option value="">Selecionar insumo...</option>
+            {supplyOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {supplyOptions.length === 0 && (
+            <p className="text-[10px] text-t5 mt-1">Cadastre outro insumo primeiro pra poder depender dele.</p>
+          )}
         </div>
       )}
       <div className="w-20">
@@ -180,7 +218,10 @@ function RuleBuilder({
 }
 
 function RuleRow({ rule, locked, onDelete }: { rule: ClientSupplyRule; locked: boolean; onDelete: () => void }) {
-  const alvo = rule.rule_type === 'BOX_OCCURRENCE' ? `caixa "${rule.box_key}"` : rule.sku ? `SKU "${rule.sku}"` : '';
+  let alvo = '';
+  if (rule.rule_type === 'BOX_OCCURRENCE') alvo = `caixa "${rule.box_key}"`;
+  else if (rule.rule_type === 'SUPPLY_OCCURRENCE') alvo = `insumo "${rule.source_supply_name ?? '—'}"`;
+  else if (rule.sku) alvo = `SKU "${rule.sku}"`;
   return (
     <div className="flex items-center justify-between gap-2 text-xs text-t3 bg-surface-2 rounded-lg px-2.5 py-1.5">
       <span>{RULE_LABEL[rule.rule_type]} <b className="text-t2">{rule.quantity}</b>{alvo && <> — {alvo}</>}</span>
@@ -209,7 +250,7 @@ function deriveStatus(s: ClientSupply): { label: string; cls: string } {
     : { label: 'Alto', cls: 'bg-ok-soft text-ok' };
 }
 
-function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: number }) {
+function SupplyRow({ supply, sellerId, allSupplies }: { supply: ClientSupply; sellerId: number; allSupplies: ClientSupply[] }) {
   const qc = useQueryClient();
   const [showDetails, setShowDetails] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -225,7 +266,13 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [ruleType, setRuleType] = useState<SupplyRuleType>('PER_ORDER');
   const [ruleSku, setRuleSku] = useState('');
+  const [ruleBoxKey, setRuleBoxKey] = useState('');
+  const [ruleSourceId, setRuleSourceId] = useState('');
   const [ruleQty, setRuleQty] = useState('1');
+  // Balanço (23/09/2026): ajusta o saldo pro valor físico informado — sempre
+  // hoje, sem mexer nas entradas/consumo já lançados.
+  const [showBalanceForm, setShowBalanceForm] = useState(false);
+  const [balanceVal, setBalanceVal] = useState('');
 
   const invalidate = () => qc.invalidateQueries(['client-supplies']);
 
@@ -244,17 +291,31 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
     },
   );
   const mDeleteEntry = useMutation((id: number) => clientSuppliesApi.removeEntry(id), { onSuccess: invalidate });
-  const mAddRule = useMutation(
-    () => clientSuppliesApi.addRule(supply.id, { rule_type: ruleType, sku: ruleSku || undefined, quantity: Number(ruleQty) }),
+  const mSetBalance = useMutation(
+    () => clientSuppliesApi.setBalance(supply.id, Number(balanceVal)),
     {
-      onSuccess: () => { invalidate(); setShowRuleForm(false); setRuleSku(''); setRuleQty('1'); },
+      onSuccess: () => { invalidate(); setShowBalanceForm(false); setBalanceVal(''); toast.success('Balanço ajustado'); },
+      onError: (e: any) => { toast.error(e?.response?.data?.detail || 'Erro ao ajustar balanço'); },
+    },
+  );
+  const mAddRule = useMutation(
+    () => clientSuppliesApi.addRule(supply.id, {
+      rule_type: ruleType,
+      sku: ruleSku || undefined,
+      box_key: ruleBoxKey || undefined,
+      source_supply_id: ruleSourceId ? Number(ruleSourceId) : undefined,
+      quantity: Number(ruleQty),
+    }),
+    {
+      onSuccess: () => { invalidate(); setShowRuleForm(false); setRuleSku(''); setRuleBoxKey(''); setRuleSourceId(''); setRuleQty('1'); },
       onError: (e: any) => { toast.error(e?.response?.data?.detail || 'Erro ao criar regra'); },
     },
   );
   const mDeleteRule = useMutation((id: number) => clientSuppliesApi.removeRule(id), { onSuccess: invalidate });
 
   const status = deriveStatus(supply);
-  const extraOpen = showEntryForm || showDetails;
+  const extraOpen = showEntryForm || showBalanceForm || showDetails;
+  const supplyOptions = useMemo(() => allSupplies.filter(s => s.id !== supply.id), [allSupplies, supply.id]);
 
   return (
     <>
@@ -284,12 +345,21 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${status.cls}`}>{status.label}</span>
         </td>
         <td className="px-3 py-2.5 text-right">
-          <button
-            onClick={() => { setShowEntryForm(v => !v); setTimeout(() => qtyRef.current?.focus(), 0); }}
-            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-t1 whitespace-nowrap ml-auto"
-          >
-            <PackagePlus size={12} /> Lançar
-          </button>
+          <div className="flex items-center gap-1.5 justify-end">
+            <button
+              onClick={() => { setShowBalanceForm(v => !v); setShowEntryForm(false); }}
+              title="Ajustar saldo pro que você tem fisicamente agora"
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-surface-2 hover:bg-line text-t3 whitespace-nowrap"
+            >
+              <Scale size={12} /> Balanço
+            </button>
+            <button
+              onClick={() => { setShowEntryForm(v => !v); setShowBalanceForm(false); setTimeout(() => qtyRef.current?.focus(), 0); }}
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-t1 whitespace-nowrap"
+            >
+              <PackagePlus size={12} /> Lançar
+            </button>
+          </div>
         </td>
       </tr>
 
@@ -321,22 +391,44 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
               </div>
             )}
 
+            {showBalanceForm && (
+              <div className="flex items-end gap-2 flex-wrap mb-3">
+                <div>
+                  <label className="text-[10px] text-t5 uppercase tracking-wide">Saldo atual (o que você tem agora)</label>
+                  <input type="number" min={0} placeholder="Ex: 30" value={balanceVal} onChange={e => setBalanceVal(e.target.value)} className={`${inputCls} w-28`} style={inputStyle} autoFocus />
+                </div>
+                <p className="text-[11px] text-t5 pb-2">
+                  Hoje o saldo calculado é <b className="text-t3">{supply.saldo_estimado}</b>. O ajuste será lançado com a data de hoje.
+                </p>
+                <button
+                  disabled={balanceVal === '' || Number(balanceVal) < 0}
+                  onClick={() => mSetBalance.mutate()}
+                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-t1 disabled:opacity-40"
+                >
+                  Confirmar balanço
+                </button>
+                <button onClick={() => setShowBalanceForm(false)} className="text-t5 hover:text-t2 px-2 py-1.5"><X size={16} /></button>
+              </div>
+            )}
+
             {showDetails && (
               <div className="space-y-4">
-                {!supply.locked && (
-                  <div className="flex items-center gap-1.5 text-[11px] text-t4">
-                    <span>contando desde</span>
-                    <input
-                      type="date"
-                      value={dateVal}
-                      onChange={e => setDateVal(e.target.value)}
-                      onBlur={() => { if (dateVal !== supply.count_from_date) mUpdate.mutate(); }}
-                      className="bg-transparent border-b border-dashed border-line text-t3 outline-none"
-                    />
-                    <button onClick={() => setEditingName(true)} className="text-t5 hover:text-t2 ml-2"><Pencil size={12} /></button>
-                    <button onClick={() => { if (confirm(`Excluir "${supply.name}"?`)) mDelete.mutate(); }} className="text-t5 hover:text-bad"><Trash2 size={12} /></button>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5 text-[11px] text-t4">
+                  <span>contando desde</span>
+                  <input
+                    type="date"
+                    value={dateVal}
+                    onChange={e => setDateVal(e.target.value)}
+                    onBlur={() => { if (dateVal !== supply.count_from_date) mUpdate.mutate(); }}
+                    className="bg-transparent border-b border-dashed border-line text-t3 outline-none"
+                  />
+                  {!supply.locked && (
+                    <>
+                      <button onClick={() => setEditingName(true)} className="text-t5 hover:text-t2 ml-2"><Pencil size={12} /></button>
+                      <button onClick={() => { if (confirm(`Excluir "${supply.name}"?`)) mDelete.mutate(); }} className="text-t5 hover:text-bad"><Trash2 size={12} /></button>
+                    </>
+                  )}
+                </div>
 
                 {/* Histórico de entradas */}
                 <div>
@@ -346,7 +438,12 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
                     {supply.entries.map(en => (
                       <div key={en.id} className="flex items-center justify-between text-xs text-t3 bg-surface rounded-lg px-2.5 py-1.5">
                         <span>
-                          <b className="text-t2">{en.quantity}</b> un. em {brDate(en.entry_date)}
+                          {en.is_balance && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mr-1.5 rounded text-[9px] font-bold bg-surface-2 text-t4 align-middle">
+                              <Scale size={9} /> BALANÇO
+                            </span>
+                          )}
+                          <b className={en.quantity < 0 ? 'text-bad' : 'text-t2'}>{en.quantity > 0 ? `+${en.quantity}` : en.quantity}</b> un. em {brDate(en.entry_date)}
                           {en.note && <span className="text-t5"> — {en.note}</span>}
                         </span>
                         <button onClick={() => mDeleteEntry.mutate(en.id)} className="text-t5 hover:text-bad shrink-0"><Trash2 size={13} /></button>
@@ -365,9 +462,18 @@ function SupplyRow({ supply, sellerId }: { supply: ClientSupply; sellerId: numbe
                   </div>
                   {showRuleForm && !supply.locked && (
                     <div className="mb-2">
-                      <RuleBuilder sellerId={sellerId} ruleType={ruleType} setRuleType={setRuleType} ruleSku={ruleSku} setRuleSku={setRuleSku} ruleQty={ruleQty} setRuleQty={setRuleQty} compact />
+                      <RuleBuilder
+                        sellerId={sellerId}
+                        ruleType={ruleType} setRuleType={setRuleType}
+                        ruleSku={ruleSku} setRuleSku={setRuleSku}
+                        ruleBoxKey={ruleBoxKey} setRuleBoxKey={setRuleBoxKey}
+                        ruleSourceId={ruleSourceId} setRuleSourceId={setRuleSourceId}
+                        ruleQty={ruleQty} setRuleQty={setRuleQty}
+                        supplyOptions={supplyOptions}
+                        compact
+                      />
                       <button
-                        disabled={ruleType !== 'PER_ORDER' && !ruleSku}
+                        disabled={ruleIncomplete(ruleType, ruleSku, ruleBoxKey, ruleSourceId)}
                         onClick={() => mAddRule.mutate()}
                         className="mt-2 px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-t1 disabled:opacity-40"
                       >
@@ -420,18 +526,20 @@ function MovementsPanel({ sellerId }: { sellerId: number }) {
               <tr key={i} className="border-b border-line-soft last:border-0">
                 <td className="px-3 py-2 text-t3 whitespace-nowrap">{brDate(m.movement_date)}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${m.type === 'entrada' ? 'bg-ok-soft text-ok' : 'bg-surface-2 text-t4'}`}>
-                    {m.type === 'entrada' ? 'Entrada' : 'Consumo'}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    m.type === 'entrada' ? 'bg-ok-soft text-ok' : m.type === 'balanco' ? 'bg-surface-2 text-t3' : 'bg-surface-2 text-t4'
+                  }`}>
+                    {m.type === 'entrada' ? 'Entrada' : m.type === 'balanco' ? 'Balanço' : 'Consumo'}
                   </span>
                 </td>
                 <td className="px-3 py-2 text-t2 font-semibold">{m.supply_name}</td>
-                <td className={`px-3 py-2 text-right font-bold ${m.type === 'entrada' ? 'text-ok' : 'text-bad'}`}>
-                  {m.type === 'entrada' ? '+' : '-'}{m.quantity}
+                <td className={`px-3 py-2 text-right font-bold ${m.type === 'consumo' ? 'text-bad' : m.quantity < 0 ? 'text-bad' : 'text-ok'}`}>
+                  {m.quantity > 0 && m.type !== 'consumo' ? '+' : m.type === 'consumo' ? '-' : ''}{m.quantity}
                 </td>
                 <td className="px-3 py-2 text-t4">
-                  {m.type === 'entrada'
-                    ? (m.note || '—')
-                    : `NF ${m.nf_number ?? '—'}${m.rule_desc ? ` — ${m.rule_desc}` : ''}`}
+                  {m.type === 'consumo'
+                    ? `NF ${m.nf_number ?? '—'}${m.rule_desc ? ` — ${m.rule_desc}` : ''}`
+                    : (m.note || '—')}
                 </td>
               </tr>
             ))}
@@ -453,6 +561,8 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
   const [newDate, setNewDate] = useState(todayBrasiliaStr());
   const [newRuleType, setNewRuleType] = useState<SupplyRuleType>('PER_ORDER');
   const [newRuleSku, setNewRuleSku] = useState('');
+  const [newRuleBoxKey, setNewRuleBoxKey] = useState('');
+  const [newRuleSourceId, setNewRuleSourceId] = useState('');
   const [newRuleQty, setNewRuleQty] = useState('1');
 
   const mCreate = useMutation(
@@ -461,13 +571,18 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
       // Regra já entra junto na criação — chamada em sequência (o insumo
       // continua criado mesmo se a regra falhar; dá pra adicionar depois).
       await clientSuppliesApi.addRule(created.id, {
-        rule_type: newRuleType, sku: newRuleSku || undefined, quantity: Number(newRuleQty),
+        rule_type: newRuleType,
+        sku: newRuleSku || undefined,
+        box_key: newRuleBoxKey || undefined,
+        source_supply_id: newRuleSourceId ? Number(newRuleSourceId) : undefined,
+        quantity: Number(newRuleQty),
       });
     },
     {
       onSuccess: () => {
         qc.invalidateQueries(['client-supplies']);
-        setShowNew(false); setNewName(''); setNewRuleType('PER_ORDER'); setNewRuleSku(''); setNewRuleQty('1');
+        setShowNew(false); setNewName(''); setNewRuleType('PER_ORDER');
+        setNewRuleSku(''); setNewRuleBoxKey(''); setNewRuleSourceId(''); setNewRuleQty('1');
       },
       onError: (e: any) => { toast.error(e?.response?.data?.detail || 'Erro ao criar insumo'); qc.invalidateQueries(['client-supplies']); },
     },
@@ -534,10 +649,13 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
                 sellerId={sellerId}
                 ruleType={newRuleType} setRuleType={setNewRuleType}
                 ruleSku={newRuleSku} setRuleSku={setNewRuleSku}
+                ruleBoxKey={newRuleBoxKey} setRuleBoxKey={setNewRuleBoxKey}
+                ruleSourceId={newRuleSourceId} setRuleSourceId={setNewRuleSourceId}
                 ruleQty={newRuleQty} setRuleQty={setNewRuleQty}
+                supplyOptions={supplies}
               />
               <button
-                disabled={!newName.trim() || (newRuleType !== 'PER_ORDER' && !newRuleSku)}
+                disabled={!newName.trim() || ruleIncomplete(newRuleType, newRuleSku, newRuleBoxKey, newRuleSourceId)}
                 onClick={() => mCreate.mutate()}
                 className="px-4 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-t1 disabled:opacity-40"
               >
@@ -564,7 +682,7 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {supplies.map(s => <SupplyRow key={s.id} supply={s} sellerId={sellerId} />)}
+                    {supplies.map(s => <SupplyRow key={s.id} supply={s} sellerId={sellerId} allSupplies={supplies} />)}
                   </tbody>
                 </table>
               </div>

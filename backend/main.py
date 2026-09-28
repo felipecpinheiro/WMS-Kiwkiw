@@ -226,6 +226,37 @@ def run_light_migrations():
                 index_migrations.append(
                     "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
 
+            # Insumos do Cliente (23/09/2026): Balanço (ajuste de saldo) e regra
+            # SUPPLY_OCCURRENCE (por consumo de outro insumo, com encadeamento).
+            # As tabelas já existem desde 13-14/09/2026 — create_all não adiciona
+            # coluna em tabela existente, então precisa da migração explícita aqui.
+            if not col_exists("client_supply_entries", "is_balance"):
+                index_migrations.append(
+                    "ALTER TABLE client_supply_entries ADD COLUMN is_balance "
+                    "BOOLEAN DEFAULT FALSE NOT NULL")
+            if not col_exists("client_supply_rules", "source_supply_id"):
+                index_migrations.append(
+                    "ALTER TABLE client_supply_rules ADD COLUMN source_supply_id "
+                    "INTEGER REFERENCES client_supplies(id)")
+            # Enum nativo supplyruletype: adiciona 'SUPPLY_OCCURRENCE' se faltar —
+            # mesmo padrão do 'INACTIVE' em orderstatus logo abaixo. Isolado com
+            # commit próprio: ALTER TYPE ... ADD VALUE não pode dividir transação
+            # com nada que use o valor novo.
+            rule_enum_row = db.execute(text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name='client_supply_rules' AND column_name='rule_type'"
+            )).fetchone()
+            if rule_enum_row:
+                rule_enum_name = rule_enum_row[0]
+                rule_enum_has_supply = db.execute(text(
+                    "SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = :tn AND e.enumlabel = 'SUPPLY_OCCURRENCE'"
+                ), {"tn": rule_enum_name}).fetchone()
+                if rule_enum_has_supply is None:
+                    db.execute(text(f"ALTER TYPE {rule_enum_name} ADD VALUE 'SUPPLY_OCCURRENCE'"))
+                    db.commit()
+                    print(f"[migracao] enum {rule_enum_name}: valor 'SUPPLY_OCCURRENCE' adicionado")
+
             # Enum nativo orderstatus: adiciona o valor 'INACTIVE' se ainda não
             # existir. Isolado com commit próprio — ALTER TYPE ... ADD VALUE não
             # pode dividir transação com nada que use o valor novo (ver CLAUDE.md,
@@ -355,6 +386,21 @@ def run_light_migrations():
             if "itens" not in _bcl_cols:
                 index_migrations.append(
                     "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
+
+            # Insumos do Cliente (23/09/2026): Balanço + regra SUPPLY_OCCURRENCE.
+            # SQLite não tem enum nativo — só as 2 colunas precisam de migração.
+            _cse_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(client_supply_entries)")).fetchall()}
+            if "is_balance" not in _cse_cols:
+                index_migrations.append(
+                    "ALTER TABLE client_supply_entries ADD COLUMN is_balance BOOLEAN DEFAULT 0 NOT NULL")
+            _csr_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(client_supply_rules)")).fetchall()}
+            if "source_supply_id" not in _csr_cols:
+                index_migrations.append(
+                    "ALTER TABLE client_supply_rules ADD COLUMN source_supply_id "
+                    "INTEGER REFERENCES client_supplies(id)")
+
             # Ver comentário no ramo PostgreSQL: o índice é checado à parte da coluna.
             idx_ki = {r[1] for r in db.execute(text("PRAGMA index_list(kit_items)")).fetchall()}
             if "ix_kit_items_product_id" not in idx_ki:

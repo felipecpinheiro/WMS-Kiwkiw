@@ -35,15 +35,15 @@ _RULE_DESC = {
     models.SupplyRuleType.BOX_OCCURRENCE: lambda r: f'caixa "{r.box_key}"',
     models.SupplyRuleType.SKU_OCCURRENCE: lambda r: f'SKU "{r.sku}" no pedido',
     models.SupplyRuleType.SKU_QUANTITY: lambda r: f'SKU "{r.sku}" (por unidade)',
+    models.SupplyRuleType.SUPPLY_OCCURRENCE: lambda r: f'insumo "{r.source_supply.name}"' if r.source_supply else "insumo removido",
 }
 
 
-def _consumo_rows_regra(db: Session, seller_id: int, rule: models.ClientSupplyRule, count_from_date) -> list[dict]:
+def _direct_consumo_rows(db: Session, seller_id: int, rule: models.ClientSupplyRule, count_from_date) -> list[dict]:
     """
     Uma linha por PEDIDO que a regra alcançou, com a quantidade consumida
-    naquele pedido — é o que alimenta tanto o total agregado (compute_balance)
-    quanto o extrato detalhado (list_movements). Única fonte de verdade: os
-    dois nunca podem divergir.
+    naquele pedido — para as regras que consultam pedido diretamente
+    (tudo, exceto SUPPLY_OCCURRENCE, que é resolvida em `_supply_consumo_rows`).
 
     ⚠️ PER_ORDER e BOX_OCCURRENCE geram 1 linha por pedido de saída do período
     inteiro — pode ser bastante linha num seller de alto volume. Aceito por
@@ -62,7 +62,8 @@ def _consumo_rows_regra(db: Session, seller_id: int, rule: models.ClientSupplyRu
 
     if rule.rule_type == models.SupplyRuleType.BOX_OCCURRENCE:
         # normaliza_box não é aplicado aqui de propósito: desde que a caixa só
-        # é escolhida pelos botões canônicos, box_used já grava a chave exata.
+        # é escolhida pelos botões/dropdown canônicos, box_used já grava a
+        # chave exata.
         rows = base.filter(models.Order.box_used == rule.box_key).with_entities(*cols).all()
         qty = int(rule.quantity or 0)
         return [{"order_id": r[0], "nf_number": r[1], "order_date": r[2], "imported_at": r[3],
@@ -98,16 +99,46 @@ def _consumo_rows_regra(db: Session, seller_id: int, rule: models.ClientSupplyRu
     return []
 
 
+def _supply_consumo_rows(db: Session, supply: models.ClientSupply, visited: frozenset) -> list[dict]:
+    """
+    Consumo (pedido a pedido) de UM insumo, somando TODAS as regras ativas
+    dele — inclusive regras SUPPLY_OCCURRENCE, que buscam recursivamente o
+    consumo de outro insumo (permite encadear: A -> B -> C).
+
+    `visited` é o caminho de insumos já percorrido nesta cadeia — proteção
+    redundante contra ciclo (a trava de verdade é na criação da regra, ver
+    `_assert_no_supply_cycle` em routers/client_supplies.py; isto aqui só
+    evita loop infinito se algum dado escapar dessa checagem).
+    """
+    if supply.id in visited:
+        return []
+    visited = visited | {supply.id}
+
+    out: list[dict] = []
+    for r in supply.rules:
+        if not r.active:
+            continue
+        if r.rule_type == models.SupplyRuleType.SUPPLY_OCCURRENCE:
+            if not r.source_supply or not r.source_supply.active:
+                continue
+            mult = int(r.quantity or 0)
+            desc = _RULE_DESC[r.rule_type](r)
+            for row in _supply_consumo_rows(db, r.source_supply, visited):
+                row_date = row["imported_at"].date() if row["imported_at"] else row["order_date"]
+                if row_date is not None and row_date < supply.count_from_date:
+                    continue
+                out.append({**row, "quantity": row["quantity"] * mult, "rule_desc": desc})
+        else:
+            out.extend(_direct_consumo_rows(db, supply.seller_id, r, supply.count_from_date))
+    return out
+
+
 def compute_balance(db: Session, supply: models.ClientSupply) -> dict:
     """{total_entradas, consumo_estimado, saldo_estimado} de um insumo."""
     total_entradas = sum(
         e.quantity for e in supply.entries if e.active
     )
-    consumo = sum(
-        row["quantity"]
-        for r in supply.rules if r.active
-        for row in _consumo_rows_regra(db, supply.seller_id, r, supply.count_from_date)
-    )
+    consumo = sum(row["quantity"] for row in _supply_consumo_rows(db, supply, frozenset()))
     return {
         "total_entradas": total_entradas,
         "consumo_estimado": consumo,
@@ -117,9 +148,10 @@ def compute_balance(db: Session, supply: models.ClientSupply) -> dict:
 
 def list_movements(db: Session, seller_id: int) -> list[dict]:
     """
-    Extrato combinado de TODOS os insumos do seller: entradas + consumo
-    estimado por pedido. Alimenta a sub-aba "Movimentos" — mesmo espírito da
-    Movimentações de Estoque, mas isto NUNCA é `stock_movements`.
+    Extrato combinado de TODOS os insumos do seller: entradas (inclusive
+    ajustes de Balanço) + consumo estimado por pedido. Alimenta a sub-aba
+    "Movimentos" — mesmo espírito da Movimentações de Estoque, mas isto NUNCA
+    é `stock_movements`.
     """
     supplies = (
         db.query(models.ClientSupply)
@@ -131,20 +163,21 @@ def list_movements(db: Session, seller_id: int) -> list[dict]:
         for e in s.entries:
             if not e.active:
                 continue
+            note = e.note or None
+            if e.is_balance:
+                note = f"Balanço — saldo ajustado. {e.note}".strip() if e.note else "Balanço — saldo ajustado."
             out.append({
-                "movement_date": e.entry_date, "type": "entrada", "supply_id": s.id, "supply_name": s.name,
-                "quantity": e.quantity, "note": e.note or None, "nf_number": None, "rule_desc": None,
+                "movement_date": e.entry_date, "type": "balanco" if e.is_balance else "entrada",
+                "supply_id": s.id, "supply_name": s.name,
+                "quantity": e.quantity, "note": note, "nf_number": None, "rule_desc": None,
             })
-        for r in s.rules:
-            if not r.active:
-                continue
-            for row in _consumo_rows_regra(db, seller_id, r, s.count_from_date):
-                out.append({
-                    "movement_date": row["order_date"] or (row["imported_at"].date() if row["imported_at"] else None),
-                    "type": "consumo", "supply_id": s.id, "supply_name": s.name,
-                    "quantity": row["quantity"], "note": None,
-                    "nf_number": row["nf_number"], "rule_desc": row["rule_desc"],
-                })
+        for row in _supply_consumo_rows(db, s, frozenset()):
+            out.append({
+                "movement_date": row["order_date"] or (row["imported_at"].date() if row["imported_at"] else None),
+                "type": "consumo", "supply_id": s.id, "supply_name": s.name,
+                "quantity": row["quantity"], "note": None,
+                "nf_number": row["nf_number"], "rule_desc": row["rule_desc"],
+            })
     out.sort(key=lambda m: m["movement_date"] or _date.min, reverse=True)
     return out
 

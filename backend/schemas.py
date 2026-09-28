@@ -800,14 +800,16 @@ class BillingClosingDraftIn(BillingSellerParamsIn):
 
 
 class ClientSupplyRuleIn(BaseModel):
-    rule_type: str            # 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY'
+    rule_type: str            # 'PER_ORDER' | 'SKU_OCCURRENCE' | 'SKU_QUANTITY' | 'BOX_OCCURRENCE' | 'SUPPLY_OCCURRENCE'
     sku: Optional[str] = None
+    box_key: Optional[str] = None            # obrigatório para BOX_OCCURRENCE
+    source_supply_id: Optional[int] = None   # obrigatório para SUPPLY_OCCURRENCE
     quantity: int = 1
 
 
 class ClientSupplyRuleOut(ClientSupplyRuleIn):
     id: int
-    box_key: Optional[str] = None
+    source_supply_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -821,9 +823,17 @@ class ClientSupplyEntryIn(BaseModel):
 
 class ClientSupplyEntryOut(ClientSupplyEntryIn):
     id: int
+    is_balance: bool = False
 
     class Config:
         from_attributes = True
+
+
+class ClientSupplyBalanceIn(BaseModel):
+    """Balanço (23/09/2026): seller informa o saldo físico atual; o servidor
+    lança o ajuste (pode ser negativo) para que o saldo estimado passe a bater.
+    Sempre datado de hoje — não aceita data retroativa, de propósito."""
+    new_balance: int
 
 
 class ClientSupplyIn(BaseModel):
@@ -853,7 +863,7 @@ class ClientSupplyMovementOut(BaseModel):
     # topo do arquivo e faz o pydantic resolver a anotação como NoneType (erro
     # real pego em teste: "Input should be None" em toda linha da resposta).
     movement_date: Optional[date] = None
-    type: str              # 'entrada' | 'consumo'
+    type: str              # 'entrada' | 'balanco' | 'consumo'
     supply_id: int
     supply_name: str
     quantity: int

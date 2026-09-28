@@ -181,7 +181,7 @@ export default function SellerDashboardTab({
               <BarChart data={data.nfs_per_month} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={cc.grid} />
                 <XAxis dataKey="month" tickFormatter={mmm} tick={{ fontSize: 10, fill: cc.axisText }}
-                  interval={0} />
+                  interval={isMobile ? 1 : 0} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: cc.axisText }} />
                 <Tooltip
                   cursor={{ fill: cc.grid, fillOpacity: 0.35 }}

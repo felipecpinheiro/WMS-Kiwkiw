@@ -784,7 +784,7 @@ export default function SellerPortalPage() {
             <>
               {/* Filtros: período + busca + status */}
               <div className="flex gap-3 flex-wrap items-center bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
                   <span className="text-xs text-t4">De</span>
                   <input

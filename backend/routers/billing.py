@@ -612,7 +612,15 @@ def my_closing_excel(
 
 # ── consolidado ──────────────────────────────────────────────────────────────
 
-def _sellers_for_month(db: Session, ref_month: str) -> list[models.Seller]:
+def _sellers_for_month(db: Session, ref_month: str) -> tuple[list[models.Seller], set[int]]:
+    """Sellers exibidos no Consolidado do mês.
+
+    Entram: todo seller ATIVO (mesmo sem NF nem fechamento — para não sumir da
+    lista, igual o dropdown do Fechamento individual já faz) + qualquer seller
+    (ativo ou não) que já tenha NF de saída ou fechamento salvo naquele mês.
+    Devolve também o conjunto de ids "com movimento" (NF ou fechamento), que
+    `_consolidated_rows` usa para decidir se calcula a fatura ou mostra zerado.
+    """
     start, end = calc.month_range(ref_month)
     ids_with_nf = {
         r[0] for r in db.query(models.Order.seller_id).filter(
@@ -628,40 +636,64 @@ def _sellers_for_month(db: Session, ref_month: str) -> list[models.Seller]:
             models.BillingMonthlyClosing.ref_month == ref_month
         ).all()
     }
-    ids = ids_with_nf | ids_with_closing
+    movement_ids = ids_with_nf | ids_with_closing
+    active_ids = {r[0] for r in db.query(models.Seller.id).filter(models.Seller.active == True).all()}  # noqa: E712
+    ids = movement_ids | active_ids
     if not ids:
-        return []
-    return (
+        return [], movement_ids
+    sellers = (
         db.query(models.Seller)
         .options(joinedload(models.Seller.unit))
         .filter(models.Seller.id.in_(ids))
         .order_by(models.Seller.trade_name.asc())
         .all()
     )
+    return sellers, movement_ids
 
 
 def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
+    sellers, movement_ids = _sellers_for_month(db, ref_month)
     rows = []
-    for seller in _sellers_for_month(db, ref_month):
-        payload = _build_payload(db, seller, ref_month)
-        f = payload["fatura"]
+    for seller in sellers:
         unit = seller.unit
-        rows.append({
-            "seller_id": seller.id,
-            "seller_name": payload["seller_name"],
-            "unit_id": seller.unit_id,
-            "unit_name": unit.name if unit else None,
-            "active": seller.active,
-            "nf_count": payload["n_b2c"] + payload["n_b2b"],
-            "b2c": f["subtotal_b2c"],
-            "b2b": f["subtotal_b2b"],
-            "seguro": f["seguro"],
-            "armazenagem": f["armazenagem"],
-            "avulsos": f["avulsos"],
-            "total": f["total_geral"],
-            "status": "fechado" if payload["status"] == "closed"
-                      else ("em aberto" if payload["persisted"] else "não iniciado"),
-        })
+        if seller.id in movement_ids:
+            payload = _build_payload(db, seller, ref_month)
+            f = payload["fatura"]
+            rows.append({
+                "seller_id": seller.id,
+                "seller_name": payload["seller_name"],
+                "unit_id": seller.unit_id,
+                "unit_name": unit.name if unit else None,
+                "active": seller.active,
+                "nf_count": payload["n_b2c"] + payload["n_b2b"],
+                "b2c": f["subtotal_b2c"],
+                "b2b": f["subtotal_b2b"],
+                "seguro": f["seguro"],
+                "armazenagem": f["armazenagem"],
+                "avulsos": f["avulsos"],
+                "total": f["total_geral"],
+                "status": "fechado" if payload["status"] == "closed"
+                          else ("em aberto" if payload["persisted"] else "não iniciado"),
+            })
+        else:
+            # Seller ativo sem NF e sem fechamento salvo neste mês: entra na
+            # lista (pedido do dono do sistema), mas sem calcular fatura ao
+            # vivo — mostra zerado até alguém abrir o fechamento dele.
+            rows.append({
+                "seller_id": seller.id,
+                "seller_name": seller.trade_name or seller.name,
+                "unit_id": seller.unit_id,
+                "unit_name": unit.name if unit else None,
+                "active": seller.active,
+                "nf_count": 0,
+                "b2c": 0.0,
+                "b2b": 0.0,
+                "seguro": 0.0,
+                "armazenagem": 0.0,
+                "avulsos": 0.0,
+                "total": 0.0,
+                "status": "não iniciado",
+            })
     # Agrupa por unidade: unidades em ordem alfabética, sellers A–Z dentro de
     # cada uma; seller sem unidade vai para o fim.
     rows.sort(key=lambda r: (
@@ -709,7 +741,8 @@ def consolidated_zip(
     _check_month(ref_month)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for seller in _sellers_for_month(db, ref_month):
+        sellers, _ = _sellers_for_month(db, ref_month)
+        for seller in sellers:
             payload = _build_payload(db, seller, ref_month)
             zf.writestr(f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.pdf",
                         docs.invoice_pdf_bytes(payload))

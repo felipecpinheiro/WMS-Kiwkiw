@@ -225,6 +225,11 @@ export default function ScannerPage() {
       else sessionStorage.removeItem(hiddenSkusKey);
     } catch { /* ignore */ }
   }, [hiddenSkus, hiddenSkusKey]);
+  // ── Filtro local por situação da NF (bipada / não bipada) ────
+  // Só visual da lista lateral. NÃO lembra a escolha (nem após F5) e NÃO bloqueia
+  // abrir/bipar NF escondida — diferente do filtro de SKU. Não altera os
+  // contadores de progresso. "Bipada" = concluída ou interrompida.
+  const [statusView, setStatusView] = useState<'todas' | 'nao_bipadas' | 'bipadas'>('todas');
   const [feedback, setFeedback] = useState<Feedback>({ state: 'idle', title: '', message: '' });
   const [lastScannedSku, setLastScannedSku] = useState<string | undefined>();
   const [flashedSku, setFlashedSku] = useState<string | undefined>(); // 1a: flash visual
@@ -493,9 +498,22 @@ export default function ScannerPage() {
     return set;
   }, [localOrders, hiddenSkus]);
 
+  // NF inativa (modo admin "Só NFs inativas") fica fora do filtro de situação.
+  const hiddenByStatus = (o: SessionOrder) => {
+    if (statusView === 'todas' || o.is_inactive) return false;
+    const done = o.status === 'completed' || o.status === 'interrupted';
+    return statusView === 'nao_bipadas' ? done : !done;
+  };
+
   const visibleOrders = useMemo(
-    () => localOrders.filter(o => !hiddenOrderIds.has(o.id)),
-    [localOrders, hiddenOrderIds],
+    () => localOrders.filter(o => !hiddenOrderIds.has(o.id) && !hiddenByStatus(o)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [localOrders, hiddenOrderIds, statusView],
+  );
+  const statusHiddenCount = useMemo(
+    () => localOrders.filter(o => !hiddenOrderIds.has(o.id) && hiddenByStatus(o)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [localOrders, hiddenOrderIds, statusView],
   );
 
   // ── NFe scan: open order ───────────────────────────────
@@ -1069,6 +1087,29 @@ export default function ScannerPage() {
               </div>
             ) : null;
           })()}
+          {/* Filtro local por situação: todas / só não bipadas / só bipadas */}
+          {localOrders.length > 0 && (
+            <div className="mt-1.5 px-2 py-1.5 rounded-lg text-[9px]"
+              style={{ background: 'rgba(123,99,232,0.08)', border: '1px solid rgba(123,99,232,0.20)' }}>
+              <div className="mb-1">
+                <span className="font-semibold text-t3">Mostrar NFs</span>
+              </div>
+              <select
+                value={statusView}
+                onChange={e => setStatusView(e.target.value as 'todas' | 'nao_bipadas' | 'bipadas')}
+                className="w-full bg-surface-2 border border-line-soft rounded px-1.5 py-1 text-[9px] text-t2"
+              >
+                <option value="todas">Todas</option>
+                <option value="nao_bipadas">Só não bipadas</option>
+                <option value="bipadas">Só bipadas</option>
+              </select>
+              {statusHiddenCount > 0 && (
+                <p className="mt-1 text-warn font-semibold">
+                  {statusHiddenCount} NF(s) escondida(s)
+                </p>
+              )}
+            </div>
+          )}
           {/* Filtro local: esconder NFs que contêm um SKU (ex.: produto que o
               seller ainda não enviou). Só visual, só neste login, some ao sair. */}
           {skuOptions.length > 0 && (
@@ -1153,7 +1194,9 @@ export default function ScannerPage() {
             </p>
           ) : visibleOrders.length === 0 && localOrders.length > 0 ? (
             <p className="text-[10px] text-t4 text-center py-4 px-2">
-              Todas as NFs estão escondidas pelo filtro de SKU.
+              {statusView !== 'todas' && hiddenOrderIds.size === 0
+                ? (statusView === 'nao_bipadas' ? 'Não há NFs pendentes.' : 'Nenhuma NF bipada ainda.')
+                : 'Todas as NFs estão escondidas pelos filtros.'}
             </p>
           ) : visibleOrders.map(order => {
             const isActive = order.id === activeOrderId;

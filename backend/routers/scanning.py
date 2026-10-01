@@ -3013,26 +3013,37 @@ def session_cards(
     # e sem isso o card de um seller de outra unidade vaza para este filtro.
     allowed_seller_ids_for_unit: Optional[set] = None
 
-    if user_role in ("operator", "manager") and my_seller_ids:
-        q = q.filter(
-            _exists().where(
-                (models.Order.session_id == models.PickingSession.id) &
-                (models.Order.seller_id.in_(my_seller_ids))
-            )
-        )
-    elif unit_id:
-        # Admin filtrou por unidade explicitamente: restringe via sellers da unidade
+    # Unidade efetiva: o operador está sempre preso à própria unidade (o front
+    # nem mostra seletor para ele); admin/gerente usam a escolhida na tela.
+    # Antes (até 01/10/2026) o operador ignorava a unidade e via/somava cards de
+    # qualquer unidade onde tivesse seller vinculado.
+    effective_unit_id = unit_id
+    if user_role == "operator" and current_user.unit_id:
+        effective_unit_id = current_user.unit_id
+
+    if effective_unit_id:
         seller_ids_in_unit = [
             row[0] for row in db.query(models.Seller.id).filter(
-                models.Seller.unit_id == unit_id,
+                models.Seller.unit_id == effective_unit_id,
                 models.Seller.active == True,
             ).all()
         ]
         allowed_seller_ids_for_unit = set(seller_ids_in_unit)
+
+    # Operador: só os sellers vinculados a ele, DENTRO da unidade (interseção).
+    # Sem seller vinculado → conjunto vazio → kanban vazio, não "tudo".
+    if user_role == "operator":
+        allowed_seller_ids_for_unit = (
+            set(my_seller_ids)
+            if allowed_seller_ids_for_unit is None
+            else set(my_seller_ids) & allowed_seller_ids_for_unit
+        )
+
+    if allowed_seller_ids_for_unit is not None:
         q = q.filter(
             _exists().where(
                 (models.Order.session_id == models.PickingSession.id) &
-                (models.Order.seller_id.in_(seller_ids_in_unit))
+                (models.Order.seller_id.in_(list(allowed_seller_ids_for_unit)))
             )
         )
 
@@ -3109,15 +3120,10 @@ def session_cards(
                 continue
             # ───────────────────────────────────────────────────────────────────
 
-            # ── Filtra por sellers vinculados (operador e gerente) ──────────────
-            # Se my_seller_ids está vazio e o usuário é operador/gerente, não exibe nada
-            # (usuário sem sellers vinculados → kanban vazio, não tudo)
-            if user_role in ("operator", "manager"):
-                if not my_seller_ids or sid not in my_seller_ids:
-                    continue
-            # ───────────────────────────────────────────────────────────────────
-
-            # ── Filtra por unidade no nível do card (não só da sessão) ──────────
+            # ── Filtra por unidade/sellers no nível do card (não só da sessão) ──
+            # Operador: já inclui a interseção com os sellers vinculados.
+            # Gerente: não é restrito aos vinculados (09/09/2026) — só vale a
+            # unidade escolhida. Este bloco antes pulava TODO card de gerente.
             # Sessão pode ter sellers de unidades diferentes no mesmo upload —
             # o card só deve valer para o filtro se o PRÓPRIO seller é da unidade.
             if allowed_seller_ids_for_unit is not None and sid not in allowed_seller_ids_for_unit:

@@ -849,14 +849,40 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMo
 }
 
 function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: number) => void }) {
-  const { data, isLoading } = useQuery(['billing-consolidated', refMonth], () =>
+  const qc = useQueryClient();
+  const queryKey = ['billing-consolidated', refMonth];
+  const { data, isLoading } = useQuery(queryKey, () =>
     billingApi.consolidated(refMonth).then(r => r.data));
   const rows = data?.rows || [];
   const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
+  const [payFilter, setPayFilter] = useState<'all' | 'pending' | 'paid'>('all');
+
+  // Anotação manual "Foi pago?": atualiza na hora e desfaz se o servidor recusar.
+  const patchRow = (sellerId: number, patch: any) =>
+    qc.setQueryData(queryKey, (old: any) => old
+      ? { ...old, rows: old.rows.map((r: any) => r.seller_id === sellerId ? { ...r, ...patch } : r) }
+      : old);
+  const togglePaid = async (r: any, paid: boolean) => {
+    const before = { paid: r.paid, paid_at: r.paid_at, paid_by: r.paid_by };
+    patchRow(r.seller_id, { paid });
+    try {
+      const res = await billingApi.setPaid(refMonth, r.seller_id, paid);
+      patchRow(r.seller_id, res.data);
+    } catch (e: any) {
+      patchRow(r.seller_id, before);
+      toast.error(e?.response?.data?.detail || 'Erro ao salvar pagamento');
+    }
+  };
+
+  // Totais do MÊS INTEIRO (não dependem do filtro).
+  const totalPago = rows.filter((r: any) => r.paid).reduce((s: number, r: any) => s + (r.total || 0), 0);
+  const nPago = rows.filter((r: any) => r.paid).length;
 
   // rows já vem do backend agrupado (unidade A–Z, seller A–Z dentro).
+  const visibleRows = rows.filter((r: any) =>
+    payFilter === 'all' ? true : payFilter === 'paid' ? r.paid : !r.paid);
   const groups: { unit: string; rows: any[] }[] = [];
-  for (const r of rows) {
+  for (const r of visibleRows) {
     const label = r.unit_name || 'Sem unidade';
     const last = groups[groups.length - 1];
     if (last && last.unit === label) last.rows.push(r);
@@ -868,7 +894,15 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
     <div className="bg-surface rounded-xl border border-line-soft p-5">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h2 className="text-sm font-semibold text-t2">Consolidado — {refMonth}</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="flex gap-1">
+            {([['all', 'Todos'], ['pending', 'Só pendentes'], ['paid', 'Só pagos']] as const).map(([k, lbl]) => (
+              <button key={k} onClick={() => setPayFilter(k)}
+                className={`px-3 py-1.5 rounded-lg border text-sm ${payFilter === k ? 'bg-violet-600 text-white border-violet-600' : 'border-line text-t3'}`}>
+                {lbl}
+              </button>
+            ))}
+          </div>
           <button onClick={() => billingApi.downloadConsolidatedExcel(refMonth)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Excel</button>
           <button onClick={() => billingApi.downloadConsolidatedZip(refMonth)}
@@ -889,6 +923,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             <th className="text-right px-2 py-1.5">Avulsos</th>
             <th className="text-right px-2 py-1.5">Total</th>
             <th className="text-left px-2 py-1.5">Situação</th>
+            <th className="text-center px-2 py-1.5">Pago?</th>
           </tr></thead>
           <tbody>
             {groups.map(g => {
@@ -896,12 +931,13 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
               return (
                 <Fragment key={g.unit}>
                   <tr className="bg-surface-2">
-                    <td colSpan={9} className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-300">
+                    <td colSpan={10} className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-300">
                       {g.unit}
                     </td>
                   </tr>
                   {g.rows.map((r: any) => (
-                    <tr key={r.seller_id} className="border-t border-line-soft hover:bg-surface-2 cursor-pointer"
+                    <tr key={r.seller_id}
+                      className={`border-t border-line-soft hover:bg-surface-2 cursor-pointer ${r.paid ? 'bg-teal-500/[0.08] border-b border-b-teal-500/40' : ''}`}
                       onClick={() => onOpen(r.seller_id)}>
                       <td className="px-2 py-1.5 pl-4">{r.seller_name}{r.active ? '' : ' (inativo)'}</td>
                       <td className="px-2 py-1.5 text-right font-mono">{r.nf_count}</td>
@@ -912,12 +948,20 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
                       <td className="px-2 py-1.5 text-right font-mono">{brl(r.avulsos)}</td>
                       <td className="px-2 py-1.5 text-right font-mono font-semibold">{brl(r.total)}</td>
                       <td className="px-2 py-1.5">{r.status}</td>
+                      <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={!!r.paid}
+                          onChange={e => togglePaid(r, e.target.checked)}
+                          title={r.paid
+                            ? `Pago${r.paid_by ? ` — marcado por ${r.paid_by}` : ''}${r.paid_at ? ` em ${r.paid_at.slice(8, 10)}/${r.paid_at.slice(5, 7)}/${r.paid_at.slice(0, 4)}` : ''}`
+                            : 'Marcar como pago'}
+                          className="w-4 h-4 accent-violet-600 cursor-pointer" />
+                      </td>
                     </tr>
                   ))}
                   <tr className="border-t border-line-soft font-semibold text-t2">
                     <td colSpan={7} className="px-2 py-1.5 text-right">Subtotal {g.unit}</td>
                     <td className="px-2 py-1.5 text-right font-mono text-t1">{brl(sub)}</td>
-                    <td></td>
+                    <td colSpan={2}></td>
                   </tr>
                 </Fragment>
               );
@@ -926,10 +970,27 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
               <tr className="border-t-2 border-line font-bold">
                 <td colSpan={7} className="px-2 py-2 text-right text-t2">TOTAL GERAL DO MÊS</td>
                 <td className="px-2 py-2 text-right font-mono text-t1">{brl(grandTotal)}</td>
-                <td></td>
+                <td colSpan={2}></td>
               </tr>
             )}
-            {!rows.length && <tr><td colSpan={9} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
+            {!!rows.length && (
+              <>
+                <tr className="text-t2">
+                  <td colSpan={7} className="px-2 py-1 text-right">Pago ({nPago} sellers)</td>
+                  <td className="px-2 py-1 text-right font-mono text-teal-400">{brl(totalPago)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+                <tr className="text-t2">
+                  <td colSpan={7} className="px-2 py-1 text-right">A receber ({rows.length - nPago} sellers)</td>
+                  <td className="px-2 py-1 text-right font-mono text-amber-400">{brl(grandTotal - totalPago)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </>
+            )}
+            {!!rows.length && !visibleRows.length && (
+              <tr><td colSpan={10} className="px-2 py-6 text-center text-t4">Nenhum seller neste filtro</td></tr>
+            )}
+            {!rows.length && <tr><td colSpan={10} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
           </tbody>
         </table>
         )}

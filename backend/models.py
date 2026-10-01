@@ -708,6 +708,26 @@ class BillingClosingAdjustment(Base):
     closing = relationship("BillingMonthlyClosing", back_populates="adjustments")
 
 
+class BillingPayment(Base):
+    """Anotação manual do financeiro: o seller pagou a fatura deste mês? (01/10/2026)
+
+    Uma linha por (seller, mês). Fica FORA do cálculo e do snapshot do fechamento —
+    não muda nenhum valor. Existe à parte porque o seller pode não ter linha em
+    `billing_monthly_closings` (mês "não iniciado"). Ausência de linha = não pago.
+    """
+    __tablename__ = "billing_payments"
+    __table_args__ = (UniqueConstraint("seller_id", "ref_month", name="uq_billing_payment"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    ref_month = Column(String(7), nullable=False)          # 'YYYY-MM'
+    paid = Column(Boolean, default=False, nullable=False)
+    paid_at = Column(DateTime, nullable=True)
+    paid_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    paid_by = relationship("User", foreign_keys=[paid_by_id])
+
+
 class BillingClosingLine(Base):
     """Snapshot congelado de cada NF ao FECHAR. Descartado ao reabrir."""
     __tablename__ = "billing_closing_lines"

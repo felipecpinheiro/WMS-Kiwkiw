@@ -356,13 +356,14 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
     ws.cell(1, 1, f"Consolidado de faturamento — {_month_label(ref_month)}").font = Font(bold=True, size=13)
     # `rows` já vem agrupado por unidade (unidade A–Z, seller A–Z dentro).
     headers = ["Unidade", "Seller", "Ativo", "NFs", "B2C", "B2B", "Seguro",
-               "Armazenagem", "Avulsos", "Total", "Situação"]
+               "Armazenagem", "Avulsos", "Total", "Situação", "Pago", "Pago por", "Pago em"]
     for c, h in enumerate(headers, 1):
         cell = ws.cell(3, c, h)
         cell.fill = hdr_fill
         cell.font = hdr_font
     r = 4
     tot = 0.0
+    tot_pago = 0.0
     for row in rows:
         ws.cell(r, 1, row.get("unit_name") or "Sem unidade")
         ws.cell(r, 2, row["seller_name"])
@@ -375,10 +376,20 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
         ws.cell(r, 9, row["avulsos"])
         ws.cell(r, 10, row["total"])
         ws.cell(r, 11, row["status"])
+        ws.cell(r, 12, "Sim" if row.get("paid") else "Não")
+        ws.cell(r, 13, row.get("paid_by") or "")
+        pa = row.get("paid_at")
+        ws.cell(r, 14, f"{pa[8:10]}/{pa[5:7]}/{pa[0:4]}" if pa else "")
         tot += row["total"]
+        if row.get("paid"):
+            tot_pago += row["total"]
         r += 1
     ws.cell(r, 1, f"{len(rows)} sellers").font = Font(bold=True)
     ws.cell(r, 10, round(tot, 2)).font = Font(bold=True)
+    ws.cell(r + 1, 1, "Pago").font = Font(bold=True)
+    ws.cell(r + 1, 10, round(tot_pago, 2))
+    ws.cell(r + 2, 1, "A receber").font = Font(bold=True)
+    ws.cell(r + 2, 10, round(tot - tot_pago, 2))
 
     out = io.BytesIO()
     wb.save(out)

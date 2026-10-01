@@ -651,8 +651,29 @@ def _sellers_for_month(db: Session, ref_month: str) -> tuple[list[models.Seller]
     return sellers, movement_ids
 
 
+def _payments_for_month(db: Session, ref_month: str) -> dict:
+    """{seller_id: BillingPayment} — anotação manual de pagamento (fora do cálculo)."""
+    return {
+        p.seller_id: p
+        for p in db.query(models.BillingPayment)
+        .options(joinedload(models.BillingPayment.paid_by))
+        .filter(models.BillingPayment.ref_month == ref_month).all()
+    }
+
+
+def _paid_fields(pay: Optional[models.BillingPayment]) -> dict:
+    if pay is None or not pay.paid:
+        return {"paid": False, "paid_at": None, "paid_by": None}
+    return {
+        "paid": True,
+        "paid_at": pay.paid_at.isoformat() if pay.paid_at else None,
+        "paid_by": pay.paid_by.name if pay.paid_by else None,
+    }
+
+
 def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
     sellers, movement_ids = _sellers_for_month(db, ref_month)
+    payments = _payments_for_month(db, ref_month)
     rows = []
     for seller in sellers:
         unit = seller.unit
@@ -674,6 +695,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
                 "total": f["total_geral"],
                 "status": "fechado" if payload["status"] == "closed"
                           else ("em aberto" if payload["persisted"] else "não iniciado"),
+                **_paid_fields(payments.get(seller.id)),
             })
         else:
             # Seller ativo sem NF e sem fechamento salvo neste mês: entra na
@@ -693,6 +715,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
                 "avulsos": 0.0,
                 "total": 0.0,
                 "status": "não iniciado",
+                **_paid_fields(payments.get(seller.id)),
             })
     # Agrupa por unidade: unidades em ordem alfabética, sellers A–Z dentro de
     # cada uma; seller sem unidade vai para o fim.
@@ -713,6 +736,33 @@ def get_consolidated(
     _check_month(ref_month)
     rows = _consolidated_rows(db, ref_month)
     return {"ref_month": ref_month, "rows": rows}
+
+
+@router.put("/consolidated/{ref_month}/paid/{seller_id}")
+def set_paid(
+    ref_month: str, seller_id: int,
+    body: schemas.BillingPaidIn,
+    current_user: models.User = Depends(require_billing_access),
+    db: Session = Depends(get_db),
+):
+    """Anotação manual do financeiro: seller pagou a fatura do mês? Não altera valores."""
+    _check_month(ref_month)
+    _seller_or_404(db, seller_id)
+    pay = db.query(models.BillingPayment).filter(
+        models.BillingPayment.seller_id == seller_id,
+        models.BillingPayment.ref_month == ref_month,
+    ).first()
+    if pay is None:
+        pay = models.BillingPayment(seller_id=seller_id, ref_month=ref_month)
+        db.add(pay)
+    pay.paid = bool(body.paid)
+    pay.paid_at = now_brasilia() if body.paid else None
+    pay.paid_by_id = current_user.id if body.paid else None
+    _audit(db, current_user, "SET_PAID" if body.paid else "UNSET_PAID", seller_id,
+           {"ref_month": ref_month, "paid": bool(body.paid)})
+    db.commit()
+    db.refresh(pay)
+    return _paid_fields(pay)
 
 
 @router.get("/consolidated/{ref_month}/excel")

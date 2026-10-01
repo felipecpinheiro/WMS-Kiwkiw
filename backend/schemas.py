@@ -45,6 +45,9 @@ class BillingAccessRequestOut(BaseModel):
     enviado: bool
     expira_em_seg: int
 
+class BillingPaidIn(BaseModel):
+    paid: bool
+
 class BillingAccessVerifyIn(BaseModel):
     codigo: str
 

@@ -1207,6 +1207,10 @@ export const billingApi = {
   // consolidado do mês
   consolidated: (refMonth: string) =>
     api.get(`/billing/consolidated/${refMonth}`),
+  // anotação manual do financeiro: seller pagou a fatura do mês? (01/10/2026)
+  setPaid: (refMonth: string, sellerId: number, paid: boolean) =>
+    api.put<{ paid: boolean; paid_at: string | null; paid_by: string | null }>(
+      `/billing/consolidated/${refMonth}/paid/${sellerId}`, { paid }),
   downloadConsolidatedExcel: (refMonth: string) =>
     downloadAuthenticatedFile(`/billing/consolidated/${refMonth}/excel`,
       `consolidado_${refMonth}.xlsx`),

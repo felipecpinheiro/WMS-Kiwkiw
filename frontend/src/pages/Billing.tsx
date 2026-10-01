@@ -7,7 +7,7 @@
  * persiste e recarrega — evita duplicar a matemática no navegador.
  */
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
 import toast from 'react-hot-toast';
 import {
@@ -195,6 +195,16 @@ export default function BillingPage() {
   const [showCfg, setShowCfg] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
+  // Caixa da NF escolhida na lista (mês aberto): aparece na hora e as gravações
+  // saem em fila, uma de cada vez. Os totais são recarregados uma única vez, em
+  // segundo plano, quando a fila esvazia (sem trocar a tela pelo loader).
+  const [boxLocal, setBoxLocal] = useState<Record<number, string>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const boxChain = useRef<Promise<void>>(Promise.resolve());
+  const boxPending = useRef(0);
+  const holdDraft = useRef(false);   // recarga em segundo plano: não apagar rascunho nem linhas abertas
+  const dirtyRef = useRef(false);
+
   const accessQ = useQuery(['billing-access'], () => billingApi.accessStatus().then(r => r.data));
   const access = accessQ.data;
   const releaseAccess = () => qc.invalidateQueries(['billing-access']);
@@ -210,10 +220,21 @@ export default function BillingPage() {
   );
   const payload = closingQ.data;
   const isClosed = payload?.status === 'closed';
-  const showFulfillmentLoader = useDelayedLoading(!!sellerId && closingQ.isFetching, 150);
+  // O loader grande é só para carga inicial (trocar seller/mês), não para recargas
+  // em segundo plano.
+  const showFulfillmentLoader = useDelayedLoading(!!sellerId && closingQ.isLoading, 150);
+
+  dirtyRef.current = dirty;
 
   useEffect(() => {
-    if (payload) { setDraft(draftFromPayload(payload)); setDirty(false); setExpanded({}); }
+    if (!payload) return;
+    if (holdDraft.current) {
+      // recarga disparada pela troca de caixa: mantém linhas abertas e, se houver
+      // parâmetros editados e não salvos, mantém o rascunho como está.
+      if (!dirtyRef.current) setDraft(draftFromPayload(payload));
+      return;
+    }
+    setDraft(draftFromPayload(payload)); setDirty(false); setExpanded({}); setBoxLocal({});
   }, [payload]);
 
   // Qualquer chamada de billing (não só as ações explícitas acima) pode voltar
@@ -322,19 +343,38 @@ export default function BillingPage() {
   // Cadastra a caixa de uma NF direto da lista (mês aberto). Grava em Order.box_used
   // via o mesmo endpoint do Scanner e recarrega o fechamento para o adicional
   // recalcular ao vivo.
-  const setOrderBox = async (orderId: number, box: string) => {
-    if (busy) return;   // serializa a gravação — sem isso, cliques em rajada
-    setBusy(true);      // disparam PATCHs concorrentes e a caixa cai na NF errada
-    try {
-      await scanningApi.saveOrderBox(orderId, box);
-      toast.success(`Caixa ${box} cadastrada na NF`);
-      // recarrega em segundo plano; não segura o botão até o refetch terminar
-      qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
-      qc.invalidateQueries(['billing-consolidated']);
-    } catch (e: any) {
-      if (isAccessError(e)) releaseAccess();
-      toast.error(e?.response?.data?.detail || 'Erro ao cadastrar caixa');
-    } finally { setBusy(false); }
+  const setOrderBox = (orderId: number, box: string) => {
+    const closingKey = ['billing-closing', sellerId, refMonth];
+    setBoxLocal(m => ({ ...m, [orderId]: box }));   // aparece na hora, select continua livre
+    boxPending.current += 1;
+    holdDraft.current = true;
+    setRefreshing(true);
+    // Fila: as gravações saem uma de cada vez, na ordem dos cliques — PATCHs
+    // concorrentes já fizeram a caixa cair na NF errada.
+    boxChain.current = boxChain.current.then(async () => {
+      try {
+        await scanningApi.saveOrderBox(orderId, box);
+        toast.success(`Caixa ${box} cadastrada na NF`);
+      } catch (e: any) {
+        if (isAccessError(e)) releaseAccess();
+        toast.error(e?.response?.data?.detail || 'Erro ao cadastrar caixa');
+        // volta ao valor do servidor para essa NF
+        setBoxLocal(m => { const n = { ...m }; delete n[orderId]; return n; });
+      } finally {
+        boxPending.current -= 1;
+      }
+      if (boxPending.current > 0) return;   // ainda há gravações na fila: recarrega só no fim
+      try {
+        await qc.invalidateQueries(closingKey);
+        qc.invalidateQueries(['billing-consolidated']);
+      } finally {
+        if (boxPending.current === 0) {
+          setBoxLocal({});
+          holdDraft.current = false;
+          setRefreshing(false);
+        }
+      }
+    });
   };
 
   // Portão de acesso: substitui TODO o conteúdo da tela enquanto a janela de
@@ -414,19 +454,20 @@ export default function BillingPage() {
         </div>
       )}
 
-      {tab === 'seller' && sellerId && closingQ.isFetching && (
+      {tab === 'seller' && sellerId && closingQ.isLoading && (
         <div className="relative min-h-[300px]">
           <FulfillmentLoader show={showFulfillmentLoader} title="Preparando o fechamento" />
         </div>
       )}
 
-      {tab === 'seller' && sellerId && !closingQ.isFetching && payload && draft && (
+      {tab === 'seller' && sellerId && !closingQ.isLoading && payload && draft && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
             <span className={`text-xs font-semibold px-3 py-1 rounded-full ${isClosed ? 'bg-teal-900/30 text-teal-400' : 'bg-amber-900/30 text-amber-400'}`}>
               {isClosed ? '● Fechado' : '● Em aberto'}
             </span>
             {dirty && <span className="text-xs text-amber-400">alterações não salvas</span>}
+            {refreshing && <span className="text-xs text-t3">Atualizando totais…</span>}
           </div>
 
           {payload.reajuste_alerta && (
@@ -611,6 +652,7 @@ export default function BillingPage() {
             <div className="grid gap-4 lg:grid-cols-2">
               <NfList kind="b2c" lines={payload.b2c_lines} soma={payload.soma_b2c}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed} saving={busy}
+                boxLocal={boxLocal}
                 onMove={(oid: number) => moveChannel(oid, 'b2b')} onB2bAdic={setB2bAdic} onSetBox={setOrderBox} />
               <NfList kind="b2b" lines={payload.b2b_lines} soma={payload.soma_b2b}
                 expanded={expanded} setExpanded={setExpanded} locked={isClosed} saving={busy}
@@ -690,7 +732,7 @@ function FaturaTable({ f }: any) {
   );
 }
 
-function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMove, onB2bAdic, onSetBox, overrides }: any) {
+function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMove, onB2bAdic, onSetBox, boxLocal }: any) {
   const b2c = kind === 'b2c';
   return (
     <div className="border border-line-soft rounded-xl overflow-hidden">
@@ -727,7 +769,8 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMo
           <tbody>
             {lines.map((l: any, i: number) => {
               const oid = l.order_id;
-              const yellow = b2c && l.sem_caixa;
+              const effBox: string = (oid != null && boxLocal?.[oid]) || l.box || '';
+              const yellow = b2c && (boxLocal?.[oid] ? false : l.sem_caixa);
               return (
                 <Fragment key={oid ?? `row-${i}`}>
                   <tr className={`border-t border-line-soft ${yellow ? 'bg-amber-900/15' : ''}`}>
@@ -739,14 +782,14 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMo
                         <td className="px-2 py-1.5 text-right">
                           {!locked && oid != null ? (
                             <select
-                              value={l.box || ''}
+                              value={effBox}
                               disabled={saving}
                               onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
                               className={'border rounded px-1 py-0.5 text-[11px] bg-surface outline-none disabled:opacity-40 '
-                                + (l.box ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
+                                + (effBox ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
                             >
                               <option value="" disabled>—</option>
-                              {l.box && !CANONICAL_BOXES.includes(l.box) && <option value={l.box}>{l.box} (antigo)</option>}
+                              {effBox && !(CANONICAL_BOXES as readonly string[]).includes(effBox) && <option value={effBox}>{effBox} (antigo)</option>}
                               {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
                             </select>
                           ) : (l.box || '—')}

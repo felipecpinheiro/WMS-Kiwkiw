@@ -523,9 +523,14 @@ def apply_stock_for_entry(
     expected: Dict[str, int],
     operator_id: Optional[int] = None,
     operator_name: Optional[str] = None,
+    adjusted: Optional[Dict[str, Dict]] = None,
 ) -> Dict:
     """
     Lança no estoque o que foi CONTADO numa NF de entrada, na finalização.
+
+    `adjusted` ({sku: {"original": int, "reason": str}}) marca os SKUs cuja
+    contagem foi corrigida na tela de conferência (Finalizar). `counted` já vem
+    com o valor corrigido; aqui só entra o registro na observação do movimento.
 
     `counted` e `expected` vêm por SKU já consolidados (o mesmo SKU pode estar
     em dois OrderItem — componente de kit + linha avulsa). Quem monta é
@@ -589,6 +594,14 @@ def apply_stock_for_entry(
                 "diff": qty - exp,
                 "note": note,
             })
+
+        adj = (adjusted or {}).get(sku)
+        if adj:
+            nota_adj = (
+                f"Contagem corrigida na conferência de {adj['original']} para {qty} "
+                f"unidades. Motivo: {adj['reason']}."
+            )
+            note = f"{note} {nota_adj}" if note else f"SKU {sku} — {nota_adj}"
 
         # SKU que não chegou (qty=0) grava um movimento de quantidade ZERO só
         # para carregar a observação: numericamente é inócuo (não mexe na

@@ -194,6 +194,13 @@ export interface EntryConferenceLine {
   status: 'ok' | 'over' | 'short' | 'missing';
 }
 
+/** Correção da contagem de um SKU feita na conferência (vale só ao confirmar). */
+export interface EntryAdjustment {
+  sku: string;
+  counted: number;
+  reason: string;
+}
+
 /** Resposta de POST /scanning/orders/{id}/finalize-entry (preview e confirmação). */
 export interface EntryConference {
   success: boolean;
@@ -652,8 +659,8 @@ export const scanningApi = {
    * Sem `confirm` devolve o comparativo esperado x contado sem gravar nada;
    * com `confirm: true` lança o estoque pela contagem e conclui a NF.
    */
-  finalizeEntry: (orderId: number, confirm = false) =>
-    api.post<EntryConference>(`/scanning/orders/${orderId}/finalize-entry`, { confirm }),
+  finalizeEntry: (orderId: number, confirm = false, adjustments: EntryAdjustment[] = []) =>
+    api.post<EntryConference>(`/scanning/orders/${orderId}/finalize-entry`, { confirm, adjustments }),
   /** Pausa a conferência de entrada — a NF continua EM ABERTO para retomar depois. */
   pauseEntry: (orderId: number, reason?: string) =>
     api.post(`/scanning/orders/${orderId}/pause`, { reason }),

@@ -40,6 +40,9 @@ AUDIT_DIR = os.path.join(BASE_DIR, "data", "audit")
 # operador que digita o código de barras dentro do campo de quantidade lança
 # alguns milhões de peças no estoque. Nenhuma caixa real chega perto disso.
 MAX_SCAN_QUANTITY = 9999
+# Teto da correção de contagem na conferência de entrada (soma de vários bipes
+# pode passar de 9.999, então o limite é maior que o do bipe individual).
+MAX_ENTRY_ADJUST_QUANTITY = 999999
 
 
 # Marcadores gravados como ScanningLog para carimbar eventos que não são bipagem.
@@ -1220,6 +1223,37 @@ def finalize_entry_order(
     expected = _expected_by_sku(order)
     counted = _scanned_by_sku(order, db)
 
+    # Correções feitas na tela de conferência. O servidor revalida tudo: a tela
+    # não é a única guarda. Os bipes originais NÃO são alterados — a correção
+    # vale só para o que entra no estoque e fica no AuditLog e na observação.
+    adjusted: dict = {}
+    raw_adjustments = body.get("adjustments") or []
+    if not isinstance(raw_adjustments, list):
+        raise HTTPException(status_code=400, detail="Formato de correções inválido.")
+    valid_skus = {ln["sku"] for ln in conference["lines"]}
+    for adj in raw_adjustments:
+        if not isinstance(adj, dict):
+            raise HTTPException(status_code=400, detail="Formato de correções inválido.")
+        sku = str(adj.get("sku") or "").strip()
+        reason = str(adj.get("reason") or "").strip()
+        new_qty = adj.get("counted")
+        if sku not in valid_skus:
+            raise HTTPException(status_code=400, detail=f"SKU '{sku}' não faz parte desta conferência.")
+        if sku in adjusted:
+            raise HTTPException(status_code=400, detail=f"SKU '{sku}' corrigido mais de uma vez.")
+        if isinstance(new_qty, bool) or not isinstance(new_qty, int) or new_qty < 0 or new_qty > MAX_ENTRY_ADJUST_QUANTITY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantidade inválida para o SKU '{sku}': use um inteiro de 0 a {MAX_ENTRY_ADJUST_QUANTITY}.",
+            )
+        if not reason:
+            raise HTTPException(status_code=400, detail=f"Informe o motivo da correção do SKU '{sku}'.")
+        original = int(counted.get(sku, 0) or 0)
+        if new_qty == original:
+            continue  # não mudou nada
+        adjusted[sku] = {"original": original, "reason": reason[:300]}
+        counted[sku] = new_qty
+
     result = apply_stock_for_entry(
         order=order,
         db=db,
@@ -1227,7 +1261,21 @@ def finalize_entry_order(
         expected=expected,
         operator_id=current_user.id,
         operator_name=current_user.name if current_user else None,
+        adjusted=adjusted,
     )
+
+    for sku, info in adjusted.items():
+        db.add(models.AuditLog(
+            entity_type="Order",
+            entity_id=order.id,
+            action="ENTRY_COUNT_ADJUSTED",
+            detail=(
+                f"NF {order.nf_number}, SKU {sku}: contagem corrigida na conferência "
+                f"de {info['original']} (bipado) para {counted[sku]} por {current_user.name}. "
+                f"Motivo: {info['reason']}."
+            ),
+            user_id=current_user.id,
+        ))
 
     _finalize_order(order, order.session_id, db)
 

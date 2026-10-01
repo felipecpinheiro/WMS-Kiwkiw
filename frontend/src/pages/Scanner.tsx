@@ -4,7 +4,7 @@
  * Design visual, robusto e à prova de erros.
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import {
@@ -248,6 +248,12 @@ export default function ScannerPage() {
   // modal de conferência está aberto. Nada foi gravado ainda nesse ponto.
   const [entryConference, setEntryConference] = useState<EntryConference | null>(null);
   const [finalizingEntry, setFinalizingEntry] = useState(false);
+  // Correções de contagem feitas na conferência (por SKU). Vivem só na tela até
+  // o "Confirmar": o servidor revalida e os bipes originais não são alterados.
+  const [entryEdits, setEntryEdits] = useState<Record<string, { counted: number; reason: string }>>({});
+  // Linha em edição (campos do formulário) e correção aguardando o "tem certeza?".
+  const [editingSku, setEditingSku] = useState<{ sku: string; value: string; reason: string } | null>(null);
+  const [editConfirm, setEditConfirm] = useState<{ sku: string; name: string; from: number; to: number; reason: string } | null>(null);
   // Lock por seller: outro operador já bipando NF do mesmo seller — confirmação
   // ── Caixa sugerida ────────────────────────────────────────
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
@@ -916,6 +922,9 @@ export default function ScannerPage() {
       // .data: o cliente devolve a resposta do axios, não o corpo (mesmo
       // padrão de res.data.order_completed em handleBoxSave).
       const res = await scanningApi.finalizeEntry(activeOrder.id, false);
+      setEntryEdits({});
+      setEditingSku(null);
+      setEditConfirm(null);
       setEntryConference(res.data);
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Erro ao montar a conferência');
@@ -924,13 +933,75 @@ export default function ScannerPage() {
     }
   };
 
+  // Linhas da conferência já com as correções aplicadas, divergentes primeiro e
+  // as que bateram depois (dentro de cada grupo mantém a ordem por SKU do servidor).
+  const confLines = (entryConference?.lines ?? []).map(ln => {
+    const edit = entryEdits[ln.sku];
+    const counted = edit ? edit.counted : ln.counted;
+    const diff = counted - ln.expected;
+    const status: 'ok' | 'over' | 'short' | 'missing' =
+      diff === 0 ? 'ok' : counted === 0 ? 'missing' : diff > 0 ? 'over' : 'short';
+    return { ...ln, counted, diff, status, edited: !!edit, originalCounted: ln.counted };
+  });
+  const confDivergent = confLines.filter(l => l.status !== 'ok');
+  const confMatched = confLines.filter(l => l.status === 'ok');
+  const confTotalCounted = confLines.reduce((acc, l) => acc + l.counted, 0);
+
+  const startEditSku = (sku: string, counted: number) => {
+    setEditingSku({ sku, value: String(counted), reason: entryEdits[sku]?.reason ?? '' });
+  };
+
+  // Passo 1 da correção: valida o que foi digitado e abre o "tem certeza?".
+  const requestEditConfirm = () => {
+    if (!editingSku) return;
+    const line = confLines.find(l => l.sku === editingSku.sku);
+    if (!line) return;
+    const to = Number(editingSku.value);
+    if (!Number.isInteger(to) || to < 0 || to > 999999) {
+      toast.error('Digite um número inteiro de 0 a 999999.');
+      return;
+    }
+    if (!editingSku.reason.trim()) {
+      toast.error('Informe o motivo da correção.');
+      return;
+    }
+    if (to === line.counted) {
+      toast.error('A nova quantidade é igual à atual.');
+      return;
+    }
+    setEditConfirm({
+      sku: line.sku, name: line.product_name, from: line.counted, to,
+      reason: editingSku.reason.trim(),
+    });
+  };
+
+  // Passo 2: confirmado. Se voltou ao valor bipado originalmente, a correção some.
+  const applyEdit = () => {
+    if (!editConfirm) return;
+    const line = confLines.find(l => l.sku === editConfirm.sku);
+    setEntryEdits(prev => {
+      const next = { ...prev };
+      if (line && editConfirm.to === line.originalCounted) delete next[editConfirm.sku];
+      else next[editConfirm.sku] = { counted: editConfirm.to, reason: editConfirm.reason };
+      return next;
+    });
+    setEditConfirm(null);
+    setEditingSku(null);
+  };
+
   const handleConfirmEntryFinalize = async () => {
     if (!activeOrder) return;
     setFinalizingEntry(true);
     try {
-      const res = await scanningApi.finalizeEntry(activeOrder.id, true);
+      const adjustments = Object.entries(entryEdits).map(([sku, e]) => ({
+        sku, counted: e.counted, reason: e.reason,
+      }));
+      const res = await scanningApi.finalizeEntry(activeOrder.id, true, adjustments);
       toast.success(res.data?.message || 'Conferência finalizada');
       setEntryConference(null);
+      setEntryEdits({});
+      setEditingSku(null);
+      setEditConfirm(null);
       setActiveOrderId(null);
       setFeedback({ state: 'idle', title: '', message: '' });
       setLastScannedSku(undefined);
@@ -1698,13 +1769,13 @@ export default function ScannerPage() {
                 <div>
                   <h3 className="text-base font-bold text-t1">Conferência de Entrada</h3>
                   <p className="text-xs text-t4">
-                    NF {entryConference.nf_number} · {entryConference.total_counted} contados de {entryConference.total_expected} previstos
+                    NF {entryConference.nf_number} · {confTotalCounted} contados de {entryConference.total_expected} previstos
                   </p>
                 </div>
               </div>
-              {entryConference.divergent_count > 0 ? (
+              {confDivergent.length > 0 ? (
                 <p className="mt-3 text-sm text-warn bg-orange-500/10 border border-warn/25 rounded-xl px-3 py-2">
-                  ⚠️ {entryConference.divergent_count} SKU com quantidade diferente da NF.
+                  ⚠️ {confDivergent.length} SKU com quantidade diferente da NF.
                   Ao confirmar, o estoque entra pelo que foi <strong>contado</strong> e cada
                   divergência fica registrada com observação no relatório de Estoque.
                 </p>
@@ -1723,32 +1794,100 @@ export default function ScannerPage() {
                     <th className="text-right font-medium py-2 w-24">NF</th>
                     <th className="text-right font-medium py-2 w-24">Contado</th>
                     <th className="text-right font-medium py-2 w-28">Diferença</th>
+                    <th className="text-right font-medium py-2 w-20"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(entryConference.lines ?? []).map(ln => {
+                  {[
+                    ...(confDivergent.length > 0 ? [{ divider: `Com diferença (${confDivergent.length})`, key: 'd1' }] : []),
+                    ...confDivergent,
+                    ...(confMatched.length > 0 ? [{ divider: `Bateram com a NF (${confMatched.length})`, key: 'd2' }] : []),
+                    ...confMatched,
+                  ].map((row: any) => {
+                    if (row.divider) {
+                      return (
+                        <tr key={row.key}>
+                          <td colSpan={5} className="pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-t4">
+                            {row.divider}
+                          </td>
+                        </tr>
+                      );
+                    }
+                    const ln = row;
                     const ok = ln.status === 'ok';
+                    const isEditing = editingSku?.sku === ln.sku;
                     return (
-                      <tr
-                        key={ln.sku}
-                        className={`border-b border-line/50 ${ok ? '' : 'bg-orange-500/10'}`}
-                      >
-                        <td className="py-2 pr-2">
-                          <div className={`font-mono text-xs ${ok ? 'text-t2' : 'text-warn font-semibold'}`}>{ln.sku}</div>
-                          <div className="text-xs text-t4 truncate max-w-md">{ln.product_name}</div>
-                        </td>
-                        <td className="text-right py-2 text-t3">{ln.expected}</td>
-                        <td className={`text-right py-2 font-semibold ${ok ? 'text-t2' : 'text-warn'}`}>{ln.counted}</td>
-                        <td className="text-right py-2">
-                          {ok ? (
-                            <span className="text-ok text-xs">OK</span>
-                          ) : (
-                            <span className="text-warn font-semibold">
-                              {ln.diff > 0 ? `+${ln.diff}` : ln.diff}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
+                      <Fragment key={ln.sku}>
+                        <tr className={`border-b border-line/50 ${ok ? '' : 'bg-orange-500/10'}`}>
+                          <td className="py-2 pr-2">
+                            <div className={`font-mono text-xs ${ok ? 'text-t2' : 'text-warn font-semibold'}`}>{ln.sku}</div>
+                            <div className="text-xs text-t4 truncate max-w-md">{ln.product_name}</div>
+                          </td>
+                          <td className="text-right py-2 text-t3">{ln.expected}</td>
+                          <td className={`text-right py-2 font-semibold ${ok ? 'text-t2' : 'text-warn'}`}>
+                            {ln.counted}
+                            {ln.edited && (
+                              <div className="text-[10px] font-normal text-t4">editado (bipado: {ln.originalCounted})</div>
+                            )}
+                          </td>
+                          <td className="text-right py-2">
+                            {ok ? (
+                              <span className="text-ok text-xs">OK</span>
+                            ) : (
+                              <span className="text-warn font-semibold">
+                                {ln.diff > 0 ? `+${ln.diff}` : ln.diff}
+                              </span>
+                            )}
+                          </td>
+                          <td className="text-right py-2">
+                            <button
+                              onClick={() => (isEditing ? setEditingSku(null) : startEditSku(ln.sku, ln.counted))}
+                              disabled={finalizingEntry}
+                              className="text-xs text-t3 border border-line rounded-lg px-2 py-1 hover:bg-surface-2 transition disabled:opacity-50"
+                            >
+                              {isEditing ? 'Cancelar' : 'Editar'}
+                            </button>
+                          </td>
+                        </tr>
+                        {isEditing && editingSku && (
+                          <tr className="border-b border-line/50 bg-surface-2">
+                            <td colSpan={5} className="p-3">
+                              <p className="text-xs text-t3 mb-2">
+                                Corrigir a quantidade <strong>contada</strong> do SKU {ln.sku}. Os bipes
+                                originais não são apagados; a correção fica registrada com o motivo.
+                              </p>
+                              <div className="flex flex-wrap gap-2 items-end">
+                                <label className="text-xs text-t4">
+                                  Nova quantidade
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={editingSku.value}
+                                    onChange={e => setEditingSku({ ...editingSku, value: e.target.value })}
+                                    className="block w-28 mt-1 bg-surface border border-line rounded-lg px-2 py-1.5 text-sm text-t1"
+                                  />
+                                </label>
+                                <label className="text-xs text-t4 flex-1 min-w-[200px]">
+                                  Motivo (obrigatório)
+                                  <input
+                                    type="text"
+                                    value={editingSku.reason}
+                                    onChange={e => setEditingSku({ ...editingSku, reason: e.target.value })}
+                                    placeholder="Ex.: bipei duas vezes sem querer"
+                                    className="block w-full mt-1 bg-surface border border-line rounded-lg px-2 py-1.5 text-sm text-t1"
+                                  />
+                                </label>
+                                <button
+                                  onClick={requestEditConfirm}
+                                  className="px-3 py-1.5 text-sm font-semibold text-t1 border border-line rounded-lg hover:bg-surface transition"
+                                >
+                                  Salvar correção
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -1757,7 +1896,13 @@ export default function ScannerPage() {
 
             <div className="p-6 pt-4 border-t border-line flex gap-2">
               <button
-                onClick={() => { setEntryConference(null); setTimeout(() => inputRef.current?.focus(), 50); }}
+                onClick={() => {
+                  setEntryConference(null);
+                  setEntryEdits({});
+                  setEditingSku(null);
+                  setEditConfirm(null);
+                  setTimeout(() => inputRef.current?.focus(), 50);
+                }}
                 disabled={finalizingEntry}
                 className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition disabled:opacity-50"
               >
@@ -1769,6 +1914,40 @@ export default function ScannerPage() {
                 className="flex-1 py-2.5 text-sm font-semibold text-ok border border-ok/40 bg-ok-soft rounded-xl hover:bg-green-500/15 transition disabled:opacity-50"
               >
                 {finalizingEntry ? 'Lançando...' : 'Confirmar e lançar no estoque'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── "Tem certeza?" da correção de contagem na conferência ── */}
+      {entryConference && editConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="text-base font-bold text-t1 mb-2">Confirmar correção?</h3>
+            <p className="text-sm text-t3 mb-1">
+              <span className="font-mono text-xs">{editConfirm.sku}</span> — {editConfirm.name}
+            </p>
+            <p className="text-sm text-t1 mb-1">
+              Contagem: <strong>{editConfirm.from}</strong> → <strong>{editConfirm.to}</strong>
+            </p>
+            <p className="text-sm text-t3 mb-3">Motivo: {editConfirm.reason}</p>
+            <p className="text-xs text-t4 mb-4">
+              O estoque entrará com a quantidade corrigida ao confirmar a conferência, e a correção
+              ficará registrada na auditoria.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEditConfirm(null)}
+                className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={applyEdit}
+                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 bg-orange-500/10 rounded-xl hover:bg-orange-500/20 transition"
+              >
+                Sim, corrigir
               </button>
             </div>
           </div>

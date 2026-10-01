@@ -61,6 +61,14 @@ def _faixa_aplicada_txt(fatura: dict) -> str:
             f"({fa['n_b2c']} NFs B2C, cobradas {fa['qtd_cobrada']}).")
 
 
+def _minimo_aplicado_txt(fatura: dict) -> str:
+    m = fatura.get("minimo_aplicado")
+    if not m:
+        return ""
+    return (f"Mínimo do plano: {m['n_b2c']} NFs B2C (até {m['pedidos']} pedidos) → "
+            f"cobra-se o valor mínimo de {brl(m['valor'])} mais os adicionais por NF.")
+
+
 # ── PDF ─────────────────────────────────────────────────────────────────────
 
 def invoice_pdf_bytes(p: dict) -> bytes:
@@ -111,6 +119,8 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         ["Cobrança por faixa de pedidos B2C",
          "Sim" if pr.get("usar_faixas_pedidos") else "Não",
          "Faixas", _faixas_txt(pr)],
+        ["Valor mínimo B2C (até o nº mínimo de pedidos)",
+         brl(pr.get("valor_minimo_b2c")) if pr.get("valor_minimo_b2c") else "—", "", ""],
     ]
     el.append(Paragraph("Parâmetros do mês", h2))
     t = Table([[Paragraph(c, cell) for c in r] for r in par_rows],
@@ -156,6 +166,10 @@ def invoice_pdf_bytes(p: dict) -> bytes:
     if _fa_txt:
         el.append(Spacer(1, 4))
         el.append(Paragraph(_fa_txt, sub))
+    _mn_txt = _minimo_aplicado_txt(f)
+    if _mn_txt:
+        el.append(Spacer(1, 4))
+        el.append(Paragraph(_mn_txt, sub))
 
     # avulsos detalhados
     if p["adjustments"]:
@@ -260,6 +274,7 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Armazenagem inclusa", "Sim" if pr["armazenagem_inclusa"] else "Não"),
         ("Cobrança por faixa de pedidos B2C", "Sim" if pr.get("usar_faixas_pedidos") else "Não"),
         ("Faixas de pedidos B2C", _faixas_txt(pr)),
+        ("Valor mínimo B2C (R$)", pr.get("valor_minimo_b2c") or 0),
     ]:
         ws.cell(r, 1, k)
         ws.cell(r, 2, v)
@@ -267,6 +282,10 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
     _fa_txt = _faixa_aplicada_txt(p["fatura"])
     if _fa_txt:
         ws.cell(r, 1, _fa_txt)
+        r += 1
+    _mn_txt = _minimo_aplicado_txt(p["fatura"])
+    if _mn_txt:
+        ws.cell(r, 1, _mn_txt)
         r += 1
     r += 1
 

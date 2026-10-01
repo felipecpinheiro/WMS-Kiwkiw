@@ -24,6 +24,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 interface BillingFields {
   preco_unitario: string;
   min_pedidos: string;
+  valor_minimo_b2c: string;
   manuseio_b2b: string;
   valor_caixa_b2b: string;
   adic_produto_b2b: string;
@@ -54,7 +55,7 @@ interface SellerForm {
 }
 
 const EMPTY_BILLING: BillingFields = {
-  preco_unitario: '', min_pedidos: '', manuseio_b2b: '', valor_caixa_b2b: '',
+  preco_unitario: '', min_pedidos: '', valor_minimo_b2c: '', manuseio_b2b: '', valor_caixa_b2b: '',
   adic_produto_b2b: '', franquia_produtos_b2b: '15',
   limite_itens_b2b: '', tipos_caixa_inclusos: '', cota_caixas_mes: '',
   franquia_m3: '', preco_m3: '', seguro_incluso: false,
@@ -99,6 +100,7 @@ function paramsToFields(p: any): BillingFields {
   const s = (x: any) => (x === null || x === undefined ? '' : String(x));
   return {
     preco_unitario: s(p.preco_unitario), min_pedidos: s(p.min_pedidos),
+    valor_minimo_b2c: s(p.valor_minimo_b2c),
     manuseio_b2b: s(p.manuseio_b2b), valor_caixa_b2b: s(p.valor_caixa_b2b),
     adic_produto_b2b: s(p.adic_produto_b2b),
     franquia_produtos_b2b: s(p.franquia_produtos_b2b ?? 15),
@@ -116,6 +118,7 @@ function paramsToFields(p: any): BillingFields {
 function fieldsToParams(b: BillingFields) {
   return {
     preco_unitario: NUM(b.preco_unitario), min_pedidos: NUM(b.min_pedidos, true),
+    valor_minimo_b2c: NUM(b.valor_minimo_b2c),
     manuseio_b2b: NUM(b.manuseio_b2b), valor_caixa_b2b: NUM(b.valor_caixa_b2b),
     adic_produto_b2b: NUM(b.adic_produto_b2b),
     franquia_produtos_b2b: NUM(b.franquia_produtos_b2b, true),
@@ -682,6 +685,28 @@ export default function SellersPage() {
 
                 <div className="border border-line-soft rounded-lg p-3 space-y-2">
                   <div className="text-[11px] uppercase tracking-wide text-t3 font-semibold">Pedidos B2C</div>
+                  <div className="rounded-lg border border-teal-500/40 bg-teal-500/[0.06] p-3 space-y-2">
+                    <div className="text-xs font-semibold text-t2">Mínimo do plano</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-t3 mb-1">Pedidos mínimos / mês</label>
+                        <input type="number" step="1" min="0" value={form.billing.min_pedidos}
+                          onChange={e => setBilling('min_pedidos', e.target.value)}
+                          className={cls} style={clsStyle} />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-t3 mb-1">Valor mínimo (R$)</label>
+                        <input type="number" step="0.01" min="0" value={form.billing.valor_minimo_b2c}
+                          onChange={e => setBilling('valor_minimo_b2c', e.target.value)}
+                          className={cls} style={clsStyle} />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-t4">
+                      Até o mínimo de pedidos a seller paga o valor mínimo, não importa o valor dos pedidos
+                      (adicionais de caixa e manuais somam por cima). Passou do mínimo, cobra como abaixo.
+                      Valor mínimo 0 = sem mínimo em R$.
+                    </p>
+                  </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="faixatgl" checked={form.billing.usar_faixas_pedidos}
                       onChange={e => setBilling('usar_faixas_pedidos', e.target.checked)}
@@ -691,13 +716,15 @@ export default function SellersPage() {
                   {form.billing.usar_faixas_pedidos ? (
                     <>
                       <p className="text-[11px] text-t4">
-                        O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas.
-                        Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.
-                        Adicional de caixa e adicional manual continuam somando por NF.
+                        {Number(form.billing.valor_minimo_b2c) > 0
+                          ? 'Passou do mínimo, o nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas. Acima da última, todas ao preço da última.'
+                          : 'O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas. Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.'}
+                        {' '}Adicional de caixa e adicional manual continuam somando por NF.
                       </p>
                       <FaixaPedidosEditor
                         value={form.billing.faixas_pedidos || '[]'}
-                        onChange={j => setBilling('faixas_pedidos', j)} />
+                        onChange={j => setBilling('faixas_pedidos', j)}
+                        deInicial={Number(form.billing.valor_minimo_b2c) > 0 ? Number(form.billing.min_pedidos || 0) + 1 : undefined} />
                     </>
                   ) : (
                     <div className="grid grid-cols-2 gap-3">
@@ -705,12 +732,6 @@ export default function SellersPage() {
                         <label className="block text-xs text-t3 mb-1">Preço unitário / manuseio B2C (R$)</label>
                         <input type="number" step="0.01" min="0" value={form.billing.preco_unitario}
                           onChange={e => setBilling('preco_unitario', e.target.value)}
-                          className={cls} style={clsStyle} />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-t3 mb-1">Nº mínimo de pedidos</label>
-                        <input type="number" step="1" min="0" value={form.billing.min_pedidos}
-                          onChange={e => setBilling('min_pedidos', e.target.value)}
                           className={cls} style={clsStyle} />
                       </div>
                     </div>

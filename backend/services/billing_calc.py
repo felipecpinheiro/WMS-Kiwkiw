@@ -41,6 +41,8 @@ PARAM_FIELDS = (
     "armazenagem_inclusa", "valor_segurado", "cubagem_m3",
     # Cobrança por faixa de pedidos B2C (09/09/2026): toggle + JSON de faixas.
     "usar_faixas_pedidos", "faixas_pedidos",
+    # Mínimo do plano em R$ (01/10/2026): até `min_pedidos` NFs B2C cobra este valor.
+    "valor_minimo_b2c",
 )
 
 DEFAULT_PARAMS = {
@@ -51,6 +53,7 @@ DEFAULT_PARAMS = {
     "preco_m3": 0.0, "seguro_incluso": False, "aliquota_seguro": 0.30,
     "armazenagem_inclusa": False, "valor_segurado": 0.0, "cubagem_m3": 0.0,
     "usar_faixas_pedidos": False, "faixas_pedidos": "",
+    "valor_minimo_b2c": 0.0,
 }
 
 
@@ -410,7 +413,17 @@ def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments,
             faixa_ativa=False, faixa_sel=None) -> dict:
     preco_unit = float(params.get("preco_unitario") or 0.0)
     min_ped = int(params.get("min_pedidos") or 0)
-    if faixa_ativa:
+    # Mínimo do plano (01/10/2026), vale com ou sem faixa: até `min_ped` NFs B2C a
+    # seller paga o valor mínimo (os pedidos NÃO são multiplicados por preço
+    # nenhum) + os adicionais por NF. Passou do mínimo, cobra como sempre.
+    valor_min = float(params.get("valor_minimo_b2c") or 0.0)
+    usa_minimo = valor_min > 0 and n_b2c <= min_ped
+    if usa_minimo:
+        adics_b2c = soma_b2c - n_b2c * preco_b2c
+        floor = valor_min
+        b2c_min = valor_min + adics_b2c
+        min_atingiu_piso = False
+    elif faixa_ativa:
         # A faixa já embute o piso via `qtd_cobrada` (>= n_b2c só quando abaixo
         # da 1ª faixa). Os adicionais de caixa/manual continuam por cima.
         adics_b2c = soma_b2c - n_b2c * preco_b2c
@@ -445,8 +458,10 @@ def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments,
         "floor_b2c": r2(floor),
         "soma_real_b2c": r2(soma_b2c),
         "min_atingiu_piso": min_atingiu_piso,
-        "faixa_aplicada": _faixa_aplicada_dict(
+        "faixa_aplicada": None if usa_minimo else _faixa_aplicada_dict(
             faixa_sel, preco_b2c, n_b2c, qtd_cobrada_b2c),
+        "minimo_aplicado": ({"pedidos": min_ped, "valor": r2(valor_min), "n_b2c": n_b2c}
+                            if usa_minimo else None),
         "exc_m3": round(exc_m3, 4),
     }
 
@@ -561,7 +576,11 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
 
     _n_b2c = len(b2c_lines)
     _soma_b2c = sum(l["total"] for l in b2c_lines)
-    if getattr(closing, "usar_faixas_pedidos", False):
+    _val_min = float(getattr(closing, "valor_minimo_b2c", 0.0) or 0.0)
+    _usa_min = _val_min > 0 and _n_b2c <= int(closing.min_pedidos or 0)
+    if _usa_min:
+        _floor, _min_piso, _faixa_ap = _val_min, False, None
+    elif getattr(closing, "usar_faixas_pedidos", False):
         _fx = parse_faixas(getattr(closing, "faixas_pedidos", ""))
         _preco_b2c, _qtd_cobrada, _faixa_sel = faixa_para_contagem(_n_b2c, _fx)
         _floor = (_qtd_cobrada or 0) * (_preco_b2c or 0.0)
@@ -581,6 +600,8 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
         "soma_real_b2c": r2(_soma_b2c),
         "min_atingiu_piso": _min_piso,
         "faixa_aplicada": _faixa_ap,
+        "minimo_aplicado": ({"pedidos": int(closing.min_pedidos or 0), "valor": r2(_val_min),
+                             "n_b2c": _n_b2c} if _usa_min else None),
         "exc_m3": round(max(0.0, (closing.cubagem_m3 or 0.0) - (closing.franquia_m3 or 0.0)), 4),
     }
     return {

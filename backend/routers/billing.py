@@ -547,7 +547,8 @@ def closing_excel(
 # Campos podados do payload antes de devolver ao seller: são as tarifas do
 # contrato (o "como se calcula"), que ele não deve enxergar no portal.
 _SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a", "inicio_contrato", "reajuste_alerta")
-_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c", "faixa_aplicada")
+_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c", "faixa_aplicada",
+                         "minimo_aplicado")
 
 
 def _my_seller(db: Session, current_user: models.User) -> models.Seller:

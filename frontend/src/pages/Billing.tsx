@@ -24,7 +24,7 @@ const brl = (n: number | null | undefined) =>
   'R$ ' + (Number(n ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const PARAM_KEYS = [
-  'preco_unitario', 'min_pedidos', 'manuseio_b2b', 'valor_caixa_b2b',
+  'preco_unitario', 'min_pedidos', 'valor_minimo_b2c', 'manuseio_b2b', 'valor_caixa_b2b',
   'adic_produto_b2b', 'franquia_produtos_b2b',
   'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
   'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
@@ -517,23 +517,34 @@ export default function BillingPage() {
                 </p>
               </ParamGroup>
               <ParamGroup title="Pedidos B2C">
+                <div className="rounded-lg border border-teal-500/40 bg-teal-500/[0.06] p-2 mb-1">
+                  <div className="text-[11px] font-semibold text-t2 mb-0.5">Mínimo do plano</div>
+                  <NumRow label="Pedidos mínimos / mês" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
+                  <NumRow label="Valor mínimo (R$)" v={draft.params.valor_minimo_b2c} onChange={v => setParam('valor_minimo_b2c', v)} />
+                  <p className="text-[11px] text-t4">
+                    Até o mínimo de pedidos a seller paga o valor mínimo, não importa o valor dos pedidos
+                    (adicionais de caixa e manuais somam por cima). Passou do mínimo, cobra como abaixo.
+                    Valor mínimo 0 = sem mínimo em R$.
+                  </p>
+                </div>
                 <ToggleRow label="Cobrança por faixa de pedidos"
                   v={!!draft.params.usar_faixas_pedidos}
                   onChange={v => setParam('usar_faixas_pedidos', v)} />
                 {draft.params.usar_faixas_pedidos ? (
                   <>
                     <p className="text-[11px] text-t4">
-                      O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas.
-                      Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.
+                      {Number(draft.params.valor_minimo_b2c) > 0
+                        ? 'Passou do mínimo, o nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas. Acima da última, todas ao preço da última.'
+                        : 'O nº de NFs B2C do mês define a faixa; o R$/pedido dela vale para todas. Abaixo da 1ª faixa cobra o mínimo dela; acima da última, todas ao preço da última.'}
                     </p>
                     <FaixaPedidosEditor
                       value={draft.params.faixas_pedidos || '[]'}
                       onChange={j => setParam('faixas_pedidos', j)}
-                      disabled={isClosed} />
+                      disabled={isClosed}
+                      deInicial={Number(draft.params.valor_minimo_b2c) > 0 ? Number(draft.params.min_pedidos || 0) + 1 : undefined} />
                   </>
                 ) : (
                   <>
-                    <NumRow label="Nº mínimo de pedidos" v={draft.params.min_pedidos} onChange={v => setParam('min_pedidos', v)} int />
                     <NumRow label="Preço unitário / manuseio" v={draft.params.preco_unitario} onChange={v => setParam('preco_unitario', v)} />
                   </>
                 )}
@@ -721,6 +732,12 @@ function FaturaTable({ f }: any) {
         <div className="px-4 py-2 text-[11px] text-t3 bg-surface-2">
           Faixa aplicada: {f.faixa_aplicada.de}–{f.faixa_aplicada.ate} pedidos × {brl(f.faixa_aplicada.preco)}
           {' · '}{f.faixa_aplicada.n_b2c} NFs B2C (cobradas {f.faixa_aplicada.qtd_cobrada})
+        </div>
+      )}
+      {f.minimo_aplicado && (
+        <div className="px-4 py-2 text-[11px] text-teal-300 bg-teal-900/15">
+          Mínimo do plano: {f.minimo_aplicado.n_b2c} NFs B2C (até {f.minimo_aplicado.pedidos} pedidos) → cobra-se o
+          valor mínimo de {brl(f.minimo_aplicado.valor)} mais os adicionais por NF.
         </div>
       )}
       {f.min_atingiu_piso && (

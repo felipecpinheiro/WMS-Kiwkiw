@@ -1109,6 +1109,8 @@ export interface BillingSellerParams {
   seller_id?: number;
   preco_unitario: number;
   min_pedidos: number;
+  // Mínimo do plano (01/10/2026): até min_pedidos NFs B2C cobra este valor (+ adicionais). 0 = sem.
+  valor_minimo_b2c?: number;
   manuseio_b2b: number;
   valor_caixa_b2b: number;
   adic_produto_b2b: number;
@@ -1131,7 +1133,7 @@ export interface BillingSellerParams {
 }
 
 export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
-  preco_unitario: 0, min_pedidos: 0, manuseio_b2b: 0, valor_caixa_b2b: 0,
+  preco_unitario: 0, min_pedidos: 0, valor_minimo_b2c: 0, manuseio_b2b: 0, valor_caixa_b2b: 0,
   adic_produto_b2b: 0, franquia_produtos_b2b: 15,
   limite_itens_b2b: 0, tipos_caixa_inclusos: '', cota_caixas_mes: 0,
   franquia_m3: 0, preco_m3: 0, seguro_incluso: false, aliquota_seguro: 0.30,

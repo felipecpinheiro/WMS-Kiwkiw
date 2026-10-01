@@ -204,6 +204,10 @@ def run_light_migrations():
                 if not col_exists(_bt, "faixas_pedidos"):
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
+                # Faturamento (01/10/2026): valor mínimo do plano (R$) para o B2C.
+                if not col_exists(_bt, "valor_minimo_b2c"):
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN valor_minimo_b2c FLOAT DEFAULT 0 NOT NULL")
             # Faturamento (09/09/2026): mês de início do contrato do seller
             # (metadado do aviso de reajuste — só em billing_seller_params).
             if not col_exists("billing_seller_params", "inicio_contrato"):
@@ -374,6 +378,10 @@ def run_light_migrations():
                 if "faixas_pedidos" not in _cols:
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN faixas_pedidos TEXT DEFAULT '' NOT NULL")
+                # Faturamento (01/10/2026): valor mínimo do plano (R$) para o B2C.
+                if "valor_minimo_b2c" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN valor_minimo_b2c FLOAT DEFAULT 0 NOT NULL")
                 if _bt == "billing_seller_params" and "inicio_contrato" not in _cols:
                     index_migrations.append(
                         "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "

@@ -736,6 +736,7 @@ class BillingConfigResponse(BaseModel):
 class BillingSellerParamsIn(BaseModel):
     preco_unitario: float = 0.0
     min_pedidos: int = 0
+    valor_minimo_b2c: float = 0.0   # mínimo do plano em R$ (01/10/2026); 0 = sem
     manuseio_b2b: float = 0.0
     valor_caixa_b2b: float = 0.0
     adic_produto_b2b: float = 0.0

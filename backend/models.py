@@ -566,6 +566,9 @@ class BillingSellerParams(Base):
 
     preco_unitario = Column(Float, default=0.0, nullable=False)       # preço unitário / manuseio B2C
     min_pedidos = Column(Integer, default=0, nullable=False)          # nº mínimo de pedidos B2C
+    # Mínimo do plano (01/10/2026): até `min_pedidos` NFs B2C cobra este valor fixo (+ adicionais).
+    # 0 = sem mínimo em R$ (comportamento anterior).
+    valor_minimo_b2c = Column(Float, default=0.0, nullable=False)
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
     adic_produto_b2b = Column(Float, default=0.0, nullable=False)     # adicional por produto acima da franquia, na NF B2B
@@ -630,6 +633,7 @@ class BillingMonthlyClosing(Base):
     # Snapshot dos parâmetros do seller no mês (cópia de BillingSellerParams)
     preco_unitario = Column(Float, default=0.0, nullable=False)
     min_pedidos = Column(Integer, default=0, nullable=False)
+    valor_minimo_b2c = Column(Float, default=0.0, nullable=False)
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
     adic_produto_b2b = Column(Float, default=0.0, nullable=False)

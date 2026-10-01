@@ -3,6 +3,7 @@
  * Usado na aba Comercial de Sellers e no topo do Faturamento (mês aberto).
  * Guarda/recebe um JSON: [{"de":100,"ate":200,"preco":30.0}, ...] (contíguas).
  */
+import { useEffect } from 'react';
 import { Plus, X } from 'lucide-react';
 
 export type Faixa = { de: number; ate: number; preco: number };
@@ -22,19 +23,29 @@ export function parseFaixas(json: string | null | undefined): Faixa[] {
 }
 
 export default function FaixaPedidosEditor({
-  value, onChange, disabled,
+  value, onChange, disabled, deInicial,
 }: {
   value: string;
   onChange: (json: string) => void;
   disabled?: boolean;
+  /** Com "Mínimo do plano" ativo, a 1ª faixa começa sozinha em mínimo + 1 e o campo fica travado. */
+  deInicial?: number;
 }) {
   const rows = parseFaixas(value);
   const commit = (rs: Faixa[]) => onChange(JSON.stringify(rs));
+  const travaDe = !!deInicial && deInicial > 0;
+
+  // mantém a 1ª faixa alinhada ao mínimo (mínimo + 1) quando o mínimo muda
+  useEffect(() => {
+    if (!disabled && travaDe && rows.length > 0 && rows[0].de !== deInicial) {
+      commit(rows.map((r, j) => (j === 0 ? { ...r, de: deInicial as number } : r)));
+    }
+  }, [deInicial, travaDe, value]);
   const setRow = (i: number, patch: Partial<Faixa>) =>
     commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const add = () => {
     const last = rows[rows.length - 1];
-    const de = last ? last.ate + 1 : 1;
+    const de = last ? last.ate + 1 : (travaDe ? (deInicial as number) : 1);
     commit([...rows, { de, ate: de + 99, preco: 0 }]);
   };
   const rm = (i: number) => commit(rows.filter((_, j) => j !== i));
@@ -53,7 +64,8 @@ export default function FaixaPedidosEditor({
       </div>
       {rows.map((r, i) => (
         <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-center">
-          <input type="number" min="1" step="1" disabled={disabled} value={r.de}
+          <input type="number" min="1" step="1" disabled={disabled || (travaDe && i === 0)}
+            title={travaDe && i === 0 ? 'Começa sozinha em mínimo de pedidos + 1' : undefined} value={r.de}
             onChange={e => setRow(i, { de: parseInt(e.target.value || '0') })} className={inp} />
           <input type="number" min="1" step="1" disabled={disabled} value={r.ate}
             onChange={e => setRow(i, { ate: parseInt(e.target.value || '0') })} className={inp} />

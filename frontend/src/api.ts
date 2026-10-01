@@ -72,6 +72,7 @@ export interface User {
   unit_id: number | null;
   seller_id: number | null;
   seller_ids?: number[] | null;
+  seller_scope?: 'sellers' | 'unit';
 }
 
 export interface LoginResponse {

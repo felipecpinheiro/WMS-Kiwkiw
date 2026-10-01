@@ -55,6 +55,7 @@ interface UserForm {
   unit_id: number | '';
   seller_id: number | '';   // client: seller único
   seller_ids: number[];     // manager/operator: lista de sellers
+  seller_scope: 'sellers' | 'unit';  // manager/operator: lista manual ou todos da unidade
 }
 
 const EMPTY: UserForm = {
@@ -65,6 +66,7 @@ const EMPTY: UserForm = {
   unit_id: '',
   seller_id: '',
   seller_ids: [],
+  seller_scope: 'sellers',
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +194,7 @@ export default function UsersPage() {
       unit_id: u.unit_id ?? '',
       seller_id: u.seller_id ?? '',
       seller_ids: u.seller_ids ?? [],
+      seller_scope: u.seller_scope === 'unit' ? 'unit' : 'sellers',
     });
     setEditId(u.id);
     setShowModal(true);
@@ -207,9 +210,16 @@ export default function UsersPage() {
       return;
     }
 
+    const porUnidade = ['manager', 'operator'].includes(form.role) && form.seller_scope === 'unit';
+    if (porUnidade && form.unit_id === '') {
+      toast.error('Escolha a unidade para vincular o usuário por unidade');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: Record<string, any> = {
+        seller_scope: porUnidade ? 'unit' : 'sellers',
         name:      form.name.trim(),
         email:     form.email.trim(),
         role:      form.role,
@@ -529,22 +539,53 @@ export default function UsersPage() {
                 <div>
                   <label className="block text-xs text-t3 mb-1">
                     Sellers que este usuário atende
-                    {form.seller_ids.length > 0 && (
+                    {form.seller_scope === 'sellers' && form.seller_ids.length > 0 && (
                       <span className="ml-2 text-violet-400">
                         ({form.seller_ids.length} selecionado{form.seller_ids.length !== 1 ? 's' : ''})
                       </span>
                     )}
                   </label>
-                  <SellerMultiSelect
-                    sellers={sellers}
-                    selected={form.seller_ids}
-                    onChange={ids => f('seller_ids', ids)}
-                    unitId={form.unit_id}
-                  />
-                  {form.seller_ids.length === 0 && (
-                    <p className="text-xs text-warn/70 mt-1 ml-1">
-                      ⚠ Sem seller associado, o usuário não verá dados de nenhum seller.
-                    </p>
+                  <div className="flex gap-1 mb-2 p-1 bg-surface-2 border border-line rounded-lg">
+                    {([['unit', 'Por unidade'], ['sellers', 'Sellers específicos']] as const).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => f('seller_scope', val)}
+                        className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${
+                          form.seller_scope === val
+                            ? 'bg-violet-600 text-white'
+                            : 'text-t3 hover:text-t1'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {form.seller_scope === 'unit' ? (
+                    form.unit_id === '' ? (
+                      <p className="text-xs text-warn/70 ml-1">
+                        ⚠ Escolha a unidade acima. Sem unidade, o usuário não verá nenhum seller.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-t3 ml-1">
+                        Atende todos os {sellers.filter((s: any) => s.unit_id === form.unit_id).length} sellers
+                        ativos desta unidade. Seller que entrar ou sair da unidade vale na hora.
+                      </p>
+                    )
+                  ) : (
+                    <>
+                      <SellerMultiSelect
+                        sellers={sellers}
+                        selected={form.seller_ids}
+                        onChange={ids => f('seller_ids', ids)}
+                        unitId={form.unit_id}
+                      />
+                      {form.seller_ids.length === 0 && (
+                        <p className="text-xs text-warn/70 mt-1 ml-1">
+                          ⚠ Sem seller associado, o usuário não verá dados de nenhum seller.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}

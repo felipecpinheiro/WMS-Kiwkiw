@@ -62,6 +62,7 @@ def get_me(current_user: models.User = Depends(get_current_user)):
         seller_name=(current_user.seller.trade_name if current_user.seller else None),
         seller_ids=[s.id for s in (current_user.sellers or [])],
         seller_names=[s.trade_name for s in (current_user.sellers or [])],
+        seller_scope=current_user.seller_scope or "sellers",
         active=current_user.active,
         force_password_change=bool(current_user.force_password_change),
         created_at=current_user.created_at,

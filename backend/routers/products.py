@@ -2079,11 +2079,24 @@ def _user_to_response(u: models.User) -> schemas.UserResponse:
         seller_name=(u.seller.trade_name if u.seller else None),
         seller_ids=[s.id for s in (u.sellers or [])],
         seller_names=[s.trade_name for s in (u.sellers or [])],
+        seller_scope=u.seller_scope or "sellers",
         active=u.active,
         force_password_change=bool(u.force_password_change),
         created_at=u.created_at,
         last_login=u.last_login,
     )
+
+
+def _assert_seller_scope(scope: Optional[str], role: str, unit_id: Optional[int]) -> None:
+    """Valida o vínculo 'por unidade': só manager/operator e exige unidade."""
+    if scope is None or scope == "sellers":
+        return
+    if scope != "unit":
+        raise HTTPException(status_code=400, detail="Vínculo inválido (use 'sellers' ou 'unit')")
+    if role not in ("manager", "operator"):
+        raise HTTPException(status_code=400, detail="Vínculo por unidade vale só para gerente e operador")
+    if unit_id is None:
+        raise HTTPException(status_code=400, detail="Escolha a unidade para vincular o usuário por unidade")
 
 
 def _sync_sellers(u: models.User, seller_ids: list, db: Session) -> None:
@@ -2136,12 +2149,14 @@ def create_user(
     _assert_unit_exists(db, user.unit_id)
     _assert_seller_exists(db, user.seller_id)
     _assert_sellers_exist(db, user.seller_ids)
+    _assert_seller_scope(user.seller_scope, user.role, user.unit_id)
 
     u = models.User(
         name=user.name,
         email=user.email,
         password_hash=hash_password(user.password),
         role=user.role,
+        seller_scope=user.seller_scope or "sellers",
         unit_id=user.unit_id,
         seller_id=user.seller_id,   # seller principal (client)
     )
@@ -2189,6 +2204,13 @@ def update_user(
     _assert_unit_exists(db, update_data.get("unit_id"))
     _assert_seller_exists(db, update_data.get("seller_id"))
     _assert_sellers_exist(db, seller_ids_new)
+
+    # Vínculo por unidade: valida sobre o estado final (papel/unidade já salvos + novos).
+    # Se o usuário já é "por unidade" e muda papel/unidade, revalida também.
+    final_scope = update_data.get("seller_scope", u.seller_scope or "sellers")
+    final_role = update_data.get("role", u.role.value if hasattr(u.role, "value") else u.role)
+    final_unit = update_data.get("unit_id", u.unit_id)
+    _assert_seller_scope(final_scope, final_role, final_unit)
 
     if "email" in update_data:
         dup = db.query(models.User).filter(

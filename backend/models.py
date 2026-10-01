@@ -104,6 +104,9 @@ class User(Base):
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True) # Para role=seller
     active = Column(Boolean, default=True)
     force_password_change = Column(Boolean, default=False)
+    # Como manager/operator enxergam sellers: 'sellers' = lista manual (user_sellers),
+    # 'unit' = todos os sellers ativos da unidade do usuário (acompanha mudanças sozinho).
+    seller_scope = Column(String(10), default="sellers", nullable=False, server_default="sellers")
     created_at = Column(DateTime, default=now_brasilia)
     last_login = Column(DateTime, nullable=True)
 

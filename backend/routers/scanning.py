@@ -2993,7 +2993,14 @@ def session_cards(
     # passou a ver todas as unidades (igual admin). Só o operador continua preso.
     my_seller_ids: list[int] = []
     if user_role == "operator":
-        my_seller_ids = [s.id for s in (current_user.sellers or [])]
+        if (current_user.seller_scope or "sellers") == "unit":
+            # Por unidade (01/10/2026): sellers ativos da unidade atual. Unidade
+            # sem sellers → [-1] (não casa com ninguém), nunca lista vazia
+            # (que aqui significaria "sem restrição").
+            from ..auth import unit_seller_ids as _unit_sids
+            my_seller_ids = _unit_sids(db, current_user.unit_id) or [-1]
+        else:
+            my_seller_ids = [s.id for s in (current_user.sellers or [])]
 
     # Busca sessões com filtros de data/unidade
     q = db.query(models.PickingSession).options(

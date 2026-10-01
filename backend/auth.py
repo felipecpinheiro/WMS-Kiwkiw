@@ -17,7 +17,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from .database import get_db
 from . import models, schemas
@@ -86,6 +86,17 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
+def unit_seller_ids(db: Session, unit_id: Optional[int]) -> List[int]:
+    """IDs dos sellers ATIVOS de uma unidade. Sem unidade → lista vazia."""
+    if unit_id is None:
+        return []
+    rows = db.query(models.Seller.id).filter(
+        models.Seller.unit_id == unit_id,
+        models.Seller.active == True,
+    ).all()
+    return [r[0] for r in rows]
+
+
 def create_access_token(user: "models.User") -> str:
     """
     Cria token JWT com dados do usuário.
@@ -102,8 +113,13 @@ def create_access_token(user: "models.User") -> str:
 
     # Monta lista de seller_ids acessíveis
     seller_ids: Optional[List[int]] = None
+    scope = getattr(user, "seller_scope", None) or "sellers"
     if role == "admin":
         seller_ids = None  # admin vê tudo — sem filtro
+    elif role in ("manager", "operator") and scope == "unit":
+        # Por unidade: sellers ativos da unidade. Unidade vazia = lista vazia
+        # (NUNCA None, que significaria "vê tudo").
+        seller_ids = unit_seller_ids(object_session(user), user.unit_id)
     elif hasattr(user, "sellers") and user.sellers:
         # manager/operator: lista dos sellers associados (many-to-many)
         seller_ids = [s.id for s in user.sellers]
@@ -118,6 +134,7 @@ def create_access_token(user: "models.User") -> str:
         "unit_id": user.unit_id,
         "seller_id": user.seller_id,   # seller principal (client)
         "seller_ids": seller_ids,       # grupo de sellers (manager/operator)
+        "seller_scope": scope,          # 'sellers' | 'unit'
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -140,6 +157,7 @@ def decode_token(token: str) -> "schemas.TokenData":
             unit_id=payload.get("unit_id"),
             seller_id=payload.get("seller_id"),
             seller_ids=payload.get("seller_ids"),
+            seller_scope=payload.get("seller_scope") or "sellers",
         )
     except JWTError:
         raise HTTPException(
@@ -207,13 +225,25 @@ def require_min_role(min_role: str):
 
 def get_user_seller_ids(
     credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
 ) -> Optional[List[int]]:
     """
     Dependency auxiliar: retorna a lista de seller_ids do token.
     None = admin (sem filtro). Lista vazia ou lista = escopo restrito.
     Usado nos routers para filtrar queries automaticamente.
+
+    Usuário "por unidade" (seller_scope='unit', 01/10/2026): a lista NÃO vem do
+    token — é recalculada a cada requisição a partir da unidade atual no banco,
+    para seller colocado/tirado da unidade valer na hora. Lista vazia continua
+    vazia (sem acesso), nunca vira None (= vê tudo).
     """
     token_data = decode_token(credentials.credentials)
+    if token_data.role in ("manager", "operator") and token_data.seller_scope == "unit":
+        row = db.query(models.User.unit_id).filter(
+            models.User.id == token_data.user_id,
+            models.User.active == True,
+        ).first()
+        return unit_seller_ids(db, row[0] if row else None)
     return token_data.seller_ids
 
 

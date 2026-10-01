@@ -210,6 +210,11 @@ def run_light_migrations():
                         f"ALTER TABLE {_bt} ADD COLUMN valor_minimo_b2c FLOAT DEFAULT 0 NOT NULL")
             # Faturamento (09/09/2026): mês de início do contrato do seller
             # (metadado do aviso de reajuste — só em billing_seller_params).
+            # Usuário (01/10/2026): vínculo "por unidade" ou "por sellers".
+            if not col_exists("users", "seller_scope"):
+                index_migrations.append(
+                    "ALTER TABLE users ADD COLUMN seller_scope VARCHAR(10) "
+                    "DEFAULT 'sellers' NOT NULL")
             if not col_exists("billing_seller_params", "inicio_contrato"):
                 index_migrations.append(
                     "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
@@ -342,6 +347,11 @@ def run_light_migrations():
             existing_usr = {r[1] for r in rows_usr}
             if "force_password_change" not in existing_usr:
                 migrations.append("ALTER TABLE users ADD COLUMN force_password_change BOOLEAN DEFAULT 0 NOT NULL")
+            # Vínculo por unidade (01/10/2026) — em index_migrations (print sem emoji)
+            if "seller_scope" not in existing_usr:
+                index_migrations.append(
+                    "ALTER TABLE users ADD COLUMN seller_scope VARCHAR(10) "
+                    "DEFAULT 'sellers' NOT NULL")
 
             rows_mov = db.execute(text("PRAGMA table_info(stock_movements)")).fetchall()
             existing_mov = {r[1] for r in rows_mov}

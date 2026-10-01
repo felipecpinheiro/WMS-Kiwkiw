@@ -33,6 +33,7 @@ class TokenData(BaseModel):
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None
     seller_ids: Optional[List[int]] = None
+    seller_scope: str = "sellers"
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
@@ -72,6 +73,7 @@ class UserCreate(BaseModel):
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None
     seller_ids: Optional[List[int]] = None  # grupo de sellers (manager/operator)
+    seller_scope: str = "sellers"           # 'sellers' | 'unit'
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -81,6 +83,7 @@ class UserUpdate(BaseModel):
     unit_id: Optional[int] = None
     seller_id: Optional[int] = None        # seller principal (client)
     seller_ids: Optional[List[int]] = None  # grupo de sellers (manager/operator)
+    seller_scope: Optional[str] = None      # 'sellers' | 'unit'
     active: Optional[bool] = None
     force_password_change: Optional[bool] = None
 
@@ -95,6 +98,7 @@ class UserResponse(BaseModel):
     seller_name: Optional[str] = None  # nome do seller principal
     seller_ids: List[int] = []         # grupo de sellers (manager/operator)
     seller_names: List[str] = []       # nomes dos sellers do grupo
+    seller_scope: str = "sellers"      # 'sellers' | 'unit'
     active: bool
     force_password_change: bool = False
     created_at: datetime

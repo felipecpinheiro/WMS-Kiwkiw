@@ -226,6 +226,13 @@ def run_light_migrations():
                 index_migrations.append(
                     "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
 
+            # Faturamento (01/10/2026): componentes da NF congelados à parte
+            # (caixa B2B, adicional por produto, adicional manual B2C). Aditivas, nullable.
+            for _c in ("valor_caixa_b2b", "adic_produto", "adic_manual"):
+                if not col_exists("billing_closing_lines", _c):
+                    index_migrations.append(
+                        f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
+
             # Insumos do Cliente (23/09/2026): Balanço (ajuste de saldo) e regra
             # SUPPLY_OCCURRENCE (por consumo de outro insumo, com encadeamento).
             # As tabelas já existem desde 13-14/09/2026 — create_all não adiciona
@@ -386,6 +393,11 @@ def run_light_migrations():
             if "itens" not in _bcl_cols:
                 index_migrations.append(
                     "ALTER TABLE billing_closing_lines ADD COLUMN itens INTEGER")
+            # Faturamento (01/10/2026): componentes da NF congelados à parte.
+            for _c in ("valor_caixa_b2b", "adic_produto", "adic_manual"):
+                if _c not in _bcl_cols:
+                    index_migrations.append(
+                        f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
 
             # Insumos do Cliente (23/09/2026): Balanço + regra SUPPLY_OCCURRENCE.
             # SQLite não tem enum nativo — só as 2 colunas precisam de migração.

@@ -724,6 +724,12 @@ class BillingClosingLine(Base):
     manuseio = Column(Float, default=0.0, nullable=False)
     total = Column(Float, default=0.0, nullable=False)
     sem_caixa = Column(Boolean, default=False, nullable=False)
+    # Componentes do total congelados à parte (nullable: fechamentos anteriores a
+    # esta coluna têm NULL e são derivados dos parâmetros congelados em read_frozen).
+    # `manuseio` continua gravado "dobrado" (inclui estes valores) — o `total` não muda.
+    valor_caixa_b2b = Column(Float, nullable=True)        # só B2B
+    adic_produto = Column(Float, nullable=True)           # só B2B
+    adic_manual = Column(Float, nullable=True)            # só B2C (no B2B fica em adic_caixa)
 
     closing = relationship("BillingMonthlyClosing", back_populates="lines")
 

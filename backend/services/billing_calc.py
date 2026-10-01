@@ -469,6 +469,7 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             # adicional manual da NF dobrado no bucket manuseio (igual o B2B faz
             # com valor_caixa_b2b); o total já inclui tudo.
             manuseio=r2(ln["manuseio"] + ln.get("adic_manual", 0.0)),
+            adic_manual=r2(ln.get("adic_manual", 0.0)),
             total=ln["total"], sem_caixa=ln["sem_caixa"],
         ))
     for ln in computed["b2b_lines"]:
@@ -479,6 +480,8 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
             channel="b2b", box=ln["box"], itens=ln.get("itens"),
             adic_caixa=ln["b2b_adicional"],
             manuseio=r2(ln["manuseio_b2b"] + ln["valor_caixa_b2b"] + ln["adic_produto"]),
+            valor_caixa_b2b=r2(ln["valor_caixa_b2b"]),
+            adic_produto=r2(ln["adic_produto"]),
             total=ln["total"], sem_caixa=False,
         ))
 
@@ -509,6 +512,18 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
     ).order_by(models.BillingClosingLine.imported_at.asc(),
                models.BillingClosingLine.id.asc()).all()
 
+    # Fechamentos anteriores a 01/10/2026 não têm os componentes gravados à parte
+    # (colunas NULL): derivam-se dos parâmetros congelados no próprio fechamento.
+    # O `total` da NF nunca é recalculado, só lido.
+    _n_b2c_lines = sum(1 for x in lines if x.channel == "b2c")
+    if getattr(closing, "usar_faixas_pedidos", False):
+        _fx0 = parse_faixas(getattr(closing, "faixas_pedidos", ""))
+        _preco_b2c_fz = faixa_para_contagem(_n_b2c_lines, _fx0)[0] or 0.0
+    else:
+        _preco_b2c_fz = float(closing.preco_unitario or 0.0)
+    _cb2b_fz = float(closing.valor_caixa_b2b or 0.0)
+    _mb2b_fz = float(closing.manuseio_b2b or 0.0)
+
     b2c_lines, b2b_lines = [], []
     for ln in lines:
         d = {
@@ -521,14 +536,26 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
             "note": "",
         }
         if ln.channel == "b2c":
-            d.update({"adic_caixa": r2(ln.adic_caixa), "adic_manual": 0.0,
-                      "b2b_adicional": 0.0, "manuseio": r2(ln.manuseio),
+            if ln.adic_manual is not None:
+                _man = float(ln.adic_manual)
+            else:
+                _man = max(0.0, float(ln.manuseio or 0.0) - _preco_b2c_fz)
+            d.update({"adic_caixa": r2(ln.adic_caixa), "adic_manual": r2(_man),
+                      "b2b_adicional": r2(_man),
+                      "manuseio": r2(float(ln.manuseio or 0.0) - _man),
                       "sem_caixa": ln.sem_caixa, "box_norm": normaliza_box(ln.box),
                       "itens": ln.itens, "auto_channel": "b2c"})
             b2c_lines.append(d)
         else:
-            d.update({"b2b_adicional": r2(ln.adic_caixa), "manuseio_b2b": r2(ln.manuseio),
-                      "valor_caixa_b2b": 0.0, "adic_produto": 0.0,
+            if ln.valor_caixa_b2b is not None:
+                _cx = float(ln.valor_caixa_b2b)
+                _ap = float(ln.adic_produto or 0.0)
+            else:
+                _cx = _cb2b_fz
+                _ap = max(0.0, float(ln.manuseio or 0.0) - _mb2b_fz - _cx)
+            d.update({"b2b_adicional": r2(ln.adic_caixa),
+                      "manuseio_b2b": r2(float(ln.manuseio or 0.0) - _cx - _ap),
+                      "valor_caixa_b2b": r2(_cx), "adic_produto": r2(_ap),
                       "itens": ln.itens, "auto_channel": "b2b"})
             b2b_lines.append(d)
 

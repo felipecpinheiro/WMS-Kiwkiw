@@ -2215,6 +2215,7 @@ export default function InventoryPage() {
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [movSearch, setMovSearch] = useState('');
   const [movTypeFilter, setMovTypeFilter] = useState<'' | 'Entrada' | 'Saída'>('');
+  const [movNatureFilter, setMovNatureFilter] = useState('');
   const [movSort, setMovSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'movement_date', dir: 'desc' });
   const [stockSort, setStockSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'sku', dir: 'asc'});
   const [showManual, setShowManual] = useState(false);
@@ -2310,6 +2311,9 @@ export default function InventoryPage() {
     }
     if (movTypeFilter) {
       list = list.filter(m => m.movement_type === movTypeFilter);
+    }
+    if (movNatureFilter) {
+      list = list.filter(m => m.nature === movNatureFilter);
     }
     // Sort
     list = [...list].sort((a, b) => {
@@ -2682,6 +2686,22 @@ export default function InventoryPage() {
                 <option value="">Todos os tipos</option>
                 <option value="Entrada">Entrada</option>
                 <option value="Saída">Saída</option>
+              </select>
+
+              {/* Natureza filter (inclui "Devolução") */}
+              <select
+                value={movNatureFilter}
+                onChange={e => setMovNatureFilter(e.target.value)}
+                className="border border-line rounded-lg px-2 py-1.5 text-xs text-t1 outline-none focus:ring-2 focus:ring-violet-500/40"
+                style={{ background: 'rgb(var(--surface-2))' }}
+              >
+                <option value="">Todas as naturezas</option>
+                {Array.from(new Set([
+                  'Devolução',
+                  ...(movements as any[]).map(m => m.nature).filter(Boolean),
+                ])).sort().map(n => (
+                  <option key={n as string} value={n as string}>{n as string}</option>
+                ))}
               </select>
 
               {/* Text search */}

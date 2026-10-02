@@ -36,7 +36,8 @@ type Draft = {
   cubagem_m3: number;
   valor_segurado: number;
   inicio_contrato: string;   // 'YYYY-MM' ou '' — metadado do aviso de reajuste
-  adjustments: { descricao: string; obs: string; sign: number; valor: number }[];
+  adjustments: { descricao: string; obs: string; sign: number; valor: number;
+                 repetir?: boolean; repeat_key?: string | null }[];
   overrides: Record<number, { channel_override: string | null; b2b_adicional: number | null; note: string | null }>;
 };
 
@@ -275,6 +276,7 @@ export default function BillingPage() {
       qc.invalidateQueries(['billing-consolidated']);
       setDirty(false);
       if (okMsg) toast.success(okMsg);
+      if (res.data?.repetir_aviso) toast(res.data.repetir_aviso, { icon: '⚠️', duration: 6000 });
     } catch (e: any) {
       if (isAccessError(e)) releaseAccess();
       toast.error(e?.response?.data?.detail || 'Erro ao salvar');
@@ -291,6 +293,7 @@ export default function BillingPage() {
       else qc.invalidateQueries(['billing-closing', sellerId, refMonth]);
       qc.invalidateQueries(['billing-consolidated']);
       toast.success(ok);
+      if (res?.data?.repetir_aviso) toast(res.data.repetir_aviso, { icon: '⚠️', duration: 6000 });
     } catch (e: any) {
       if (isAccessError(e)) releaseAccess();
       toast.error(e?.response?.data?.detail || 'Erro');
@@ -333,7 +336,7 @@ export default function BillingPage() {
     setDraft(next);
     await persistDraft(next, 'Adicional B2B salvo');
   };
-  const addAvulso = () => { setDraft(d => d ? { ...d, adjustments: [...d.adjustments, { descricao: '', obs: '', sign: 1, valor: 0 }] } : d); setDirty(true); };
+  const addAvulso = () => { setDraft(d => d ? { ...d, adjustments: [...d.adjustments, { descricao: '', obs: '', sign: 1, valor: 0, repetir: false, repeat_key: null }] } : d); setDirty(true); };
   const setAvulso = (i: number, patch: any) => {
     setDraft(d => d ? { ...d, adjustments: d.adjustments.map((a, j) => j === i ? { ...a, ...patch } : a) } : d);
     setDirty(true);
@@ -606,10 +609,14 @@ export default function BillingPage() {
 
           {/* AVULSOS */}
           <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
-            <h2 className="text-sm font-semibold text-t2 mb-3">Linhas avulsas</h2>
+            <h2 className="text-sm font-semibold text-t2 mb-1">Linhas avulsas</h2>
+            <p className="text-[11px] text-t4 mb-3">
+              Marque <b>Repetir</b> para a linha ser copiada para o mês seguinte deste seller ao salvar ou fechar o mês.
+              Para parar, desmarque ou apague a linha no mês em que ela não deve mais aparecer.
+            </p>
             <div className="space-y-2">
               {draft.adjustments.map((a, i) => (
-                <div key={i} className="grid grid-cols-[1.4fr_1.2fr_auto_110px_auto] gap-2 items-center">
+                <div key={i} className="grid grid-cols-[1.4fr_1.2fr_auto_110px_auto_auto] gap-2 items-center">
                   <input value={a.descricao} placeholder="Descrição" onChange={e => setAvulso(i, { descricao: e.target.value })}
                     className="border border-line rounded-lg px-2 py-1.5 text-sm bg-surface-2 text-t1" />
                   <input value={a.obs} placeholder="Motivo / obs." onChange={e => setAvulso(i, { obs: e.target.value })}
@@ -624,6 +631,13 @@ export default function BillingPage() {
                   </div>
                   <input type="number" step="0.01" value={a.valor} onChange={e => setAvulso(i, { valor: Number(e.target.value) })}
                     className="border border-line rounded-lg px-2 py-1.5 text-sm text-right bg-surface-2 text-t1" />
+                  <label className="flex items-center gap-1 text-xs text-t3 cursor-pointer whitespace-nowrap"
+                    title="Copia esta linha para o mês seguinte deste seller">
+                    <input type="checkbox" checked={!!a.repetir}
+                      onChange={e => setAvulso(i, { repetir: e.target.checked })}
+                      className="w-3.5 h-3.5 accent-violet-600" />
+                    Repetir
+                  </label>
                   <button onClick={() => rmAvulso(i)} className="text-t4 hover:text-red-400"><X size={15} /></button>
                 </div>
               ))}

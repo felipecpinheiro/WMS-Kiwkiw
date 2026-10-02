@@ -711,6 +711,11 @@ class BillingClosingAdjustment(Base):
     obs = Column(String(300), default="", nullable=False)
     sign = Column(Integer, default=1, nullable=False)     # +1 | -1
     valor = Column(Float, default=0.0, nullable=False)
+    # Repetir nos meses seguintes (02/10/2026): linha marcada é copiada para o mês
+    # seguinte ao salvar/fechar. `repeat_key` identifica a "mesma linha" entre meses
+    # (as linhas são recriadas a cada salvamento, então o id não serve) e evita duplicar.
+    repetir = Column(Boolean, default=False, nullable=False)
+    repeat_key = Column(String(36), nullable=True)
 
     closing = relationship("BillingMonthlyClosing", back_populates="adjustments")
 

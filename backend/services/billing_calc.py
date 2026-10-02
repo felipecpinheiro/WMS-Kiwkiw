@@ -72,6 +72,14 @@ def month_range(ref_month: str) -> tuple[datetime, datetime]:
     return start, end
 
 
+def next_ref_month(ref_month: str) -> str:
+    year, mon = (int(p) for p in ref_month.split("-"))
+    mon += 1
+    if mon == 13:
+        mon, year = 1, year + 1
+    return f"{year:04d}-{mon:02d}"
+
+
 def prev_ref_month(ref_month: str) -> str:
     year, mon = (int(p) for p in ref_month.split("-"))
     mon -= 1

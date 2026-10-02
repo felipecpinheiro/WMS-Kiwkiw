@@ -241,6 +241,14 @@ def run_light_migrations():
                 if not col_exists("billing_closing_lines", _c):
                     index_migrations.append(
                         f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
+            # Faturamento (02/10/2026): linha avulsa com "Repetir nos meses seguintes".
+            if not col_exists("billing_closing_adjustments", "repetir"):
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_adjustments ADD COLUMN repetir "
+                    "BOOLEAN DEFAULT FALSE NOT NULL")
+            if not col_exists("billing_closing_adjustments", "repeat_key"):
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_adjustments ADD COLUMN repeat_key VARCHAR(36)")
 
             # Insumos do Cliente (23/09/2026): Balanço (ajuste de saldo) e regra
             # SUPPLY_OCCURRENCE (por consumo de outro insumo, com encadeamento).
@@ -416,6 +424,16 @@ def run_light_migrations():
                 if _c not in _bcl_cols:
                     index_migrations.append(
                         f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
+            # Faturamento (02/10/2026): linha avulsa com "Repetir nos meses seguintes".
+            _bca_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(billing_closing_adjustments)")).fetchall()}
+            if "repetir" not in _bca_cols:
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_adjustments ADD COLUMN repetir "
+                    "BOOLEAN DEFAULT 0 NOT NULL")
+            if "repeat_key" not in _bca_cols:
+                index_migrations.append(
+                    "ALTER TABLE billing_closing_adjustments ADD COLUMN repeat_key VARCHAR(36)")
 
             # Insumos do Cliente (23/09/2026): Balanço + regra SUPPLY_OCCURRENCE.
             # SQLite não tem enum nativo — só as 2 colunas precisam de migração.

@@ -791,6 +791,9 @@ class BillingAdjustmentIn(BaseModel):
     obs: str = ""
     sign: int = 1
     valor: float = 0.0
+    # Repetir nos meses seguintes (02/10/2026). `repeat_key` é gerado pelo servidor.
+    repetir: bool = False
+    repeat_key: Optional[str] = None
 
 
 class BillingNFOverrideIn(BaseModel):

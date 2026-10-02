@@ -32,6 +32,7 @@ em Billing.tsx.
 import io
 import json
 import re
+import uuid
 import zipfile
 from typing import Optional
 
@@ -289,7 +290,8 @@ def _adjustments_list(closing: Optional[models.BillingMonthlyClosing]) -> list:
     if not closing:
         return []
     return [
-        {"descricao": a.descricao, "obs": a.obs, "sign": a.sign, "valor": a.valor}
+        {"descricao": a.descricao, "obs": a.obs, "sign": a.sign, "valor": a.valor,
+         "repetir": bool(a.repetir), "repeat_key": a.repeat_key}
         for a in closing.adjustments
     ]
 
@@ -355,6 +357,53 @@ def _build_payload(db: Session, seller: models.Seller, ref_month: str) -> dict:
     }
 
 
+def _propagate_adjustments(db: Session, seller_id: int, ref_month: str) -> Optional[str]:
+    """Copia as linhas avulsas marcadas com "Repetir" para o mês seguinte do seller.
+
+    - Mês seguinte FECHADO: não copia (devolve um aviso para a tela).
+    - Mês seguinte sem fechamento salvo: cria um 'open' só com as cópias.
+    - Dedupe por `repeat_key`: se o mês seguinte já tem a linha (mesmo editada), não
+      duplica nem sobrescreve. A cópia nasce com `repetir=True` (a cadeia continua).
+    """
+    src = db.query(models.BillingMonthlyClosing).options(
+        joinedload(models.BillingMonthlyClosing.adjustments)
+    ).filter(
+        models.BillingMonthlyClosing.seller_id == seller_id,
+        models.BillingMonthlyClosing.ref_month == ref_month,
+    ).first()
+    if src is None:
+        return None
+    lines = [a for a in src.adjustments if a.repetir and a.repeat_key]
+    if not lines:
+        return None
+    nxt = calc.next_ref_month(ref_month)
+    dst = db.query(models.BillingMonthlyClosing).options(
+        joinedload(models.BillingMonthlyClosing.adjustments)
+    ).filter(
+        models.BillingMonthlyClosing.seller_id == seller_id,
+        models.BillingMonthlyClosing.ref_month == nxt,
+    ).first()
+    if dst is not None and dst.status == "closed":
+        return (f"O mês seguinte ({nxt[5:7]}/{nxt[:4]}) já está fechado: as linhas "
+                f"marcadas para repetir não foram copiadas.")
+    if dst is None:
+        dst = models.BillingMonthlyClosing(seller_id=seller_id, ref_month=nxt, status="open")
+        db.add(dst)
+        db.flush()
+        existing = set()
+    else:
+        existing = {a.repeat_key for a in dst.adjustments if a.repeat_key}
+    for a in lines:
+        if a.repeat_key in existing:
+            continue
+        db.add(models.BillingClosingAdjustment(
+            closing_id=dst.id, descricao=a.descricao, obs=a.obs, sign=a.sign,
+            valor=a.valor, repetir=True, repeat_key=a.repeat_key,
+        ))
+    db.commit()
+    return None
+
+
 @router.get("/closing/{seller_id}/{ref_month}")
 def get_closing(
     seller_id: int, ref_month: str,
@@ -406,6 +455,9 @@ def put_closing(
         db.add(models.BillingClosingAdjustment(
             closing_id=closing.id, descricao=a.descricao or "", obs=a.obs or "",
             sign=1 if (a.sign or 1) >= 0 else -1, valor=a.valor or 0.0,
+            repetir=bool(a.repetir),
+            # a chave identifica "a mesma linha" entre meses; nasce na 1ª vez que é marcada
+            repeat_key=(a.repeat_key or (str(uuid.uuid4()) if a.repetir else None)),
         ))
 
     db.query(models.BillingClosingNF).filter(
@@ -421,7 +473,10 @@ def put_closing(
         ))
 
     db.commit()
-    return _build_payload(db, seller, ref_month)
+    aviso = _propagate_adjustments(db, seller_id, ref_month)
+    payload = _build_payload(db, seller, ref_month)
+    payload["repetir_aviso"] = aviso
+    return payload
 
 
 # O endpoint `apply-forward` foi removido na unificação de 01/09/2026: com a
@@ -473,7 +528,10 @@ def close_month(
     _audit(db, current_user, "CLOSE_MONTH", closing.id,
            {"ref_month": ref_month, "total_geral": computed["fatura"]["total_geral"]})
     db.commit()
-    return _build_payload(db, seller, ref_month)
+    aviso = _propagate_adjustments(db, seller_id, ref_month)
+    payload = _build_payload(db, seller, ref_month)
+    payload["repetir_aviso"] = aviso
+    return payload
 
 
 @router.post("/closing/{seller_id}/{ref_month}/reopen")

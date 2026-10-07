@@ -39,6 +39,67 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 07/10/2026 — "Valor Un" por SKU no Meu Estoque (Portal do Seller)
+
+**Sem push, sem commit.** O próprio seller (`client`) cadastra o valor unitário (R$) de cada SKU na aba
+**Meu Estoque**; a tela mostra também **Valor Total** (saldo × valor un) e o **total geral**. É só
+cadastro e visualização — **não toca em `stock_movements`, `stock_positions`, pedidos nem faturamento**.
+
+⚠️ **Coluna nova `products.seller_unit_value` `NUMERIC(12,2)` NULL — NÃO é a `products.unit_value`.**
+A `unit_value` (Float, default 0.0) já existia, é editada nas telas internas (Produtos, Scanner, import
+de produtos) e vem 0.0 por padrão, então não separa "sem valor" de "valor 0 de propósito". Por isso a
+coluna é outra e a antiga ficou intocada. **NULL = sem valor; 0 é valor válido (brinde).** Migração
+idempotente em `main.py` (`index_migrations`, Postgres e SQLite). Sem tabela nova.
+
+**Backend — `routers/stock_values.py` (novo, prefixo `/inventory/valores`):**
+
+| Endpoint | O quê |
+|---|---|
+| `GET /modelo` | Excel em memória, 1 linha por SKU **ativo e não descontinuado** (inclui saldo zero/negativo). `SKU · Nome do produto · Valor Un`, valor atual pré-preenchido + aba `INSTRUCOES` |
+| `POST /analyze` | Confere, **não grava**. Erros/avisos por linha (nº da linha do Excel, 1ª de dados = 2) + antes→depois |
+| `POST /lancar` | **Revalida do zero** (mesma `_validate_rows`), tudo-ou-nada (422). Só grava e só loga o que **mudou** |
+| `PUT /sku` | Edição individual (SKU no corpo). `value: null` **apaga** (só pelo site) |
+
+- **Escopo:** só `client` grava, sempre no próprio `seller_id` (nunca por parâmetro). `admin` só lê
+  (`modelo`/`analyze` com `?seller_id=`). manager/operator: 403 em tudo. Seller inativo: 404.
+- **Bloqueiam o lote:** SKU sem produto ativo no seller (casa sem diferenciar caixa, grava a grafia do
+  cadastro), descontinuado, valor não numérico, negativo, mais de 2 casas, mesmo SKU repetido com
+  valores diferentes. **Só avisam:** célula vazia (**mantém** o atual, nunca apaga), SKU do seller
+  ausente da planilha (não é alterado), repetido com o mesmo valor.
+- Aceita `12,50`, `12.5`, `R$ 12,50` e `1.234,56` (milhar só quando os dois separadores aparecem).
+- **AuditLog:** 1 por lote (`Product`/`BULK_UPLOAD`) e 1 por edição individual (`Product`/`UPDATE`),
+  com `SKU: antes -> depois`.
+- `get_stock_report` (`stock_manager.py`) devolve `seller_unit_value` e `total_value` por SKU com **uma
+  consulta agrupada** (sem N+1). `total_value` é `None` sem valor **ou com saldo negativo**; saldo zero
+  dá 0,00. Exports CSV/Excel de `inventory.py` ganharam `Valor Un` e `Valor Total` (mesma regra) —
+  a coluna antiga "Valor Unit." do CSV (lê `StockPosition.unit_value`) foi **mantida**.
+
+**Frontend:** `SellerPortal.tsx` (colunas `Valor Un` editável inline — salva no Enter/ao sair, Esc cancela,
+campo vazio apaga — e `Valor Total`; faixa "Valor total do estoque: R$ X · N SKUs sem valor" que
+acompanha filtros e busca e ganha "(filtrado)"; chip "Sem valor cadastrado"; 4 opções novas de
+ordenação, nulos sempre no fim; botão "Valores por Excel"), `components/ValuesSheetModal.tsx` (novo),
+`api.ts` (`inventoryApi.downloadValuesTemplate/analyzeValues/submitValues/setSkuValue`).
+Nada em `Inventory.tsx`, `Products.tsx` nem no Dashboard do Portal.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Ler/gravar `products.unit_value` achando que é o valor do seller | É o campo legado (default 0.0, telas internas) | O valor do seller é `seller_unit_value` |
+| Somar `total_value` em JS com float | Deriva centavos | A tela soma em centavos inteiros (`Math.round(x*100)`) |
+| SKU com posição de estoque mas produto inativo/sem cadastro | Aparece em Meu Estoque como "sem valor" e o campo é editável, mas o `PUT /sku` recusa (422) — só produto ativo aceita valor | Comportamento atual; o toast mostra o motivo |
+
+**Testes:** 97 verificações E2E via TestClient em **SQLite e PostgreSQL** (bancos descartáveis) — modelo,
+conferência sem gravar, lançamento, cada erro na linha certa, tudo-ou-nada com linhas forjadas, vazio
+mantendo, vírgula/ponto/BR, caixa diferente, descontinuado, >2 casas, zero válido, negativo recusado,
+edição individual (gravar/apagar/inválido), escopo (client só no próprio seller, manager/operator 403,
+admin só leitura), total/saldo negativo/zero, exports, nenhum movimento/posição alterado. Migração
+testada em Postgres (coluna criada, 2ª execução idempotente). `tsc --noEmit` limpo. Conferência visual
+(escuro, claro e celular): edição inline, valor inválido, Esc, apagar, chip, ordenação, modal Excel até
+a confirmação, sem erro novo no console.
+
+---
+
 ## Mudanças Recentes — 23/09/2026 — "Lançar por Excel" na tela de Estoque (interna)
 
 Botão novo **"Lançar por Excel"** ao lado de "Lançamento Manual" (admin e gerente; operador não vê).
@@ -2222,6 +2283,7 @@ esses números** (decisão do dono do sistema).
 | `/billing/access` | `routers/billing_access.py` | **Acesso Protegido ao Financeiro (02/09/2026), admin.** `request` (pede código de 6 dígitos por e-mail), `verify` (código de e-mail ou o mestre, libera 4h), `status`. E-mails em `services/billing_access_mail.py`. Tabela `billing_access_codes`; rate-limit e contador de erros derivados de `AuditLog` |
 | `/devolucoes` | `routers/returns.py` | **Devoluções (02/09/2026), manager+.** `modelo` (Excel modelo em memória), `analyze` (confere a planilha, **não grava**), `lancar` (grava, **tudo-ou-nada**). Linha que retorna vira `StockMovement` de Entrada com a data do lançamento e **sem `order_id`**; linha que não retorna vira só `AuditLog` (`entity_type='Devolucao'`). Sem tabela nova |
 | `/inventory/planilha` | `routers/stock_excel.py` | **Lançar por Excel (23/09/2026), manager+ (gerente só nos sellers que atende).** `modelo`, `{seller_id}/analyze` (**não grava**), `{seller_id}/lancar` (revalida, **tudo-ou-nada**). Um seller por arquivo; movimento com `nature="Lançamento de planilha"` e **sem `order_id`**. Sem tabela nova |
+| `/inventory/valores` | `routers/stock_values.py` | **Valor Un por SKU no Meu Estoque (07/10/2026), só `client`** grava (próprio seller); `admin` só lê via `?seller_id=`; manager/operator 403. `modelo`, `analyze` (**não grava**), `lancar` (revalida, **tudo-ou-nada**), `PUT sku` (edição individual, `null` apaga). Coluna `products.seller_unit_value` (NÃO a `unit_value` legada). Nunca mexe em estoque nem faturamento |
 | `/client-supplies` | `routers/client_supplies.py` | **Insumos do Cliente (14/09/2026), só `client`** (o próprio seller_id) cria/edita/apaga; `admin` só lê via `?seller_id=`. CRUD de insumo/entrada/regra + `GET /client-supplies` (lista com saldo) e `GET /client-supplies/movements` (extrato combinado). **Nunca mexe em estoque nem faturamento** — saldo é estimativa calculada em `services/supply_calc.py` |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |

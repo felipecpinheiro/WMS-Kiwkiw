@@ -880,6 +880,24 @@ export const inventoryApi = {
       timeout: 300000, // 5 min para 1M+ linhas
       onUploadProgress,
     }),
+  /** Valor Un por Excel (07/10/2026, Portal do Seller) — modelo com 1 linha por SKU ativo. */
+  downloadValuesTemplate: () =>
+    downloadAuthenticatedFile('/inventory/valores/modelo', 'MODELO_VALORES_ESTOQUE.xlsx'),
+  /** Confere a planilha de valores sem gravar nada. */
+  analyzeValues: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<ValuesAnalyzeResult>('/inventory/valores/analyze', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  },
+  /** Grava. Tudo-ou-nada: 422 com a lista de erros. O servidor revalida do zero. */
+  submitValues: (rows: ValuesRow[]) =>
+    api.post<{ total: number; changed: number; warnings: number }>('/inventory/valores/lancar', { rows }),
+  /** Edição individual. value=null APAGA o valor (volta a "sem valor"). */
+  setSkuValue: (sku: string, value: number | string | null) =>
+    api.put<{ sku: string; seller_unit_value: number | null }>('/inventory/valores/sku', { sku, value }),
   /** Lançar por Excel (23/09/2026) — baixa o modelo. Precisa do Bearer token (window.open daria 401). */
   downloadSheetTemplate: () =>
     downloadAuthenticatedFile('/inventory/planilha/modelo', 'MODELO_LANCAMENTO_ESTOQUE.xlsx'),
@@ -899,6 +917,27 @@ export const inventoryApi = {
       { rows },
     ),
 };
+
+// Valor Un por Excel (07/10/2026) — ver backend/routers/stock_values.py
+export interface ValuesRow {
+  line: number;
+  sku: string;
+  product_name: string | null;
+  current_value: number | null;
+  /** Valor novo; null = célula vazia (mantém o atual). */
+  value: number | null;
+  errors: string[];
+  warnings: string[];
+}
+export interface ValuesAnalyzeResult {
+  seller_id: number;
+  total: number;
+  rows: ValuesRow[];
+  errors: string[];
+  warnings: string[];
+  changes: { sku: string; product_name: string | null; before: number | null; after: number }[];
+  can_submit: boolean;
+}
 
 // Lançar por Excel (23/09/2026) — ver backend/routers/stock_excel.py
 export interface SheetMovementRow {

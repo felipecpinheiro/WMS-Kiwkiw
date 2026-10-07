@@ -12,7 +12,7 @@ import {
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
   BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal, Receipt,
-  LayoutDashboard, PackagePlus,
+  LayoutDashboard, PackagePlus, FileSpreadsheet,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -22,6 +22,7 @@ import { dashboardApi, inventoryApi, authApi } from '../api';
 import SellerFinanceTab from './SellerFinance';
 import SellerDashboardTab from './SellerDashboard';
 import SellerSuppliesTab from './SellerSupplies';
+import ValuesSheetModal, { fmtBRL } from '../components/ValuesSheetModal';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import toast from 'react-hot-toast';
@@ -72,7 +73,76 @@ const STOCK_SORT_OPTIONS: { value: string; label: string; col: string; dir: Sort
   { value: 'previsao',   label: 'Previsão (mais urgente)',   col: 'days_remaining',      dir: 'asc'  },
   { value: 'entradas',   label: 'Entradas (maior)',          col: 'total_in',            dir: 'desc' },
   { value: 'saidas',     label: 'Saídas (maior)',            col: 'total_out',           dir: 'desc' },
+  { value: 'vun_desc',   label: 'Valor Un (maior → menor)',  col: 'seller_unit_value',   dir: 'desc' },
+  { value: 'vun_asc',    label: 'Valor Un (menor → maior)',  col: 'seller_unit_value',   dir: 'asc'  },
+  { value: 'vtot_desc',  label: 'Valor Total (maior → menor)', col: 'total_value',       dir: 'desc' },
+  { value: 'vtot_asc',   label: 'Valor Total (menor → maior)', col: 'total_value',       dir: 'asc'  },
 ];
+
+// ─── Valor Un editável (inline) ───────────────────────────────────────────────
+// Salva ao sair do campo / Enter; Esc cancela. Campo vazio apaga o valor.
+// Aceita vírgula e ponto, até 2 casas. O servidor revalida tudo.
+
+const fmtInput = (v: number | null | undefined) =>
+  v == null ? '' : v.toFixed(2).replace('.', ',');
+
+function UnitValueCell({ sku, value, onSaved, compact }: {
+  sku: string; value: number | null; onSaved: () => void; compact?: boolean;
+}) {
+  const [draft, setDraft] = useState(fmtInput(value));
+  const [saving, setSaving] = useState(false);
+  const skipRef = useRef(false);
+
+  useEffect(() => { setDraft(fmtInput(value)); }, [value]);
+
+  const commit = async () => {
+    if (skipRef.current) { skipRef.current = false; return; }
+    const txt = draft.replace(/^R\$\s*/i, '').replace(/\s/g, '');
+    if (txt === fmtInput(value)) return;
+    if (txt !== '' && !/^\d+([.,]\d{0,2})?$/.test(txt)) {
+      toast.error(/^\d+[.,]\d{3,}$/.test(txt)
+        ? 'Use no máximo 2 casas decimais' : 'Valor inválido — use números, ex.: 12,50');
+      setDraft(fmtInput(value));
+      return;
+    }
+    setSaving(true);
+    try {
+      await inventoryApi.setSkuValue(sku, txt === '' ? null : txt);
+      toast.success(txt === '' ? `Valor de ${sku} removido` : `Valor de ${sku} salvo`);
+      onSaved();
+    } catch (err: any) {
+      const d = err?.response?.data?.detail;
+      toast.error(typeof d === 'string' ? d : 'Não foi possível salvar o valor');
+      setDraft(fmtInput(value));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+      <span className="text-[11px] text-t4">R$</span>
+      <input
+        value={draft}
+        disabled={saving}
+        inputMode="decimal"
+        placeholder="—"
+        aria-label={`Valor unitário de ${sku}`}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            skipRef.current = true;
+            setDraft(fmtInput(value));
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className={`${compact ? 'w-20' : 'w-[76px]'} text-right tabular-nums border border-line rounded-md px-1.5 py-1 text-sm bg-surface-2 text-t1 outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-60`}
+      />
+    </div>
+  );
+}
 
 const STOCK_LEVELS = ['ALTO', 'MÉDIO', 'BAIXO'];
 const STOCK_FORECASTS = ['Baixo', 'Médio', 'Alto', 'Sem Saídas 60d'];
@@ -267,6 +337,8 @@ export default function SellerPortalPage() {
   const [stkSituacao, setStkSituacao] = useState<'' | 'com' | 'ruptura'>('');
   const [stkPrevisao, setStkPrevisao] = useState<'' | '7' | '15' | '30' | 'sem'>('');
   const [stkForecast, setStkForecast] = useState<string[]>([]);
+  const [stkSemValor, setStkSemValor] = useState(false);
+  const [showValuesModal, setShowValuesModal] = useState(false);
   // Filtro de datas para movimentações — padrão 90 dias (os presets cobrem o resto)
   const defaultMovFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0,10); })();
   const [movDateFrom, setMovDateFrom] = useState(defaultMovFrom);
@@ -309,7 +381,7 @@ export default function SellerPortalPage() {
     { enabled: !!sellerId, refetchInterval: 60000 },
   );
 
-  const { data: stock = [], isFetching: stockFetching } = useQuery(
+  const { data: stock = [], isFetching: stockFetching, refetch: refetchStock } = useQuery(
     ['seller-stock', sellerId],
     () => sellerId ? inventoryApi.stock(sellerId).then(r => r.data) : [],
     { enabled: !!sellerId },
@@ -404,6 +476,7 @@ export default function SellerPortalPage() {
       if (stkPrevisao === '15' && !(dr != null && dr <= 15)) return false;
       if (stkPrevisao === '30' && !(dr != null && dr <= 30)) return false;
       if (stkForecast.length && !stkForecast.includes(s.forecast_status)) return false;
+      if (stkSemValor && s.seller_unit_value != null) return false;
       return true;
     });
     if (!sort.col || !sort.dir) return f;
@@ -420,10 +493,23 @@ export default function SellerPortalPage() {
         : String(av).localeCompare(String(bv), 'pt-BR');
       return sort.dir === 'asc' ? cmp : -cmp;
     });
-  }, [stock, search, sort, stkLevels, stkSituacao, stkPrevisao, stkForecast]);
+  }, [stock, search, sort, stkLevels, stkSituacao, stkPrevisao, stkForecast, stkSemValor]);
 
   const stockFiltersActive =
-    !!stkLevels.length || !!stkSituacao || !!stkPrevisao || !!stkForecast.length;
+    !!stkLevels.length || !!stkSituacao || !!stkPrevisao || !!stkForecast.length || stkSemValor;
+
+  // Total do estoque em R$ — acompanha filtros e busca (mesmo filteredStock).
+  // SKU sem valor ou com saldo negativo (total_value nulo) fica fora da soma.
+  const stockValueSummary = useMemo(() => {
+    let cents = 0;
+    let semValor = 0;
+    for (const s of filteredStock) {
+      if (s.seller_unit_value == null) semValor += 1;
+      if (s.total_value != null) cents += Math.round(s.total_value * 100);
+    }
+    return { total: cents / 100, semValor };
+  }, [filteredStock]);
+  const stockIsFiltered = stockFiltersActive || !!search.trim();
   const stockSortValue =
     STOCK_SORT_OPTIONS.find(o => o.col === sort.col && o.dir === sort.dir)?.value ?? 'custom';
 
@@ -908,6 +994,25 @@ export default function SellerPortalPage() {
                       : <><Download size={14} /> Exportar Excel</>}
                   </button>
                 )}
+                {sellerId && (
+                  <button
+                    onClick={() => setShowValuesModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border border-line text-t3 hover:text-t1 hover:bg-surface-2 hover:border-line-strong"
+                  >
+                    <FileSpreadsheet size={14} /> Valores por Excel
+                  </button>
+                )}
+              </div>
+
+              {/* Total do estoque em R$ (acompanha filtros e busca) */}
+              <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap bg-surface/60 border border-line-soft rounded-xl px-3.5 py-2.5">
+                <span className="text-[11px] font-semibold text-t4 uppercase tracking-wide">
+                  Valor total do estoque{stockIsFiltered ? ' (filtrado)' : ''}
+                </span>
+                <span className="text-lg font-bold text-t1 tabular-nums">{fmtBRL(stockValueSummary.total)}</span>
+                <span className="text-xs text-t4">
+                  · {stockValueSummary.semValor} SKU{stockValueSummary.semValor === 1 ? '' : 's'} sem valor
+                </span>
               </div>
 
               {/* Ordenação + filtros (desktop e mobile) */}
@@ -945,9 +1050,11 @@ export default function SellerPortalPage() {
                   {STOCK_FORECASTS.map(fc => (
                     <Chip key={fc} active={stkForecast.includes(fc)} onClick={() => setStkForecast(a => toggleIn(a, fc))}>{fc}</Chip>
                   ))}
+                  <span className="w-px h-4 bg-line mx-1" />
+                  <Chip active={stkSemValor} onClick={() => setStkSemValor(v => !v)}>Sem valor cadastrado</Chip>
                   {stockFiltersActive && (
                     <button
-                      onClick={() => { setStkLevels([]); setStkSituacao(''); setStkPrevisao(''); setStkForecast([]); }}
+                      onClick={() => { setStkLevels([]); setStkSituacao(''); setStkPrevisao(''); setStkForecast([]); setStkSemValor(false); }}
                       className="text-[11px] text-t4 hover:text-bad underline ml-1"
                     >
                       Limpar filtros
@@ -992,6 +1099,15 @@ export default function SellerPortalPage() {
                           {s.days_remaining != null && (
                             <p className="text-[11px] text-t3 mt-1">previsão: {s.days_remaining} dia{s.days_remaining === 1 ? '' : 's'}</p>
                           )}
+                          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line-soft">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-t4">Valor Un</span>
+                              <UnitValueCell sku={s.sku} value={s.seller_unit_value ?? null} onSaved={() => refetchStock()} compact />
+                            </div>
+                            <span className="text-[11px] text-t4">
+                              Total <b className="text-t1 font-semibold tabular-nums">{s.total_value != null ? fmtBRL(s.total_value) : '—'}</b>
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1014,6 +1130,8 @@ export default function SellerPortalPage() {
                       <SortTh label="Saldo"     col="current_stock"   sort={sort} onSort={handleSort} align="right"  width="80px" />
                       <SortTh label="Previsão"  col="days_remaining"  sort={sort} onSort={handleSort} align="right"  width="90px" />
                       <SortTh label="Status"    col="forecast_status" sort={sort} onSort={handleSort} align="center" width="140px" />
+                      <SortTh label="Valor Un"  col="seller_unit_value" sort={sort} onSort={handleSort} align="right" width="130px" />
+                      <SortTh label="Valor Total" col="total_value"   sort={sort} onSort={handleSort} align="right"  width="120px" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1061,10 +1179,16 @@ export default function SellerPortalPage() {
                               {fs || s.level || '—'}
                             </span>
                           </td>
+                          <td className="py-2 px-3 align-middle">
+                            <UnitValueCell sku={s.sku} value={s.seller_unit_value ?? null} onSaved={() => refetchStock()} />
+                          </td>
+                          <td className="py-2.5 px-3 text-sm text-right tabular-nums align-middle text-t1">
+                            {s.total_value != null ? fmtBRL(s.total_value) : <span className="text-xs text-t5">—</span>}
+                          </td>
                         </tr>
                       );
                     }) : (
-                      <tr><td colSpan={7} className="text-center text-sm text-t4 py-10">Nenhum produto no estoque</td></tr>
+                      <tr><td colSpan={9}className="text-center text-sm text-t4 py-10">Nenhum produto no estoque</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1320,6 +1444,10 @@ export default function SellerPortalPage() {
         </nav>
       )}
       </div>
+
+      {showValuesModal && (
+        <ValuesSheetModal onClose={() => setShowValuesModal(false)} onSuccess={() => refetchStock()} />
+      )}
 
       {/* ── Modal de detalhe do SKU ─────────────────────────────────────────── */}
       {selectedSku && sellerId && (

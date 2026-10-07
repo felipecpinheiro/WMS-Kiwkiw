@@ -5,7 +5,7 @@ Todos os modelos SQLAlchemy do sistema.
 
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, DateTime, Text,
-    ForeignKey, Enum, Date, UniqueConstraint, Index, Table
+    ForeignKey, Enum, Date, UniqueConstraint, Index, Table, Numeric
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -206,7 +206,11 @@ class Product(Base):
     name = Column(String(300), nullable=False)
     barcode_seller = Column(String(50), nullable=True)     # Cód barras do seller
     barcode_kiwkiw = Column(String(50), nullable=True)     # Cód barras interno Kiwkiw
-    unit_value = Column(Float, default=0.0)                # Valor unitário
+    unit_value = Column(Float, default=0.0)                # Valor unitário (legado, tela interna)
+    # Valor unitário informado pelo PRÓPRIO seller no Portal (Meu Estoque).
+    # NULL = "sem valor"; 0 é um valor válido (brinde). Coluna separada da
+    # `unit_value` legada, que vem 0.0 por padrão e é editada nas telas internas.
+    seller_unit_value = Column(Numeric(12, 2), nullable=True)
     box_type = Column(String(50), nullable=True)           # Caixa padrão usada
     score    = Column(Integer, default=0, nullable=False)     # Score para algoritmo de caixa
     photo_url = Column(String(300), nullable=True)         # Foto do produto (para bipagem visual)

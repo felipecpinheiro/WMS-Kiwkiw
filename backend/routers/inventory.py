@@ -880,6 +880,28 @@ def sku_lookup(
 # EXPORTAÇÃO CSV
 # ─────────────────────────────────────────────────────────
 
+def _seller_value_map(seller_id: int, db: Session) -> dict:
+    """{sku: valor unitário do seller} dos produtos ativos que têm valor (1 consulta)."""
+    return {
+        sku: val for sku, val in db.query(
+            models.Product.sku, models.Product.seller_unit_value,
+        ).filter(
+            models.Product.seller_id == seller_id,
+            models.Product.active == True,  # noqa: E712
+            models.Product.seller_unit_value.isnot(None),
+        ).all()
+    }
+
+
+def _value_cols(unit_value, current_stock):
+    """(Valor Un, Valor Total) em float; None onde não há valor. Saldo negativo -> total None."""
+    if unit_value is None:
+        return None, None
+    un = round(float(unit_value), 2)
+    stock = current_stock or 0
+    return un, (round(un * stock, 2) if stock >= 0 else None)
+
+
 @router.get("/stock/{seller_id}/export/csv")
 def export_stock_csv(
     seller_id: int,
@@ -921,10 +943,12 @@ def export_stock_csv(
     writer.writerow([
         "SKU", "Produto", "Estoque Inicial", "Total Entradas",
         "Total Saidas", "Estoque Atual", "Nivel", "Tipo Insumo",
-        "Valor Unit.", "Atualizado em",
+        "Valor Unit.", "Atualizado em", "Valor Un", "Valor Total",
     ])
 
+    value_map = _seller_value_map(seller_id, db)
     for p in positions:
+        v_un, v_tot = _value_cols(value_map.get(p.sku), p.current_stock)
         writer.writerow([
             p.sku,
             p.product_name or "",
@@ -936,6 +960,8 @@ def export_stock_csv(
             p.supply_type or "",
             p.unit_value or 0,
             p.updated_at.strftime("%d/%m/%Y %H:%M") if p.updated_at else "",
+            f"{v_un:.2f}".replace(".", ",") if v_un is not None else "",
+            f"{v_tot:.2f}".replace(".", ",") if v_tot is not None else "",
         ])
 
     output.seek(0)
@@ -1009,7 +1035,9 @@ def export_stock_xlsx(
         bottom=Side(style="thin", color="D0CCEE"),
     )
 
-    ws.merge_cells("A1:F1")
+    value_map = _seller_value_map(seller_id, db)
+
+    ws.merge_cells("A1:H1")
     title_cell = ws["A1"]
     title_cell.value = f"Posição de Estoque  |  {seller_name}  |  {today_brasilia().strftime('%d/%m/%Y')}"
     title_cell.font  = Font(name="Calibri", bold=True, color=WHITE, size=12)
@@ -1017,8 +1045,9 @@ def export_stock_xlsx(
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 22
 
-    headers    = ["SKU", "Nome do Produto", "Estoque Inicial", "Entrada", "Saída", "Estoque Final"]
-    col_widths = [16, 40, 14, 12, 12, 14]
+    headers    = ["SKU", "Nome do Produto", "Estoque Inicial", "Entrada", "Saída", "Estoque Final",
+                  "Valor Un", "Valor Total"]
+    col_widths = [16, 40, 14, 12, 12, 14, 14, 16]
     for col, (h, w) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=2, column=col, value=h)
         cell.font      = header_font
@@ -1031,13 +1060,17 @@ def export_stock_xlsx(
     row_num = 3
     for p in positions:
         fill = PatternFill("solid", fgColor=LIGHT) if row_num % 2 == 0 else PatternFill("solid", fgColor=WHITE)
-        row = [p.sku, p.product_name or "", p.initial_stock, p.total_in, p.total_out, p.current_stock]
+        v_un, v_tot = _value_cols(value_map.get(p.sku), p.current_stock)
+        row = [p.sku, p.product_name or "", p.initial_stock, p.total_in, p.total_out, p.current_stock,
+               v_un if v_un is not None else "—", v_tot if v_tot is not None else "—"]
         for col, val in enumerate(row, 1):
             cell = ws.cell(row=row_num, column=col, value=val)
             cell.font      = data_font
             cell.border    = thin_border
             cell.fill      = fill
             cell.alignment = Alignment(horizontal="center" if col != 2 else "left", vertical="center")
+            if col in (7, 8) and isinstance(val, float):
+                cell.number_format = '"R$" #,##0.00'
         row_num += 1
 
     ws.freeze_panes = "A3"

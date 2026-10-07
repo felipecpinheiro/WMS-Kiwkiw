@@ -1430,8 +1430,27 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
     ).fetchall()
     out_60d_map = {r.sku: (r.total or 0) for r in out_rows}
 
+    # Valor unitário informado pelo seller (Portal, 07/10/2026): UMA consulta
+    # agrupada por seller, nunca por SKU. NULL = sem valor; 0 é valor válido.
+    value_map = {
+        sku_v: val for sku_v, val in db.query(
+            models.Product.sku, models.Product.seller_unit_value,
+        ).filter(
+            models.Product.seller_id == seller_id,
+            models.Product.active == True,  # noqa: E712
+            models.Product.seller_unit_value.isnot(None),
+        ).all()
+    }
+
     result = []
     for p in positions:
+        sv = value_map.get(p.sku)
+        seller_unit_value = round(float(sv), 2) if sv is not None else None
+        # Saldo negativo não vira valor (some da soma); saldo zero dá 0,00.
+        total_value = (
+            round(float(sv) * p.current_stock, 2)
+            if sv is not None and (p.current_stock or 0) >= 0 else None
+        )
         # Média de saídas nos últimos 60 dias
         out_60d = out_60d_map.get(p.sku, 0)
         avg_daily = round(out_60d / 60, 2)
@@ -1445,6 +1464,8 @@ def get_stock_report(seller_id: int, db: Session) -> List[Dict]:
             "total_out": p.total_out,
             "current_stock": p.current_stock,
             "unit_value": p.unit_value,
+            "seller_unit_value": seller_unit_value,
+            "total_value": total_value,
             "level": p.level,
             "supply_type": p.supply_type,
             "updated_at": p.updated_at.strftime("%d/%m/%Y %H:%M") if p.updated_at else None,

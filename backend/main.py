@@ -35,7 +35,7 @@ from backend.database import init_db, get_db, SessionLocal
 from backend.routers import (
     auth, orders, scanning, inventory, products, billing, billing_access,
     dashboard, returns as returns_router, settings as settings_router,
-    client_supplies, crm, stock_excel,
+    client_supplies, crm, stock_excel, stock_values,
 )
 from backend import models
 from backend.auth import hash_password
@@ -148,6 +148,10 @@ def run_light_migrations():
             # UnicodeEncodeError em console Windows.
             if not col_exists("orders", "reactivated_at"):
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at TIMESTAMP")
+            # Valor unitário do seller no Portal (07/10/2026): nullable, sem default.
+            if not col_exists("products", "seller_unit_value"):
+                index_migrations.append(
+                    "ALTER TABLE products ADD COLUMN seller_unit_value NUMERIC(12,2)")
             # Coluna aditiva pura: nullable, sem default → no Postgres é mudança
             # só de metadado (não reescreve linha, não trava a tabela).
             # NÃO há backfill de propósito: pedido concluído ANTES desta mudança
@@ -360,6 +364,11 @@ def run_light_migrations():
                 index_migrations.append(
                     "ALTER TABLE users ADD COLUMN seller_scope VARCHAR(10) "
                     "DEFAULT 'sellers' NOT NULL")
+
+            _prod_cols = {r[1] for r in db.execute(text("PRAGMA table_info(products)")).fetchall()}
+            if "seller_unit_value" not in _prod_cols:
+                index_migrations.append(
+                    "ALTER TABLE products ADD COLUMN seller_unit_value NUMERIC(12,2)")
 
             rows_mov = db.execute(text("PRAGMA table_info(stock_movements)")).fetchall()
             existing_mov = {r[1] for r in rows_mov}
@@ -677,6 +686,7 @@ app.include_router(settings_router.router)
 app.include_router(client_supplies.router)
 app.include_router(crm.router)
 app.include_router(stock_excel.router)
+app.include_router(stock_values.router)
 
 
 # ============================================================

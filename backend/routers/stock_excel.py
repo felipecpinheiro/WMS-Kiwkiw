@@ -49,7 +49,7 @@ from sqlalchemy import func, cast, String
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..auth import require_manager_or_above, get_user_seller_ids
+from ..auth import require_admin, get_user_seller_ids
 from ..timezone_utils import now_brasilia, today_brasilia
 from .. import models
 from ..services.stock_manager import update_stock_position
@@ -100,7 +100,7 @@ def _get_seller_in_scope(
 
 @router.get("/modelo")
 def download_modelo(
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
 ):
     """Gera o Excel modelo EM MEMÓRIA (em produção o disco é efêmero)."""
     from openpyxl import Workbook
@@ -459,7 +459,7 @@ def _resultado(seller: models.Seller, v: dict) -> dict:
 def analyze_file(
     seller_id: int,
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
@@ -514,7 +514,7 @@ def analyze_file(
 def lancar(
     seller_id: int,
     body: dict,
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):

@@ -287,7 +287,7 @@ def get_movements(
 @router.post("/movements/manual", status_code=201)
 def create_manual_movement(
     body: dict,
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -421,7 +421,7 @@ def create_manual_movement(
 @router.post("/movements/bulk", status_code=201)
 def create_bulk_movements(
     body: dict,
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -1299,7 +1299,7 @@ def _parse_history_excel(file_bytes: bytes):
 def analyze_history(
     seller_id: int,
     file: UploadFile = File(...),
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -1366,7 +1366,7 @@ def execute_history_import(
     file: UploadFile = File(...),
     product_names: str = Form("{}"),
     force: bool = Form(False),
-    current_user: models.User = Depends(require_manager_or_above),
+    current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """

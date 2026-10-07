@@ -2402,8 +2402,8 @@ export default function InventoryPage() {
             </button>
           )}
 
-          {/* Lançamento manual — operador é view-only, backend já bloqueia (require_manager_or_above) */}
-          {user?.role !== 'operator' && (
+          {/* Lançamento manual — só admin (backend: require_admin) */}
+          {user?.role === 'admin' && (
             <button
               onClick={() => setShowManual(true)}
               disabled={!sellerId}
@@ -2416,8 +2416,8 @@ export default function InventoryPage() {
           )}
 
           {/* Lançar por Excel (23/09/2026): modelo → conferência → confirmação, um seller por arquivo.
-              NÃO confundir com "Importar Histórico" (planilha ESTOQUE antiga do seller). */}
-          {user?.role !== 'operator' && (
+              NÃO confundir com "Importar Histórico" (planilha ESTOQUE antiga do seller). Só admin. */}
+          {user?.role === 'admin' && (
             <button
               onClick={() => setShowSheet(true)}
               disabled={!sellerId}
@@ -2429,8 +2429,8 @@ export default function InventoryPage() {
             </button>
           )}
 
-          {/* Importa a planilha ESTOQUE do seller (aba DETALHADO) — operador é view-only, backend já bloqueia */}
-          {user?.role !== 'operator' && (
+          {/* Importa a planilha ESTOQUE do seller (aba DETALHADO) — só admin (backend: require_admin) */}
+          {user?.role === 'admin' && (
             <button
               onClick={() => setShowHistory(true)}
               disabled={!sellerId}
@@ -2739,15 +2739,17 @@ export default function InventoryPage() {
                 </button>
               )}
 
-              <button
-                onClick={() => setShowPasteModal(true)}
-                disabled={!sellerId}
-                title="Cole linhas de movimentação copiadas de uma planilha (data, SKU, tipo, quantidade)"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
-              >
-                <ClipboardPaste size={13} />
-                Colar Movimentações
-              </button>
+              {user?.role === 'admin' && (
+                <button
+                  onClick={() => setShowPasteModal(true)}
+                  disabled={!sellerId}
+                  title="Cole linhas de movimentação copiadas de uma planilha (data, SKU, tipo, quantidade)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-t2 hover:bg-surface-2 transition disabled:opacity-40"
+                >
+                  <ClipboardPaste size={13} />
+                  Colar Movimentações
+                </button>
+              )}
             </div>
 
             {loadingMov ? (

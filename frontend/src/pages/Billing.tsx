@@ -1046,12 +1046,12 @@ function BoxPricesModal({ onClose }: { onClose: () => void }) {
   };
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-surface rounded-xl border border-line max-w-md w-full" onClick={e => e.stopPropagation()}>
+      <div className="bg-surface rounded-xl border border-line max-w-md w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-line-soft">
           <h2 className="font-bold text-t1">Tabela global de caixas</h2>
           <button onClick={onClose} className="text-t4"><X size={18} /></button>
         </div>
-        <div className="p-5">
+        <div className="p-5 overflow-y-auto">
           <p className="text-xs text-t3 mb-3">Adicional por caixa. Valor padrão — cada seller pode ter o próprio preço na aba "Caixas" do cadastro. Em branco = sem adicional.</p>
           {rows.map((r, i) => (
             <div key={r.box_key} className="flex items-center justify-between py-1.5 border-b border-line-soft last:border-0">

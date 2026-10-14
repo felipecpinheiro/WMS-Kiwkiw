@@ -1336,6 +1336,9 @@ export default function SellerPortalPage() {
                             <span className="text-[11px] font-mono text-t5">NF {m.nf_number}</span>
                           )}
                         </div>
+                        {m.observation && (
+                          <p className="text-[11px] text-t4 mt-1.5 break-words">{m.observation}</p>
+                        )}
                       </div>
                     );
                   }) : (
@@ -1360,6 +1363,7 @@ export default function SellerPortalPage() {
                         { label: 'Tipo',    col: 'movement_type' },
                         { label: 'Qtd',     col: 'quantity' },
                         { label: 'NF',      col: null },
+                        { label: 'Observação', col: null },
                       ] as { label: string; col: string | null }[]).map(({ label, col }) => (
                         <th
                           key={label}
@@ -1401,9 +1405,10 @@ export default function SellerPortalPage() {
                           {m.movement_type === 'Entrada' ? '+' : '-'}{m.quantity}
                         </td>
                         <td className="py-2.5 px-3 text-xs font-mono text-t4">{m.nf_number || '—'}</td>
+                        <td className="py-2.5 px-3 text-xs text-t3 max-w-sm whitespace-normal break-words">{m.observation || '—'}</td>
                       </tr>
                     )) : (
-                      <tr><td colSpan={7} className="text-center text-sm text-t4 py-10">Nenhuma movimentação encontrada</td></tr>
+                      <tr><td colSpan={8} className="text-center text-sm text-t4 py-10">Nenhuma movimentação encontrada</td></tr>
                     )}
                   </tbody>
                 </table>

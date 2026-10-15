@@ -883,8 +883,13 @@ export default function ScannerPage() {
   // continuar depois — uma conferência de entrada pode levar dias. O backend
   // recusa interrupt em NF de entrada, então a escolha aqui não é cosmética.
 
+  // 15/10/2026: na SAÍDA o motivo é obrigatório (o seller o lê no Portal). Na
+  // entrada, Pausar continua opcional. O servidor também recusa motivo vazio.
+  const INTERRUPT_REASON_MAX = 500;
+
   const handleInterrupt = async () => {
     if (!activeOrder) return;
+    if (!isEntradaOrder && !interruptReason.trim()) return;
     try {
       if (isEntradaOrder) {
         await scanningApi.pauseEntry(activeOrder.id, interruptReason || undefined);
@@ -894,7 +899,7 @@ export default function ScannerPage() {
           session_id: Number(sessionId),
           order_id: activeOrder.id,
           operator_id: user.id,
-          reason: interruptReason || 'Sem motivo informado',
+          reason: interruptReason.trim(),
         });
         toast.success('Pedido interrompido');
       }
@@ -904,8 +909,8 @@ export default function ScannerPage() {
       setFeedback({ state: 'idle', title: '', message: '' });
       setLastScannedSku(undefined);
       qc.invalidateQueries(['session-orders', sessionId, sellerId]);
-    } catch {
-      toast.error(isEntradaOrder ? 'Erro ao pausar' : 'Erro ao interromper');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || (isEntradaOrder ? 'Erro ao pausar' : 'Erro ao interromper'));
     }
   };
 
@@ -1015,6 +1020,8 @@ export default function ScannerPage() {
 
   // ── Confirmar saída (pausa/interrompe automaticamente se NF aberta) ──
   const handleConfirmExit = async () => {
+    // 15/10/2026: na saída o motivo é obrigatório (o seller o lê no Portal).
+    if (activeOrder && scanPhase === 'product' && !isEntradaOrder && !exitReason.trim()) return;
     if (activeOrder && scanPhase === 'product') {
       try {
         if (isEntradaOrder) {
@@ -1028,12 +1035,17 @@ export default function ScannerPage() {
             session_id: Number(sessionId),
             order_id: activeOrder.id,
             operator_id: user.id,
-            reason: exitReason.trim() || 'Saída da bipagem pelo operador',
+            reason: exitReason.trim(),
           });
           toast('Pedido interrompido. Saindo...', { icon: '⚠️' });
         }
-      } catch {
-        toast.error(isEntradaOrder ? 'Erro ao pausar a conferência' : 'Erro ao interromper o pedido');
+      } catch (err: any) {
+        toast.error(
+          err?.response?.data?.detail
+          || (isEntradaOrder ? 'Erro ao pausar a conferência' : 'Erro ao interromper o pedido'),
+        );
+        // Falhou (ex.: motivo recusado): fica na bipagem em vez de sair com a NF aberta.
+        return;
       }
     }
     // Limpa sessionStorage e navega para fora
@@ -1727,15 +1739,27 @@ export default function ScannerPage() {
                 ? 'A contagem fica salva e a NF continua EM ABERTO — é só bipar a chave dela de novo para continuar de onde parou. O estoque só entra quando você Finalizar. Informe o motivo (opcional):'
                 : 'O pedido ficará como "interrompido". Informe o motivo:'}
             </p>
+            {!isEntradaOrder && (
+              <p className="text-xs text-warn mb-2">
+                Este motivo ficará visível para o seller no Portal. Escreva de forma clara e profissional.
+              </p>
+            )}
             <textarea
               value={interruptReason}
               onChange={e => setInterruptReason(e.target.value)}
+              maxLength={INTERRUPT_REASON_MAX}
               placeholder={isEntradaOrder
                 ? 'Ex: continua amanhã, faltou espaço na bancada...'
                 : 'Ex: produto danificado, falta de estoque, cliente solicitou...'}
               rows={3}
               className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-orange-500 resize-none"
             />
+            {!isEntradaOrder && (
+              <div className="flex items-center justify-between mt-1 text-xs">
+                <span className="text-bad">{interruptReason.trim() ? '' : 'Informe o motivo'}</span>
+                <span className="text-t4">{interruptReason.length}/{INTERRUPT_REASON_MAX}</span>
+              </div>
+            )}
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowInterruptDialog(false); setInterruptReason(''); }}
@@ -1745,7 +1769,8 @@ export default function ScannerPage() {
               </button>
               <button
                 onClick={handleInterrupt}
-                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition"
+                disabled={!isEntradaOrder && !interruptReason.trim()}
+                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isEntradaOrder ? 'Pausar' : 'Interromper'}
               </button>
@@ -2020,14 +2045,26 @@ export default function ScannerPage() {
                 <>Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-warn font-semibold">interrompido</span>. Informe o motivo:</>
               )}
             </p>
+            {!isEntradaOrder && (
+              <p className="text-xs text-warn mb-2">
+                Este motivo ficará visível para o seller no Portal. Escreva de forma clara e profissional.
+              </p>
+            )}
             <textarea
               value={exitReason}
               onChange={e => setExitReason(e.target.value)}
+              maxLength={INTERRUPT_REASON_MAX}
               placeholder="Ex: fim de turno, problema operacional, retorno depois..."
               rows={3}
               className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-red-500 resize-none"
               autoFocus
             />
+            {!isEntradaOrder && (
+              <div className="flex items-center justify-between mt-1 text-xs">
+                <span className="text-bad">{exitReason.trim() ? '' : 'Informe o motivo'}</span>
+                <span className="text-t4">{exitReason.length}/{INTERRUPT_REASON_MAX}</span>
+              </div>
+            )}
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowExitDialog(false); setExitReason(''); inputRef.current?.focus(); }}
@@ -2037,7 +2074,8 @@ export default function ScannerPage() {
               </button>
               <button
                 onClick={handleConfirmExit}
-                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition"
+                disabled={!isEntradaOrder && !exitReason.trim()}
+                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isEntradaOrder ? 'Pausar e Sair' : 'Interromper e Sair'}
               </button>

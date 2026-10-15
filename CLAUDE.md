@@ -39,6 +39,52 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 15/10/2026 — Motivo OBRIGATÓRIO na interrupção + motivo visível no Portal
+
+**Sem push, sem commit.** Interromper um pedido de **saída** agora exige motivo (texto livre) e o seller
+passa a **ler** esse motivo na aba **Meus Pedidos** do Portal. **Sem tabela, coluna ou migração nova.**
+
+- **Servidor (`POST /scanning/interrupt`)** recusa com 400: motivo vazio/só espaços, os dois textos
+  automáticos antigos (`Sem motivo informado`, `Saída da bipagem pelo operador` — uma tela desatualizada
+  aberta não pode gravá-los) e mais de **500 caracteres** (o teto é o da coluna
+  `ScanningLog.error_message`, `String(500)`; acima disso o Postgres estoura 500). Grava o texto com
+  `strip()`. Entrada continua sem interromper (400) — lá é **Pausar**, motivo opcional.
+- **Tela (`Scanner.tsx`)**: os **dois** diálogos que interrompem — "Interromper Pedido" e "Sair da
+  Bipagem" — desabilitam o botão com o campo vazio, mostram "Informe o motivo", contador `n/500` e o aviso
+  "Este motivo ficará visível para o seller no Portal". Se a chamada falhar ao sair, o operador **fica** na
+  bipagem (antes saía com a NF aberta mesmo com erro). Pausar na entrada: sem mudança.
+- **Portal (`/dashboard/seller`, `SellerPortal.tsx`)**: cada pedido interrompido em `recent_orders` ganha
+  `interrupt_reason`. Coluna **Motivo** (preview de 1 linha, clique abre quadro com o texto completo).
+  **No celular a aba Pedidos virou cartões** — a tabela de 6 colunas não cabia e o `overflow-hidden`
+  cortava Status e Motivo sem rolagem (a coluna Status já estava inacessível no celular antes disto).
+- **Fonte do motivo:** último `ScanningLog` com `sku='INTERRUPT'` do pedido, via
+  `interrupt_reasons_for()` em `scanning.py` (1 consulta agrupada, sem N+1).
+- ⚠️ **Corte de data:** só interrupções feitas a partir de **16/10/2026 00:00 (Brasília)** mostram motivo
+  (`INTERRUPT_REASON_VISIBLE_FROM`). As anteriores foram feitas sem obrigatoriedade e ficam em branco no
+  Portal — decisão do dono. Não remover o corte sem combinar.
+- **CSV de Status das NFs** (`/scanning/nf-status` e `/export/csv`) ganhou a coluna "Motivo da
+  Interrupcao" (mesmo corte). A **tela** da Auditoria não mostra a coluna (decisão do dono: telas internas
+  intactas) — CSV e tela divergem nesse ponto, de propósito. O CSV de bipagens já trazia o texto em
+  "Mensagem".
+- **Não mudou:** `force-complete` (continua sem motivo; NF interrompida e depois forçada a concluir vira
+  "Concluído" e **perde** o motivo no Portal), estoque, faturamento, telas internas, Pausar na entrada.
+
+**Armadilhas:**
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Novo caminho que interrompe pedido | Esquecer a validação do motivo — o seller lê esse texto | Tudo passa por `POST /scanning/interrupt`; não criar outro caminho que grave `sku='INTERRUPT'` |
+| Texto padrão de fallback no front | Reintroduzir `reason \|\| 'Sem motivo informado'` | O servidor recusa; deixar o botão desabilitado |
+| Mostrar motivo sem corte de data | Interrupções antigas (texto de teste, "Sem motivo informado") apareceriam ao seller | Usar sempre `interrupt_reasons_for()` |
+
+**Testes:** 44 verificações E2E via TestClient em **SQLite e PostgreSQL** (bancos descartáveis) — cada
+motivo inválido recusado sem alterar o pedido, 500 aceito / 501 recusado, entrada intacta, motivo no
+Portal só após o corte, duas marcas no mesmo pedido (vale a última), isolamento entre sellers, CSV.
+`tsc --noEmit` limpo. Conferência visual (desktop e celular): Portal, quadro do motivo, os dois diálogos
+do Scanner, interrupção real pela tela (200 OK).
+
+---
+
 ## Mudanças Recentes — 07/10/2026 — "Valor Un" por SKU no Meu Estoque (Portal do Seller)
 
 **Sem push, sem commit.** O próprio seller (`client`) cadastra o valor unitário (R$) de cada SKU na aba

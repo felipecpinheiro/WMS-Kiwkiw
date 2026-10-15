@@ -56,6 +56,51 @@ RESUME_SKU = "RESUME"
 # senão pausar uma NF inflaria o número de bipes do operador.
 MARKER_SKUS = (PAUSE_SKU, RESUME_SKU)
 
+# ── Motivo da interrupção (15/10/2026) ───────────────────────────────────────
+# Interromper exige motivo e o seller passa a LÊ-LO no Portal (aba Pedidos).
+# O motivo vive em ScanningLog.error_message (String(500)) do marcador
+# sku='INTERRUPT' — sem coluna nova. O teto de 500 é o da própria coluna: acima
+# disso o Postgres estoura com erro 500.
+INTERRUPT_SKU = "INTERRUPT"
+INTERRUPT_REASON_MAX = 500
+# Textos automáticos que as telas antigas mandavam quando o campo ficava vazio.
+# Uma tela desatualizada, ainda aberta num operador, não pode gravar isso como
+# se fosse um motivo — o seller leria "Sem motivo informado".
+INTERRUPT_PLACEHOLDER_REASONS = (
+    "sem motivo informado",
+    "saída da bipagem pelo operador",
+    "saida da bipagem pelo operador",
+)
+# O seller só vê motivos de interrupções feitas a partir desta data (Brasília).
+# As anteriores foram feitas sem obrigatoriedade e ficam sem motivo no Portal.
+INTERRUPT_REASON_VISIBLE_FROM = datetime(2026, 10, 16, 0, 0, 0)
+
+
+def interrupt_reasons_for(db: Session, order_ids: List[int]) -> dict:
+    """
+    {order_id: motivo} do último marcador de interrupção de cada pedido, só
+    para interrupções a partir de INTERRUPT_REASON_VISIBLE_FROM. Uma consulta
+    agrupada para o lote inteiro (sem N+1). Pedido sem motivo visível não entra.
+    """
+    if not order_ids:
+        return {}
+    last_ids = (
+        db.query(func.max(models.ScanningLog.id))
+        .filter(
+            models.ScanningLog.order_id.in_(order_ids),
+            models.ScanningLog.sku == INTERRUPT_SKU,
+            models.ScanningLog.timestamp >= INTERRUPT_REASON_VISIBLE_FROM,
+        )
+        .group_by(models.ScanningLog.order_id)
+        .subquery()
+    )
+    rows = (
+        db.query(models.ScanningLog.order_id, models.ScanningLog.error_message)
+        .filter(models.ScanningLog.id.in_(db.query(last_ids)))
+        .all()
+    )
+    return {oid: msg for oid, msg in rows if msg and msg.strip()}
+
 
 def _is_entrada(order) -> bool:
     """
@@ -1062,16 +1107,31 @@ def interrupt_order(
             ),
         )
 
+    # ⚠️ MOTIVO OBRIGATÓRIO (15/10/2026) — trava de servidor, não cosmética: a
+    # tela desabilita o botão, mas uma chamada forjada ou uma tela antiga ainda
+    # aberta passaria. O seller lê este texto no Portal.
+    reason = (request.reason or "").strip()
+    if not reason or reason.lower() in INTERRUPT_PLACEHOLDER_REASONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe o motivo da interrupção — o seller poderá ler este texto.",
+        )
+    if len(reason) > INTERRUPT_REASON_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"O motivo pode ter no máximo {INTERRUPT_REASON_MAX} caracteres.",
+        )
+
     # Registra interrupção no log de bipagem
     log = models.ScanningLog(
         session_id=request.session_id,
         order_id=request.order_id,
-        sku="INTERRUPT",
-        barcode_scanned="INTERRUPT",
+        sku=INTERRUPT_SKU,
+        barcode_scanned=INTERRUPT_SKU,
         quantity=0,
         operator_id=request.operator_id,
         is_interrupted=True,
-        error_message=request.reason or "Pedido interrompido pelo operador",
+        error_message=reason,
     )
     db.add(log)
 
@@ -1106,7 +1166,7 @@ def interrupt_order(
         action="INTERRUPT",
         detail=(
             f"Pedido NF {order.nf_number} interrompido. "
-            f"Motivo: {request.reason or 'Não informado'}. "
+            f"Motivo: {reason}. "
             f"Estoque {'já baixado na importação' if stock_updated else 'ainda não baixado (NF pendente)'}."
         ),
         user_id=current_user.id,
@@ -2554,6 +2614,13 @@ def _nf_status_rows(
     ):
         operador_map[order_id] = operator_name
 
+    # Motivo da interrupção (a partir de 16/10/2026) — só das NFs interrompidas.
+    interrompidas = [
+        o.id for o in orders
+        if ((o.status.value if hasattr(o.status, "value") else o.status) or "").upper() == "INTERRUPTED"
+    ]
+    motivo_map = interrupt_reasons_for(db, interrompidas)
+
     rows = []
     for o in orders:
         status_raw = (o.status.value if hasattr(o.status, "value") else o.status) or ""
@@ -2574,6 +2641,7 @@ def _nf_status_rows(
             "importado_em": o.imported_at.strftime("%d/%m/%Y %H:%M:%S") if o.imported_at else None,
             "sessao": o.session_id,
             "status_bruto": status_raw,
+            "motivo_interrupcao": motivo_map.get(o.id),
         })
 
     return rows, total
@@ -2655,6 +2723,7 @@ def export_nf_status_csv(
         "NF", "Situacao", "Cliente Final", "Transportadora",
         "Itens Previstos", "Itens Bipados", "Ultimo Scan", "Operador",
         "Chave DANFE", "Data NF", "Importado em", "Sessao", "Status Bruto",
+        "Motivo da Interrupcao",
     ])
     for r in rows:
         writer.writerow([
@@ -2662,6 +2731,7 @@ def export_nf_status_csv(
             r["itens_previstos"], r["itens_bipados"], r["ultimo_scan"] or "",
             r["operador"] or "", r["chave_danfe"] or "", r["data_nf"] or "",
             r["importado_em"] or "", r["sessao"] or "", r["status_bruto"],
+            r["motivo_interrupcao"] or "",
         ])
 
     output.seek(0)

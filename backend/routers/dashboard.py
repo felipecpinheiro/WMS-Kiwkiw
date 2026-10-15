@@ -735,6 +735,16 @@ def seller_dashboard(
         .all()
     )
 
+    # Motivo da interrupção (15/10/2026): só das NFs interrompidas, só de
+    # interrupções a partir de 16/10/2026, numa consulta agrupada. As anteriores
+    # não tinham motivo obrigatório e ficam em branco no Portal.
+    from .scanning import interrupt_reasons_for
+    interrupted_ids = [
+        o.id for o in recent_orders
+        if (o.status.value if hasattr(o.status, 'value') else o.status) == "interrupted"
+    ]
+    interrupt_reason_map = interrupt_reasons_for(db, interrupted_ids)
+
     orders_list = [
         {
             "id": o.id,
@@ -745,6 +755,7 @@ def seller_dashboard(
             "imported_at": o.imported_at.isoformat() if o.imported_at else None,
             "status": o.status.value if hasattr(o.status, 'value') else o.status,
             "items_count": items_count_map.get(o.id, 0),
+            "interrupt_reason": interrupt_reason_map.get(o.id),
         }
         for o in recent_orders
     ]

@@ -403,6 +403,8 @@ export default function SellerPortalPage() {
     (tab === 'movements' && movementsFetching);
   const showFulfillmentLoader = useDelayedLoading(activeTabLoading, 150);
 
+  // Quadro com o motivo completo de uma NF interrompida (aba Pedidos).
+  const [reasonOrder, setReasonOrder] = useState<any | null>(null);
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [pwdForm, setPwdForm] = useState({ current: '', next: '', confirm: '' });
   const [pwdSaving, setPwdSaving] = useState(false);
@@ -750,6 +752,38 @@ export default function SellerPortalPage() {
       )}
 
       {/* Modal alterar senha */}
+      {reasonOrder && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setReasonOrder(null)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-md p-6"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-t1 text-sm">Motivo da interrupção</h3>
+              <button onClick={() => setReasonOrder(null)} className="text-t4 hover:text-t3"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-t4 mb-3">
+              NF <span className="font-mono text-t3">{reasonOrder.nf_number}</span>
+              {reasonOrder.customer_name ? ` · ${reasonOrder.customer_name}` : ''}
+            </p>
+            <p className="text-sm text-t1 whitespace-pre-wrap break-words max-h-72 overflow-y-auto bg-surface-2 border border-line-soft rounded-xl px-3 py-2.5">
+              {reasonOrder.interrupt_reason}
+            </p>
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={() => setReasonOrder(null)}
+                className="px-4 py-2 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPwdModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-surface border border-line rounded-2xl shadow-2xl w-full max-w-xs p-6">
@@ -919,11 +953,49 @@ export default function SellerPortalPage() {
                 }
               </div>
 
+              {/* Celular: cartões. A tabela de 6 colunas não cabe (e o overflow-hidden
+                  cortava Status e Motivo sem rolagem). */}
+              {isMobile ? (
+                <div className="space-y-2">
+                  {filteredOrders.length > 0 ? ordersShown.map((o: any) => {
+                    const st = STATUS_CONFIG[o.status] ?? { label: o.status, cls: 'bg-line-strong text-t3' };
+                    return (
+                      <div key={o.id} className="p-3 rounded-xl border border-line-soft bg-surface">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-mono font-medium text-t1">NF {o.nf_number}</span>
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${st.cls}`}>{st.label}</span>
+                        </div>
+                        <p className="text-sm text-t2 mt-1 break-words">{o.customer_name}</p>
+                        <p className="text-[11px] text-t4 mt-0.5">
+                          {o.carrier || '—'} · {o.imported_at ? format(new Date(o.imported_at), 'dd/MM/yy') : o.order_date ? format(new Date(o.order_date + 'T00:00:00'), 'dd/MM/yy') : '—'}
+                        </p>
+                        {o.interrupt_reason && (
+                          <button
+                            type="button"
+                            onClick={() => setReasonOrder(o)}
+                            className="mt-2 w-full text-left rounded-lg bg-warn-soft px-2.5 py-1.5"
+                          >
+                            <span className="block text-[10px] uppercase tracking-wide text-warn font-semibold">Motivo</span>
+                            <span className="block text-xs text-t2 line-clamp-2 break-words">{o.interrupt_reason}</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }) : (
+                    <p className="text-center text-sm text-t4 py-10">Nenhum pedido encontrado</p>
+                  )}
+                  {ordersHasMore && (
+                    <div ref={ordersSentinelRef} className="py-4 text-center text-xs text-t4">
+                      exibindo {ordersShown.length.toLocaleString('pt-BR')} de {filteredOrders.length.toLocaleString('pt-BR')} — role para carregar mais
+                    </div>
+                  )}
+                </div>
+              ) : (
               <div className="bg-surface rounded-xl border border-line-soft overflow-hidden">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-surface-2 border-b border-line-soft">
-                      {['NF', 'Cliente Final', 'Transportadora', 'Data Upload', 'Status'].map(h => (
+                      {['NF', 'Cliente Final', 'Transportadora', 'Data Upload', 'Status', 'Motivo'].map(h => (
                         <th key={h} className="text-left text-[11px] font-semibold text-t3 uppercase tracking-wide py-2.5 px-3">{h}</th>
                       ))}
                     </tr>
@@ -942,10 +1014,24 @@ export default function SellerPortalPage() {
                           <td className="py-2.5 px-3">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>{st.label}</span>
                           </td>
+                          <td className="py-2.5 px-3 text-sm max-w-[16rem]">
+                            {o.interrupt_reason ? (
+                              <button
+                                type="button"
+                                onClick={() => setReasonOrder(o)}
+                                title="Ver motivo completo"
+                                className="block w-full text-left truncate text-t2 hover:text-violet-400 hover:underline"
+                              >
+                                {o.interrupt_reason}
+                              </button>
+                            ) : (
+                              <span className="text-t5">—</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     }) : (
-                      <tr><td colSpan={5} className="text-center text-sm text-t4 py-10">Nenhum pedido encontrado</td></tr>
+                      <tr><td colSpan={6} className="text-center text-sm text-t4 py-10">Nenhum pedido encontrado</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -955,6 +1041,7 @@ export default function SellerPortalPage() {
                   </div>
                 )}
               </div>
+              )}
             </>
           )}
 

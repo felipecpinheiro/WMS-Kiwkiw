@@ -17,6 +17,8 @@ import type { EntryConference } from '../api';
 import toast from 'react-hot-toast';
 import ThemeToggle from '../components/ThemeToggle';
 import Logo from '../components/Logo';
+import InterruptReasonModal from '../components/InterruptReasonModal';
+import type { InterruptReasonPayload } from '../components/InterruptReasonModal';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const photoSrc = (url: string | null | undefined) =>
@@ -259,6 +261,9 @@ export default function ScannerPage() {
   const [boxSuggested, setBoxSuggested]   = useState<string | null>(null);
   const [boxUsed, setBoxUsed]             = useState<string | null>(null);
   const [boxSaving, setBoxSaving]         = useState(false);
+  // Pisca o selo da caixa em vermelho por alguns segundos quando se tenta
+  // interromper sem caixa salva (15/10/2026).
+  const [boxAlert, setBoxAlert]           = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; item: SessionOrderItem;
   } | null>(null);
@@ -463,7 +468,18 @@ export default function ScannerPage() {
   // que trava a conclusão do pedido. Calculado dos itens locais (não de um
   // estado à parte) pra sobreviver a F5/reload igual ao resto da tela.
   const awaitingBox =
-    showBoxBadge && !boxUsed && !!activeOrder && activeOrder.items.every(it => it.scanned >= it.quantity);
+    showBoxBadge && !boxUsed && !!activeOrder
+    && (boxAlert || activeOrder.items.every(it => it.scanned >= it.quantity));
+
+  // Interromper na SAÍDA exige caixa salva, mas só se algo já foi bipado
+  // (pedido sem nenhuma bipagem não saiu fisicamente). O servidor também recusa.
+  const needsBoxToInterrupt =
+    !isEntradaOrder && !boxUsed && !!activeOrder && activeOrder.items.some(it => it.scanned > 0);
+  const flashBoxAlert = () => {
+    toast.error('Selecione a caixa antes de interromper');
+    setBoxAlert(true);
+    setTimeout(() => setBoxAlert(false), 4000);
+  };
 
   // Gatilho real de atualização: assim que o pedido é concluído (sai de 'product'
   // pra 'nfe'), busca a lista da sessão uma vez — mostra o progresso de outros
@@ -883,14 +899,16 @@ export default function ScannerPage() {
   // continuar depois — uma conferência de entrada pode levar dias. O backend
   // recusa interrupt em NF de entrada, então a escolha aqui não é cosmética.
 
-  // 15/10/2026: na SAÍDA o motivo é obrigatório (o seller o lê no Portal). Na
-  // entrada, Pausar continua opcional. O servidor também recusa motivo vazio.
+  // 16/10/2026: na SAÍDA o motivo vem de uma LISTA (InterruptReasonModal) e o
+  // seller o lê no Portal. Na entrada, Pausar continua com texto livre opcional.
   const INTERRUPT_REASON_MAX = 500;
+  const [interruptSubmitting, setInterruptSubmitting] = useState(false);
 
-  const handleInterrupt = async () => {
+  const handleInterrupt = async (payload?: InterruptReasonPayload) => {
     if (!activeOrder) return;
-    if (!isEntradaOrder && !interruptReason.trim()) return;
+    if (!isEntradaOrder && !payload) return;
     try {
+      setInterruptSubmitting(true);
       if (isEntradaOrder) {
         await scanningApi.pauseEntry(activeOrder.id, interruptReason || undefined);
         toast.success('Conferência pausada — a NF continua em aberto');
@@ -899,7 +917,7 @@ export default function ScannerPage() {
           session_id: Number(sessionId),
           order_id: activeOrder.id,
           operator_id: user.id,
-          reason: interruptReason.trim(),
+          ...payload!,
         });
         toast.success('Pedido interrompido');
       }
@@ -911,6 +929,8 @@ export default function ScannerPage() {
       qc.invalidateQueries(['session-orders', sessionId, sellerId]);
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || (isEntradaOrder ? 'Erro ao pausar' : 'Erro ao interromper'));
+    } finally {
+      setInterruptSubmitting(false);
     }
   };
 
@@ -1019,11 +1039,26 @@ export default function ScannerPage() {
   };
 
   // ── Confirmar saída (pausa/interrompe automaticamente se NF aberta) ──
-  const handleConfirmExit = async () => {
-    // 15/10/2026: na saída o motivo é obrigatório (o seller o lê no Portal).
-    if (activeOrder && scanPhase === 'product' && !isEntradaOrder && !exitReason.trim()) return;
+  // Sai da tela de bipagem sem tocar no pedido (limpa o estado local).
+  const leaveScanner = () => {
+    if (sessionId) {
+      sessionStorage.removeItem(`scanner_${sessionId}_activeOrder`);
+      sessionStorage.removeItem(hiddenSkusKey);
+    }
+    setHiddenSkus([]);
+    setActiveOrderId(null);
+    setShowExitDialog(false);
+    setExitReason('');
+    navigate('/manuseios');
+  };
+
+  // 16/10/2026: na SAÍDA o motivo vem da lista (InterruptReasonModal) e o seller
+  // o lê no Portal; na entrada, Pausar e Sair continua com texto livre opcional.
+  const handleConfirmExit = async (payload?: InterruptReasonPayload) => {
+    if (activeOrder && scanPhase === 'product' && !isEntradaOrder && !payload) return;
     if (activeOrder && scanPhase === 'product') {
       try {
+        setInterruptSubmitting(true);
         if (isEntradaOrder) {
           await scanningApi.pauseEntry(
             activeOrder.id,
@@ -1035,7 +1070,7 @@ export default function ScannerPage() {
             session_id: Number(sessionId),
             order_id: activeOrder.id,
             operator_id: user.id,
-            reason: exitReason.trim(),
+            ...payload!,
           });
           toast('Pedido interrompido. Saindo...', { icon: '⚠️' });
         }
@@ -1045,19 +1080,16 @@ export default function ScannerPage() {
           || (isEntradaOrder ? 'Erro ao pausar a conferência' : 'Erro ao interromper o pedido'),
         );
         // Falhou (ex.: motivo recusado): fica na bipagem em vez de sair com a NF aberta.
+        if (needsBoxToInterrupt) {
+          setBoxAlert(true);
+          setTimeout(() => setBoxAlert(false), 4000);
+        }
+        setInterruptSubmitting(false);
         return;
       }
+      setInterruptSubmitting(false);
     }
-    // Limpa sessionStorage e navega para fora
-    if (sessionId) {
-      sessionStorage.removeItem(`scanner_${sessionId}_activeOrder`);
-      sessionStorage.removeItem(hiddenSkusKey);
-    }
-    setHiddenSkus([]);
-    setActiveOrderId(null);
-    setShowExitDialog(false);
-    setExitReason('');
-    navigate('/manuseios');
+    leaveScanner();
   };
 
   // ── Salva produto inline (do modal de right-click) ──────
@@ -1364,7 +1396,13 @@ export default function ScannerPage() {
           <button
             onClick={() => {
               if (isBipandoView) {
-                setShowExitDialog(true);
+                // 16/10/2026: saída sem NENHUM SKU bipado sai direto, sem
+                // interromper e sem pedir motivo (a NF fica como estava).
+                if (!isEntradaOrder && activeOrder && !activeOrder.items.some(it => it.scanned > 0)) {
+                  leaveScanner();
+                } else {
+                  setShowExitDialog(true);
+                }
               } else if (isAuditView) {
                 setAuditOrder(null);
               } else {
@@ -1493,7 +1531,7 @@ export default function ScannerPage() {
                           <CheckCircle size={12} /> {finalizingEntry ? 'Conferindo...' : 'Finalizar'}
                         </button>
                       )}
-                      <button onClick={() => setShowInterruptDialog(true)}
+                      <button onClick={() => (needsBoxToInterrupt ? flashBoxAlert() : setShowInterruptDialog(true))}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warn border border-warn/25 hover:border-warn/50 rounded-lg transition">
                         <Pause size={12} /> {isEntradaOrder ? 'Pausar' : 'Interromper'}
                       </button>
@@ -1720,7 +1758,19 @@ export default function ScannerPage() {
       </aside>
 
       {/* ── Interrupt dialog ─────────────────────────────── */}
-      {showInterruptDialog && activeOrder && (
+      {/* SAÍDA (16/10/2026): motivo da lista; ENTRADA: Pausar com texto livre opcional */}
+      {showInterruptDialog && activeOrder && !isEntradaOrder && (
+        <InterruptReasonModal
+          title="Interromper Pedido"
+          subtitle={`NF ${activeOrder.nf_number} · ${activeOrder.customer_name}`}
+          items={activeOrder.items}
+          confirmLabel="Interromper"
+          submitting={interruptSubmitting}
+          onCancel={() => setShowInterruptDialog(false)}
+          onConfirm={handleInterrupt}
+        />
+      )}
+      {showInterruptDialog && activeOrder && isEntradaOrder && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-surface border border-warn/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -1728,38 +1778,21 @@ export default function ScannerPage() {
                 <Pause size={20} className="text-warn" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-t1">
-                  {isEntradaOrder ? 'Pausar Conferência' : 'Interromper Pedido'}
-                </h3>
+                <h3 className="text-base font-bold text-t1">Pausar Conferência</h3>
                 <p className="text-xs text-t4">NF {activeOrder.nf_number} · {activeOrder.customer_name}</p>
               </div>
             </div>
             <p className="text-sm text-t3 mb-3">
-              {isEntradaOrder
-                ? 'A contagem fica salva e a NF continua EM ABERTO — é só bipar a chave dela de novo para continuar de onde parou. O estoque só entra quando você Finalizar. Informe o motivo (opcional):'
-                : 'O pedido ficará como "interrompido". Informe o motivo:'}
+              A contagem fica salva e a NF continua EM ABERTO — é só bipar a chave dela de novo para continuar de onde parou. O estoque só entra quando você Finalizar. Informe o motivo (opcional):
             </p>
-            {!isEntradaOrder && (
-              <p className="text-xs text-warn mb-2">
-                Este motivo ficará visível para o seller no Portal. Escreva de forma clara e profissional.
-              </p>
-            )}
             <textarea
               value={interruptReason}
               onChange={e => setInterruptReason(e.target.value)}
               maxLength={INTERRUPT_REASON_MAX}
-              placeholder={isEntradaOrder
-                ? 'Ex: continua amanhã, faltou espaço na bancada...'
-                : 'Ex: produto danificado, falta de estoque, cliente solicitou...'}
+              placeholder="Ex: continua amanhã, faltou espaço na bancada..."
               rows={3}
               className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-orange-500 resize-none"
             />
-            {!isEntradaOrder && (
-              <div className="flex items-center justify-between mt-1 text-xs">
-                <span className="text-bad">{interruptReason.trim() ? '' : 'Informe o motivo'}</span>
-                <span className="text-t4">{interruptReason.length}/{INTERRUPT_REASON_MAX}</span>
-              </div>
-            )}
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowInterruptDialog(false); setInterruptReason(''); }}
@@ -1768,11 +1801,10 @@ export default function ScannerPage() {
                 Cancelar
               </button>
               <button
-                onClick={handleInterrupt}
-                disabled={!isEntradaOrder && !interruptReason.trim()}
-                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => handleInterrupt()}
+                className="flex-1 py-2.5 text-sm font-semibold text-warn border border-warn/40 rounded-xl hover:bg-orange-500/10 transition"
               >
-                {isEntradaOrder ? 'Pausar' : 'Interromper'}
+                Pausar
               </button>
             </div>
           </div>
@@ -2024,7 +2056,19 @@ export default function ScannerPage() {
       )}
 
       {/* ── Exit confirmation dialog ─────────────────────── */}
-      {showExitDialog && (
+      {/* SAÍDA (16/10/2026): motivo da lista; ENTRADA: Pausar e Sair com texto livre opcional */}
+      {showExitDialog && activeOrder && !isEntradaOrder && (
+        <InterruptReasonModal
+          title="Sair da Bipagem"
+          subtitle={`NF ${activeOrder.nf_number} · ao sair, o pedido será interrompido`}
+          items={activeOrder.items}
+          confirmLabel="Interromper e Sair"
+          submitting={interruptSubmitting}
+          onCancel={() => { setShowExitDialog(false); setExitReason(''); inputRef.current?.focus(); }}
+          onConfirm={handleConfirmExit}
+        />
+      )}
+      {showExitDialog && isEntradaOrder && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
           <div className="bg-surface border border-bad/30 rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -2039,17 +2083,8 @@ export default function ScannerPage() {
               </div>
             </div>
             <p className="text-sm text-t3 mb-3">
-              {isEntradaOrder ? (
-                <>Há uma conferência em andamento. Ao sair, ela será <span className="text-warn font-semibold">pausada</span> — a contagem fica salva e a NF continua em aberto. Informe o motivo:</>
-              ) : (
-                <>Há um pedido em andamento. Ao sair, ele será marcado como <span className="text-warn font-semibold">interrompido</span>. Informe o motivo:</>
-              )}
+              Há uma conferência em andamento. Ao sair, ela será <span className="text-warn font-semibold">pausada</span> — a contagem fica salva e a NF continua em aberto. Informe o motivo:
             </p>
-            {!isEntradaOrder && (
-              <p className="text-xs text-warn mb-2">
-                Este motivo ficará visível para o seller no Portal. Escreva de forma clara e profissional.
-              </p>
-            )}
             <textarea
               value={exitReason}
               onChange={e => setExitReason(e.target.value)}
@@ -2059,12 +2094,6 @@ export default function ScannerPage() {
               className="w-full bg-surface-2 border border-line rounded-xl px-3 py-2 text-sm text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-red-500 resize-none"
               autoFocus
             />
-            {!isEntradaOrder && (
-              <div className="flex items-center justify-between mt-1 text-xs">
-                <span className="text-bad">{exitReason.trim() ? '' : 'Informe o motivo'}</span>
-                <span className="text-t4">{exitReason.length}/{INTERRUPT_REASON_MAX}</span>
-              </div>
-            )}
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => { setShowExitDialog(false); setExitReason(''); inputRef.current?.focus(); }}
@@ -2073,11 +2102,10 @@ export default function ScannerPage() {
                 Cancelar
               </button>
               <button
-                onClick={handleConfirmExit}
-                disabled={!isEntradaOrder && !exitReason.trim()}
-                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => handleConfirmExit()}
+                className="flex-1 py-2.5 text-sm font-semibold text-bad border border-bad/40 rounded-xl hover:bg-red-500/10 transition"
               >
-                {isEntradaOrder ? 'Pausar e Sair' : 'Interromper e Sair'}
+                Pausar e Sair
               </button>
             </div>
           </div>

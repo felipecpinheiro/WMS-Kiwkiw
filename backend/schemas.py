@@ -559,11 +559,22 @@ class ScanResponse(BaseModel):
     # operador para comunicar a empresa. Ver process_scan em routers/scanning.py.
     over_quantity: int = 0
 
+class InterruptReasonIn(BaseModel):
+    """Um motivo escolhido na lista (código fixo + SKUs quando o motivo pede)."""
+    code: str
+    skus: List[str] = []
+
+
 class InterruptRequest(BaseModel):
     session_id: int
     order_id: int
     operator_id: int
+    # 15/10/2026 — formato antigo (texto livre). Telas desatualizadas ainda
+    # mandam isto; o servidor recusa e pede para atualizar a tela.
     reason: Optional[str] = None
+    # 16/10/2026 — lista de motivos (ver INTERRUPT_REASONS em routers/scanning.py)
+    reasons: Optional[List[InterruptReasonIn]] = None
+    other_text: Optional[str] = None
 
 class ScanningLogResponse(BaseModel):
     id: int

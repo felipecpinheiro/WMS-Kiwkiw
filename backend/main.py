@@ -182,6 +182,16 @@ def run_light_migrations():
             )).fetchone()
             if box_key_len and box_key_len[0] is not None and box_key_len[0] < 30:
                 index_migrations.append("ALTER TABLE billing_box_prices ALTER COLUMN box_key TYPE VARCHAR(30)")
+            # 16/10/2026: scanning_logs.error_message 500 -> 2000. O motivo da
+            # interrupção passou a ser montado a partir de uma lista de SKUs e
+            # estourava os 500. Alargar VARCHAR no Postgres não reescreve a
+            # tabela (só um bloqueio curto no 1º boot).
+            err_len = db.execute(text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name='scanning_logs' AND column_name='error_message'"
+            )).fetchone()
+            if err_len and err_len[0] is not None and err_len[0] < 2000:
+                index_migrations.append("ALTER TABLE scanning_logs ALTER COLUMN error_message TYPE VARCHAR(2000)")
             # Faturamento (01/09/2026): adicional por produto na NF B2B. Coluna
             # aditiva (default 0) nas duas tabelas de parâmetro. Vai em
             # index_migrations (print texto puro) — regra do emoji.

@@ -769,9 +769,12 @@ export default function SellerPortalPage() {
               NF <span className="font-mono text-t3">{reasonOrder.nf_number}</span>
               {reasonOrder.customer_name ? ` · ${reasonOrder.customer_name}` : ''}
             </p>
-            <p className="text-sm text-t1 whitespace-pre-wrap break-words max-h-72 overflow-y-auto bg-surface-2 border border-line-soft rounded-xl px-3 py-2.5">
-              {reasonOrder.interrupt_reason}
-            </p>
+            {/* Vários motivos vêm separados por " | " — um por linha. */}
+            <div className="text-sm text-t1 break-words max-h-72 overflow-y-auto bg-surface-2 border border-line-soft rounded-xl px-3 py-2.5 space-y-1.5">
+              {String(reasonOrder.interrupt_reason).split(' | ').map((linha: string, i: number) => (
+                <p key={i} className="whitespace-pre-wrap">{linha}</p>
+              ))}
+            </div>
             <div className="flex justify-end mt-4">
               <button
                 onClick={() => setReasonOrder(null)}

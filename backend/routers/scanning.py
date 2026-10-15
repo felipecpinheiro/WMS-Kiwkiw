@@ -62,15 +62,112 @@ MARKER_SKUS = (PAUSE_SKU, RESUME_SKU)
 # sku='INTERRUPT' — sem coluna nova. O teto de 500 é o da própria coluna: acima
 # disso o Postgres estoura com erro 500.
 INTERRUPT_SKU = "INTERRUPT"
-INTERRUPT_REASON_MAX = 500
-# Textos automáticos que as telas antigas mandavam quando o campo ficava vazio.
-# Uma tela desatualizada, ainda aberta num operador, não pode gravar isso como
-# se fosse um motivo — o seller leria "Sem motivo informado".
-INTERRUPT_PLACEHOLDER_REASONS = (
-    "sem motivo informado",
-    "saída da bipagem pelo operador",
-    "saida da bipagem pelo operador",
-)
+# Teto do texto montado = tamanho da coluna ScanningLog.error_message
+# (alargada de 500 para 2000 em 16/10/2026 — ver migração em main.py).
+INTERRUPT_REASON_MAX = 2000
+# Teto do texto livre do motivo "Outro".
+INTERRUPT_OTHER_MAX = 500
+
+# ── Lista de motivos (16/10/2026) ────────────────────────────────────────────
+# O operador escolhe da lista (pode marcar vários); o SERVIDOR monta o texto que
+# o seller lê. Ordem fixa = ordem do dict. needs_skus: o motivo exige marcar
+# pelo menos 1 SKU da NF. Telas antigas mandavam texto livre (`reason`) — hoje
+# isso é recusado.
+INTERRUPT_REASONS = {
+    "CODIGO_BARRAS_SEM_LEITURA": {"label": "Código de barras sem leitura", "needs_skus": True},
+    "PRODUTO_SEM_CODIGO_BARRAS": {"label": "Produto sem código de barras", "needs_skus": True},
+    "FALTA_DE_SKU": {"label": "Falta de SKU", "needs_skus": True},
+    "PEDIDO_B2B": {"label": "Pedido B2B", "needs_skus": False},
+    "OUTRO": {"label": "Outro", "needs_skus": False},
+}
+
+
+def compose_interrupt_reason(order, reasons, other_text) -> str:
+    """
+    Valida a escolha do operador e devolve o texto gravado/mostrado ao seller,
+    ex.: "Código de barras sem leitura: A, B | Falta de SKU: C | Pedido B2B".
+    Levanta HTTPException(400) com mensagem pronta para a tela.
+
+    O servidor confere tudo (não confia na tela): código válido e sem repetição,
+    SKU que pertence à NF, motivo de SKU sem SKU, B2B com SKU, "Outro" sem texto.
+    """
+    if not reasons:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe o motivo da interrupção — o seller poderá ler este texto.",
+        )
+    order_skus = {it.sku for it in order.items}
+    seen = set()
+    parts = []  # [(label, [skus])] já na ordem fixa de INTERRUPT_REASONS
+    chosen = {}
+    for r in reasons:
+        code = (r.code or "").strip()
+        if code not in INTERRUPT_REASONS:
+            raise HTTPException(status_code=400, detail=f"Motivo inválido: {code or '(vazio)'}.")
+        if code in seen:
+            raise HTTPException(status_code=400, detail="Motivo repetido na mesma interrupção.")
+        seen.add(code)
+        chosen[code] = r
+    for code, meta in INTERRUPT_REASONS.items():
+        if code not in chosen:
+            continue
+        skus = []
+        for s in chosen[code].skus or []:
+            s = (s or "").strip()
+            if s and s not in skus:
+                skus.append(s)
+        if meta["needs_skus"]:
+            if not skus:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Selecione pelo menos 1 SKU em \"{meta['label']}\".",
+                )
+            fora = [s for s in skus if s not in order_skus]
+            if fora:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SKU(s) que não pertencem a esta NF: {', '.join(fora)}.",
+                )
+        elif skus:
+            raise HTTPException(
+                status_code=400,
+                detail=f"\"{meta['label']}\" não aceita SKUs.",
+            )
+        if code == "OUTRO":
+            texto = (other_text or "").strip()
+            if not texto:
+                raise HTTPException(status_code=400, detail="Descreva o motivo em \"Outro\".")
+            if len(texto) > INTERRUPT_OTHER_MAX:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"O texto de \"Outro\" pode ter no máximo {INTERRUPT_OTHER_MAX} caracteres.",
+                )
+            parts.append([f"{meta['label']}: {texto}", [], 0])
+        else:
+            parts.append([meta["label"], skus, 0])
+
+    def montar():
+        out = []
+        for label, skus, cortados in parts:
+            if skus:
+                extra = f" … e mais {cortados} SKUs" if cortados else ""
+                out.append(f"{label}: {', '.join(skus)}{extra}")
+            else:
+                out.append(label)
+        return " | ".join(out)
+
+    # Texto acima do teto da coluna: corta a lista de SKUs da seção mais longa
+    # ("… e mais N SKUs") em vez de recusar a interrupção de uma NF grande.
+    while len(montar()) > INTERRUPT_REASON_MAX:
+        idx = max(range(len(parts)), key=lambda i: len(parts[i][1]))
+        if len(parts[idx][1]) <= 1:
+            break
+        parts[idx][1].pop()
+        parts[idx][2] += 1
+    texto = montar()
+    if len(texto) > INTERRUPT_REASON_MAX:
+        texto = texto[: INTERRUPT_REASON_MAX - 1] + "…"
+    return texto
 # O seller só vê motivos de interrupções feitas a partir desta data (Brasília).
 # As anteriores foram feitas sem obrigatoriedade e ficam sem motivo no Portal.
 INTERRUPT_REASON_VISIBLE_FROM = datetime(2026, 10, 16, 0, 0, 0)
@@ -1110,16 +1207,25 @@ def interrupt_order(
     # ⚠️ MOTIVO OBRIGATÓRIO (15/10/2026) — trava de servidor, não cosmética: a
     # tela desabilita o botão, mas uma chamada forjada ou uma tela antiga ainda
     # aberta passaria. O seller lê este texto no Portal.
-    reason = (request.reason or "").strip()
-    if not reason or reason.lower() in INTERRUPT_PLACEHOLDER_REASONS:
+    # 16/10/2026: o motivo vem de uma LISTA (`reasons`); o texto livre antigo
+    # (`reason`) é de telas desatualizadas e é recusado, para não gravar texto
+    # sem categoria que o seller leria.
+    if request.reasons is None and request.reason is not None:
         raise HTTPException(
             status_code=400,
-            detail="Informe o motivo da interrupção — o seller poderá ler este texto.",
+            detail="Esta tela está desatualizada. Atualize a página (F5) e escolha o motivo da lista.",
         )
-    if len(reason) > INTERRUPT_REASON_MAX:
+    reason = compose_interrupt_reason(order, request.reasons, request.other_text)
+
+    # ⚠️ CAIXA OBRIGATÓRIA AO INTERROMPER (15/10/2026) — só na saída (a entrada
+    # já foi recusada acima) e só se algo foi bipado: pedido interrompido sem
+    # nenhuma bipagem não saiu fisicamente. Trava de servidor, não cosmética: a
+    # tela avisa, mas uma tela antiga aberta ou chamada forjada passaria, e a
+    # caixa gera adicional no faturamento. Só vale daqui pra frente.
+    if not order.box_used and sum(_scanned_by_sku(order, db).values()) > 0:
         raise HTTPException(
             status_code=400,
-            detail=f"O motivo pode ter no máximo {INTERRUPT_REASON_MAX} caracteres.",
+            detail="Selecione a caixa antes de interromper.",
         )
 
     # Registra interrupção no log de bipagem

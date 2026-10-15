@@ -429,7 +429,7 @@ class ScanningLog(Base):
     operator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     timestamp = Column(DateTime, default=now_brasilia)        # Horário exato do scan
     is_interrupted = Column(Boolean, default=False)         # Pedido foi interrompido
-    error_message = Column(String(500), nullable=True)      # Erro se houver
+    error_message = Column(String(2000), nullable=True)     # Erro se houver / motivo da interrupção (500→2000 em 16/10/2026)
     is_error = Column(Boolean, default=False)               # Scan com erro
 
     # Relacionamentos

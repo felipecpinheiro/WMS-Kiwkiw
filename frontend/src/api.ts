@@ -652,7 +652,9 @@ export const scanningApi = {
     session_id: number;
     order_id: number;
     operator_id: number;
-    reason?: string;
+    /** 16/10/2026: lista de motivos (o servidor monta o texto que o seller lê). */
+    reasons: { code: string; skus: string[] }[];
+    other_text?: string;
   }) => api.post('/scanning/interrupt', data),
   /**
    * Conferência final de uma NF de ENTRADA (24/08/2026).

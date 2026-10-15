@@ -39,7 +39,52 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 16/10/2026 — Interrupção por LISTA de motivos (substitui o texto livre)
+
+**Sem push, sem commit.** O texto livre da seção de 15/10 (abaixo) foi **substituído** por uma lista, só na
+**saída**. A Pausa da **entrada** continua com texto livre opcional. Sem coluna nova (decisão do dono:
+"só um texto") — só o tamanho de uma coluna.
+
+- **Quadro novo** `frontend/src/components/InterruptReasonModal.tsx`, usado por "Interromper" e por
+  "Sair da Bipagem" (`Scanner.tsx`). Caixas de marcação, **pode marcar vários**: *Código de barras sem
+  leitura*, *Produto sem código de barras*, *Falta de SKU* (os 3 mostram **todos os SKUs da NF** com foto,
+  nome, qtd e bipado; mínimo 1 SKU), *Pedido B2B* (só registra, **não toca em faturamento**) e *Outro*
+  (texto obrigatório, máx. 500). O mesmo SKU pode entrar em motivos diferentes.
+- **Sair da Bipagem sem NENHUM SKU bipado** sai direto: não interrompe e não pergunta nada (a NF fica como
+  estava). Com algum SKU bipado, abre o quadro.
+- **O servidor monta o texto** (`compose_interrupt_reason` em `scanning.py`; códigos em `INTERRUPT_REASONS`,
+  que **tem que bater** com a lista do `InterruptReasonModal.tsx`). Ordem fixa, separador `" | "`, ex.:
+  `Código de barras sem leitura: A, B | Falta de SKU: C | Pedido B2B | Outro: texto`. Só o código do SKU.
+- **Servidor recusa (400):** formato antigo (`reason` — "atualize a tela (F5)"), lista vazia, código
+  inválido/repetido, motivo de SKU sem SKU, **SKU que não pertence à NF**, B2B com SKU, "Outro" sem texto.
+  Texto acima do teto: **corta a lista de SKUs** ("… e mais N SKUs") em vez de recusar.
+- **`scanning_logs.error_message` 500 → 2000** (`models.py` + migração idempotente em `main.py`, padrão do
+  `nf_key`). ⚠️ Alargar `VARCHAR` no Postgres não reescreve a tabela, mas faz um bloqueio curto em
+  `scanning_logs` no 1º boot — subir fora do horário de pico.
+- **Portal:** o texto continua vindo de `interrupt_reason`; o quadro de leitura quebra por `" | "`, uma
+  linha por motivo. Corte de 16/10 e "sem motivo nas antigas" inalterados.
+- **Não mudou:** force-complete, Pausar na entrada, estoque, faturamento, CSV (uma coluna, texto montado).
+- ⚠️ **Outra mudança convivendo no mesmo arquivo (não é desta entrega):** interromper na saída **exige
+  caixa salva quando algo já foi bipado** (`needsBoxToInterrupt` no `Scanner.tsx` + checagem em
+  `/interrupt`). Fica por baixo desta lista — os testes têm que levar `box_used` em NF com bipagem.
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Adicionar/renomear um motivo | A lista existe em 2 lugares (`INTERRUPT_REASONS` e `REASONS` do modal) | Mudar os dois juntos |
+| Mandar texto livre para `/interrupt` | Recusado de propósito (400) | Usar `reasons`; texto livre só na Pausa da entrada |
+
+**Testes:** 42 verificações E2E em **SQLite e PostgreSQL** (cada recusa sem alterar o pedido, vários motivos
+na ordem fixa, SKU repetido no mesmo motivo, NF de 120 SKUs cortando em ≤ 2000, B2B, Outro com 500, entrada
+ainda recusada, caixa obrigatória, Portal). **Migração** testada em Postgres: coluna 500 → 2000 e 2ª
+execução idempotente. `tsc --noEmit` limpo. Conferência visual (escuro e claro): quadro, lista de SKUs,
+saída sem bipagem, interrupção real, Portal com 4 motivos em linhas separadas.
+
+---
+
 ## Mudanças Recentes — 15/10/2026 — Motivo OBRIGATÓRIO na interrupção + motivo visível no Portal
+
+> ⚠️ **Em 16/10/2026 o texto livre abaixo virou LISTA de motivos** (seção acima). O que segue sobre o
+> Portal, o corte de data e o CSV continua valendo.
 
 **Sem push, sem commit.** Interromper um pedido de **saída** agora exige motivo (texto livre) e o seller
 passa a **ler** esse motivo na aba **Meus Pedidos** do Portal. **Sem tabela, coluna ou migração nova.**

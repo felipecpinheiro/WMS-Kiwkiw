@@ -52,6 +52,8 @@ function lastTwelveMonths(): string[] {
 function NfList({ kind, lines, soma }: { kind: 'b2c' | 'b2b'; lines: any[]; soma: number }) {
   const b2c = kind === 'b2c';
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  // Soma da coluna de caixa deste canal: "Adic. caixa" no B2C, "Cx B2B" no B2B.
+  const somaCx = lines.reduce((acc: number, l: any) => acc + Number((b2c ? l.adic_caixa : l.valor_caixa_b2b) || 0), 0);
 
   return (
     <div className="border border-line-soft rounded-xl overflow-hidden bg-surface">
@@ -133,8 +135,73 @@ function NfList({ kind, lines, soma }: { kind: 'b2c' | 'b2b'; lines: any[]; soma
             </tbody>
             <tfoot>
               <tr className="border-t border-line font-bold">
-                <td colSpan={6} className="px-2 py-2.5 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
+                <td colSpan={3} className="px-2 py-2.5 text-t2">Soma {b2c ? 'B2C' : 'B2B'}</td>
+                <td className="px-2 py-2.5 text-right font-mono text-t1">{b2c ? '' : brl(somaCx)}</td>
+                <td className="px-2 py-2.5 text-right font-mono text-t1">{b2c ? brl(somaCx) : ''}</td>
+                <td />
                 <td className="px-2 py-2.5 text-right font-mono text-t1">{brl(soma)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Caixas do mês por tipo ───────────────────────────────────────────────────
+
+/** Uma caixa por NF: conta NFs por tipo de caixa, separado por canal. */
+function CaixasMes({ b2c, b2b }: { b2c: any[]; b2b: any[] }) {
+  const contagem = useMemo(() => {
+    const mapa = new Map<string, { b2c: number; b2b: number }>();
+    const soma = (lista: any[], canal: 'b2c' | 'b2b') => {
+      for (const l of lista) {
+        const tipo = (l.box || '').trim() || 'Sem caixa';
+        const linha = mapa.get(tipo) ?? { b2c: 0, b2b: 0 };
+        linha[canal] += 1;
+        mapa.set(tipo, linha);
+      }
+    };
+    soma(b2c, 'b2c');
+    soma(b2b, 'b2b');
+    // "Sem caixa" sempre por último; os demais em ordem alfabética.
+    return [...mapa.entries()].sort(([a], [c]) => {
+      if (a === 'Sem caixa') return 1;
+      if (c === 'Sem caixa') return -1;
+      return a.localeCompare(c, 'pt-BR');
+    });
+  }, [b2c, b2b]);
+
+  return (
+    <div className="border border-line-soft rounded-xl overflow-hidden bg-surface">
+      <div className="px-3 py-2.5 bg-surface-2 text-[12px] font-semibold text-t2">Caixas do mês por tipo</div>
+      {contagem.length === 0 ? (
+        <div className="px-3 py-6 text-center text-[12px] text-t4">Nenhuma caixa neste mês.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-[9.5px] uppercase tracking-wide text-t4">
+                <th className="text-left font-semibold px-2 py-2 border-b border-line-soft">Caixa</th>
+                <th className="text-right font-semibold px-2 py-2 border-b border-line-soft">B2C</th>
+                <th className="text-right font-semibold px-2 py-2 border-b border-line-soft">B2B</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contagem.map(([tipo, q]) => (
+                <tr key={tipo} className="border-t border-line-soft">
+                  <td className="px-2 py-2 font-mono">{tipo}</td>
+                  <td className="px-2 py-2 text-right font-mono">{q.b2c || '—'}</td>
+                  <td className="px-2 py-2 text-right font-mono">{q.b2b || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-line font-bold">
+                <td className="px-2 py-2.5 text-t2">Total de caixas</td>
+                <td className="px-2 py-2.5 text-right font-mono text-t1">{b2c.length}</td>
+                <td className="px-2 py-2.5 text-right font-mono text-t1">{b2b.length}</td>
               </tr>
             </tfoot>
           </table>
@@ -310,6 +377,9 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <NfList kind="b2c" lines={payload.b2c_lines || []} soma={payload.soma_b2c} />
               <NfList kind="b2b" lines={payload.b2b_lines || []} soma={payload.soma_b2b} />
+            </div>
+            <div className="mt-4">
+              <CaixasMes b2c={payload.b2c_lines || []} b2b={payload.b2b_lines || []} />
             </div>
           </div>
         </>

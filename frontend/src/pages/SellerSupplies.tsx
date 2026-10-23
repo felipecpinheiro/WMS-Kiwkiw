@@ -19,6 +19,7 @@
  *                 estimado por pedido, de todos os insumos juntos.
  */
 
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
@@ -28,7 +29,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  clientSuppliesApi, cadastrosApi, ClientSupply, ClientSupplyRule, SupplyRuleType, CANONICAL_BOXES,
+  clientSuppliesApi, cadastrosApi, ClientSupply, ClientSupplyMovement, ClientSupplyRule, SupplyRuleType, CANONICAL_BOXES,
 } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -53,6 +54,113 @@ function ruleIncomplete(type: SupplyRuleType, sku: string, boxKey: string, sourc
 }
 
 const brDate = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '—');
+
+// ─── Filtros (só no cliente — a aba já carrega todos os insumos e movimentos) ─
+
+type Opcao<T extends string> = { value: T; label: string };
+
+interface SupplyFilter {
+  search: string;
+  statuses: string[];
+  tipo: 'todos' | 'caixa' | 'comum';
+  saldo: 'todos' | 'com' | 'zerado' | 'negativo';
+  regra: 'todos' | 'com' | 'sem';
+  de: string;
+  ate: string;
+}
+
+interface MovFilter {
+  insumo: string;
+  tipo: 'todos' | 'entrada' | 'balanco' | 'consumo';
+  de: string;
+  ate: string;
+}
+
+const SUPPLY_FILTER_INICIAL: SupplyFilter = { search: '', statuses: [], tipo: 'todos', saldo: 'todos', regra: 'todos', de: '', ate: '' };
+const MOV_FILTER_INICIAL: MovFilter = { insumo: '', tipo: 'todos', de: '', ate: '' };
+
+const STATUS_FILTER_OPTIONS = ['Negativo', 'Zerado', 'Baixo', 'Alto', 'Sem lançamento'];
+
+const TIPO_CAIXA_OPTIONS: Opcao<SupplyFilter['tipo']>[] = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'caixa', label: 'Caixas próprias' },
+  { value: 'comum', label: 'Insumos comuns' },
+];
+const SALDO_OPTIONS: Opcao<SupplyFilter['saldo']>[] = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'com', label: 'Com saldo' },
+  { value: 'zerado', label: 'Zerado' },
+  { value: 'negativo', label: 'Negativo' },
+];
+const REGRA_OPTIONS: Opcao<SupplyFilter['regra']>[] = [
+  { value: 'todos', label: 'Todas' },
+  { value: 'com', label: 'Com regra' },
+  { value: 'sem', label: 'Sem regra' },
+];
+const MOV_TIPO_OPTIONS: Opcao<MovFilter['tipo']>[] = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'entrada', label: 'Entrada' },
+  { value: 'balanco', label: 'Balanço' },
+  { value: 'consumo', label: 'Consumo' },
+];
+
+function supplyFiltroAtivo(f: SupplyFilter): boolean {
+  return f.search.trim() !== '' || f.statuses.length > 0 || f.tipo !== 'todos' || f.saldo !== 'todos'
+    || f.regra !== 'todos' || f.de !== '' || f.ate !== '';
+}
+
+function movFiltroAtivo(f: MovFilter): boolean {
+  return f.insumo !== '' || f.tipo !== 'todos' || f.de !== '' || f.ate !== '';
+}
+
+/** Todos os filtros se somam (E). Um filtro vazio não restringe nada. */
+function supplyFiltrado(s: ClientSupply, f: SupplyFilter): boolean {
+  const busca = f.search.trim().toLowerCase();
+  if (busca && !s.name.toLowerCase().includes(busca)) return false;
+  if (f.statuses.length > 0 && !f.statuses.includes(deriveStatus(s).label)) return false;
+  if (f.tipo === 'caixa' && !s.locked) return false;
+  if (f.tipo === 'comum' && s.locked) return false;
+  if (f.saldo === 'com' && s.saldo_estimado <= 0) return false;
+  if (f.saldo === 'zerado' && s.saldo_estimado !== 0) return false;
+  if (f.saldo === 'negativo' && s.saldo_estimado >= 0) return false;
+  if (f.regra === 'com' && s.rules.length === 0) return false;
+  if (f.regra === 'sem' && s.rules.length > 0) return false;
+  if (f.de && (s.count_from_date ?? '') < f.de) return false;
+  if (f.ate && (s.count_from_date ?? '') > f.ate) return false;
+  return true;
+}
+
+function movFiltrado(m: ClientSupplyMovement, f: MovFilter): boolean {
+  if (f.insumo && m.supply_id !== Number(f.insumo)) return false;
+  if (f.tipo !== 'todos' && m.type !== f.tipo) return false;
+  if (f.de && (!m.movement_date || m.movement_date < f.de)) return false;
+  if (f.ate && (!m.movement_date || m.movement_date > f.ate)) return false;
+  return true;
+}
+
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2.5 py-1 text-[11px] font-bold rounded-full border transition whitespace-nowrap ${
+        active ? 'bg-violet-600 border-violet-600 text-white' : 'border-line text-t4 hover:text-t2'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ChipGroup<T extends string>({ options, value, onChange }: { options: Opcao<T>[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <>
+      {options.map(o => (
+        <FilterChip key={o.value} active={value === o.value} onClick={() => onChange(o.value)}>{o.label}</FilterChip>
+      ))}
+    </>
+  );
+}
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -498,18 +606,58 @@ function SupplyRow({ supply, sellerId, allSupplies }: { supply: ClientSupply; se
 
 // ─── Sub-aba Movimentos ───────────────────────────────────────────────────────
 
-function MovementsPanel({ sellerId }: { sellerId: number }) {
+function MovementsPanel({
+  sellerId, supplies, filter, setFilter,
+}: {
+  sellerId: number;
+  supplies: ClientSupply[];
+  filter: MovFilter;
+  setFilter: (updater: (f: MovFilter) => MovFilter) => void;
+}) {
   const { data, isLoading } = useQuery(
     ['client-supplies-movements', sellerId],
     () => clientSuppliesApi.movements().then(r => r.data),
   );
   const movs = data ?? [];
+  const movsFiltradas = movs.filter(m => movFiltrado(m, filter));
 
   if (isLoading) return <div className="text-sm text-t4 py-8 text-center">Carregando...</div>;
   if (movs.length === 0) return <p className="text-sm text-t5 italic text-center py-8">Nenhum movimento ainda.</p>;
 
   return (
-    <div className="bg-surface border border-line-soft rounded-2xl overflow-hidden">
+    <div className="space-y-4">
+      <div className="bg-surface border border-line-soft rounded-2xl p-3 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={filter.insumo}
+            onChange={e => setFilter(f => ({ ...f, insumo: e.target.value }))}
+            className={`${inputCls} w-52`}
+            style={inputStyle}
+          >
+            <option value="">Todos os insumos</option>
+            {supplies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-t5">Período</span>
+          <input type="date" title="De" value={filter.de} onChange={e => setFilter(f => ({ ...f, de: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
+          <span className="text-[11px] text-t5">até</span>
+          <input type="date" title="Até" value={filter.ate} onChange={e => setFilter(f => ({ ...f, ate: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-t5 mr-1">Tipo</span>
+          <ChipGroup options={MOV_TIPO_OPTIONS} value={filter.tipo} onChange={tipo => setFilter(f => ({ ...f, tipo }))} />
+        </div>
+        {movFiltroAtivo(filter) && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-t4">{movsFiltradas.length} de {movs.length} movimentos</span>
+            <button onClick={() => setFilter(() => MOV_FILTER_INICIAL)} className="text-[11px] font-bold text-brand hover:underline">Limpar filtros</button>
+          </div>
+        )}
+      </div>
+
+      {movsFiltradas.length === 0 ? (
+        <p className="text-sm text-t5 italic text-center py-8">Nenhum movimento com esses filtros.</p>
+      ) : (
+      <div className="bg-surface border border-line-soft rounded-2xl overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -522,7 +670,7 @@ function MovementsPanel({ sellerId }: { sellerId: number }) {
             </tr>
           </thead>
           <tbody>
-            {movs.map((m, i) => (
+            {movsFiltradas.map((m, i) => (
               <tr key={i} className="border-b border-line-soft last:border-0">
                 <td className="px-3 py-2 text-t3 whitespace-nowrap">{brDate(m.movement_date)}</td>
                 <td className="px-3 py-2">
@@ -546,6 +694,8 @@ function MovementsPanel({ sellerId }: { sellerId: number }) {
           </tbody>
         </table>
       </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -564,6 +714,8 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
   const [newRuleBoxKey, setNewRuleBoxKey] = useState('');
   const [newRuleSourceId, setNewRuleSourceId] = useState('');
   const [newRuleQty, setNewRuleQty] = useState('1');
+  const [supFilter, setSupFilter] = useState<SupplyFilter>(SUPPLY_FILTER_INICIAL);
+  const [movFilter, setMovFilter] = useState<MovFilter>(MOV_FILTER_INICIAL);
 
   const mCreate = useMutation(
     async () => {
@@ -589,6 +741,7 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
   );
 
   const supplies = useMemo(() => data ?? [], [data]);
+  const filteredSupplies = useMemo(() => supplies.filter(s => supplyFiltrado(s, supFilter)), [supplies, supFilter]);
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
@@ -618,7 +771,7 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
       </div>
 
       {subTab === 'movimentos' ? (
-        <MovementsPanel sellerId={sellerId} />
+        <MovementsPanel sellerId={sellerId} supplies={supplies} filter={movFilter} setFilter={setMovFilter} />
       ) : isLoading ? (
         <div className="text-sm text-t4 py-8 text-center">Carregando...</div>
       ) : (
@@ -664,8 +817,63 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
             </div>
           )}
 
+          {supplies.length > 0 && (
+            <div className="bg-surface border border-line-soft rounded-2xl p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`${inputCls} w-56`}
+                  style={inputStyle}
+                  placeholder="Buscar insumo..."
+                  value={supFilter.search}
+                  onChange={e => setSupFilter(f => ({ ...f, search: e.target.value }))}
+                />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-t5">Contando desde</span>
+                <input type="date" title="De" value={supFilter.de} onChange={e => setSupFilter(f => ({ ...f, de: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
+                <span className="text-[11px] text-t5">até</span>
+                <input type="date" title="Até" value={supFilter.ate} onChange={e => setSupFilter(f => ({ ...f, ate: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-t5 mr-1">Status</span>
+                {STATUS_FILTER_OPTIONS.map(st => (
+                  <FilterChip
+                    key={st}
+                    active={supFilter.statuses.includes(st)}
+                    onClick={() => setSupFilter(f => ({
+                      ...f,
+                      statuses: f.statuses.includes(st) ? f.statuses.filter(x => x !== st) : [...f.statuses, st],
+                    }))}
+                  >
+                    {st}
+                  </FilterChip>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-t5 mr-1">Tipo</span>
+                  <ChipGroup options={TIPO_CAIXA_OPTIONS} value={supFilter.tipo} onChange={tipo => setSupFilter(f => ({ ...f, tipo }))} />
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-t5 mr-1">Saldo</span>
+                  <ChipGroup options={SALDO_OPTIONS} value={supFilter.saldo} onChange={saldo => setSupFilter(f => ({ ...f, saldo }))} />
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-t5 mr-1">Regra</span>
+                  <ChipGroup options={REGRA_OPTIONS} value={supFilter.regra} onChange={regra => setSupFilter(f => ({ ...f, regra }))} />
+                </div>
+              </div>
+              {supplyFiltroAtivo(supFilter) && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-t4">{filteredSupplies.length} de {supplies.length} insumos</span>
+                  <button onClick={() => setSupFilter(SUPPLY_FILTER_INICIAL)} className="text-[11px] font-bold text-brand hover:underline">Limpar filtros</button>
+                </div>
+              )}
+            </div>
+          )}
+
           {supplies.length === 0 && !showNew ? (
             <p className="text-sm text-t5 italic text-center py-8">Nenhum insumo cadastrado ainda.</p>
+          ) : supplies.length > 0 && filteredSupplies.length === 0 ? (
+            <p className="text-sm text-t5 italic text-center py-8">Nenhum insumo com esses filtros.</p>
           ) : (
             <div className="bg-surface border border-line-soft rounded-2xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -682,7 +890,7 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {supplies.map(s => <SupplyRow key={s.id} supply={s} sellerId={sellerId} allSupplies={supplies} />)}
+                    {filteredSupplies.map(s => <SupplyRow key={s.id} supply={s} sellerId={sellerId} allSupplies={supplies} />)}
                   </tbody>
                 </table>
               </div>

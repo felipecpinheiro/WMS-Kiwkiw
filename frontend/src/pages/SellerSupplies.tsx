@@ -125,8 +125,7 @@ function supplyFiltrado(s: ClientSupply, f: SupplyFilter): boolean {
   if (f.saldo === 'negativo' && s.saldo_estimado >= 0) return false;
   if (f.regra === 'com' && s.rules.length === 0) return false;
   if (f.regra === 'sem' && s.rules.length > 0) return false;
-  if (f.de && (s.count_from_date ?? '') < f.de) return false;
-  if (f.ate && (s.count_from_date ?? '') > f.ate) return false;
+  // Período (de/ate) não entra aqui: é pedido ao servidor (ver useQuery do SellerSuppliesTab).
   return true;
 }
 
@@ -358,7 +357,7 @@ function deriveStatus(s: ClientSupply): { label: string; cls: string } {
     : { label: 'Alto', cls: 'bg-ok-soft text-ok' };
 }
 
-function SupplyRow({ supply, sellerId, allSupplies }: { supply: ClientSupply; sellerId: number; allSupplies: ClientSupply[] }) {
+function SupplyRow({ supply, sellerId, allSupplies, periodoAtivo }: { supply: ClientSupply; sellerId: number; allSupplies: ClientSupply[]; periodoAtivo: boolean }) {
   const qc = useQueryClient();
   const [showDetails, setShowDetails] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -449,6 +448,12 @@ function SupplyRow({ supply, sellerId, allSupplies }: { supply: ClientSupply; se
         <td className={`px-3 py-2.5 text-right font-bold whitespace-nowrap ${supply.saldo_estimado < 0 ? 'text-bad' : supply.saldo_estimado === 0 ? 'text-t4' : 'text-ok'}`}>
           {supply.saldo_estimado}
         </td>
+        {periodoAtivo && (
+          <td className="px-3 py-2.5 text-right font-bold text-ok whitespace-nowrap">+{supply.entradas_periodo}</td>
+        )}
+        {periodoAtivo && (
+          <td className="px-3 py-2.5 text-right font-bold text-bad whitespace-nowrap">-{supply.consumo_periodo}</td>
+        )}
         <td className="px-3 py-2.5">
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${status.cls}`}>{status.label}</span>
         </td>
@@ -473,7 +478,7 @@ function SupplyRow({ supply, sellerId, allSupplies }: { supply: ClientSupply; se
 
       {extraOpen && (
         <tr className="border-b border-line-soft bg-surface-2/40">
-          <td colSpan={7} className="px-3 py-3">
+          <td colSpan={periodoAtivo ? 9 : 7} className="px-3 py-3">
             {showEntryForm && (
               <div className="flex items-end gap-2 flex-wrap mb-3">
                 <div>
@@ -620,6 +625,8 @@ function MovementsPanel({
   );
   const movs = data ?? [];
   const movsFiltradas = movs.filter(m => movFiltrado(m, filter));
+  const somaMov = (tipo: ClientSupplyMovement['type']) =>
+    movsFiltradas.filter(m => m.type === tipo).reduce((acc, m) => acc + m.quantity, 0);
 
   if (isLoading) return <div className="text-sm text-t4 py-8 text-center">Carregando...</div>;
   if (movs.length === 0) return <p className="text-sm text-t5 italic text-center py-8">Nenhum movimento ainda.</p>;
@@ -692,6 +699,23 @@ function MovementsPanel({
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t border-line text-xs font-bold text-t1">
+              <td colSpan={3} className="px-3 py-2">Total de entradas</td>
+              <td className="px-3 py-2 text-right text-ok">+{somaMov('entrada')}</td>
+              <td />
+            </tr>
+            <tr className="text-xs font-bold text-t1">
+              <td colSpan={3} className="px-3 py-2">Total de consumo</td>
+              <td className="px-3 py-2 text-right text-bad">-{somaMov('consumo')}</td>
+              <td />
+            </tr>
+            <tr className="text-xs font-bold text-t1">
+              <td colSpan={3} className="px-3 py-2">Total de balanço</td>
+              <td className="px-3 py-2 text-right">{somaMov('balanco')}</td>
+              <td />
+            </tr>
+          </tfoot>
         </table>
       </div>
       </div>
@@ -704,7 +728,13 @@ function MovementsPanel({
 
 export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
   const [subTab, setSubTab] = useState<'resumo' | 'movimentos'>('resumo');
-  const { data, isLoading } = useQuery(['client-supplies', sellerId], () => clientSuppliesApi.list().then(r => r.data));
+  const [supFilter, setSupFilter] = useState<SupplyFilter>(SUPPLY_FILTER_INICIAL);
+  // O período vai pro servidor: o consumo é calculado pela data da importação.
+  const { data, isLoading } = useQuery(
+    ['client-supplies', sellerId, supFilter.de, supFilter.ate],
+    () => clientSuppliesApi.list(undefined, { de: supFilter.de, ate: supFilter.ate }).then(r => r.data),
+    { keepPreviousData: true },
+  );
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState('');
@@ -714,7 +744,6 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
   const [newRuleBoxKey, setNewRuleBoxKey] = useState('');
   const [newRuleSourceId, setNewRuleSourceId] = useState('');
   const [newRuleQty, setNewRuleQty] = useState('1');
-  const [supFilter, setSupFilter] = useState<SupplyFilter>(SUPPLY_FILTER_INICIAL);
   const [movFilter, setMovFilter] = useState<MovFilter>(MOV_FILTER_INICIAL);
 
   const mCreate = useMutation(
@@ -742,6 +771,17 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
 
   const supplies = useMemo(() => data ?? [], [data]);
   const filteredSupplies = useMemo(() => supplies.filter(s => supplyFiltrado(s, supFilter)), [supplies, supFilter]);
+  const periodoAtivo = supFilter.de !== '' || supFilter.ate !== '';
+  const totalResumo = useMemo(() => filteredSupplies.reduce(
+    (acc, s) => ({
+      entradas: acc.entradas + s.total_entradas,
+      consumo: acc.consumo + s.consumo_estimado,
+      saldo: acc.saldo + s.saldo_estimado,
+      entradasPeriodo: acc.entradasPeriodo + s.entradas_periodo,
+      consumoPeriodo: acc.consumoPeriodo + s.consumo_periodo,
+    }),
+    { entradas: 0, consumo: 0, saldo: 0, entradasPeriodo: 0, consumoPeriodo: 0 },
+  ), [filteredSupplies]);
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-4">
@@ -827,7 +867,7 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
                   value={supFilter.search}
                   onChange={e => setSupFilter(f => ({ ...f, search: e.target.value }))}
                 />
-                <span className="text-[10px] font-bold uppercase tracking-wide text-t5">Contando desde</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-t5">Período</span>
                 <input type="date" title="De" value={supFilter.de} onChange={e => setSupFilter(f => ({ ...f, de: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
                 <span className="text-[11px] text-t5">até</span>
                 <input type="date" title="Até" value={supFilter.ate} onChange={e => setSupFilter(f => ({ ...f, ate: e.target.value }))} className={`${inputCls} w-36`} style={inputStyle} />
@@ -885,13 +925,28 @@ export default function SellerSuppliesTab({ sellerId }: { sellerId: number }) {
                       <th className="px-3 py-2 font-bold text-right">Entradas</th>
                       <th className="px-3 py-2 font-bold text-right">Consumo</th>
                       <th className="px-3 py-2 font-bold text-right">Saldo</th>
+                      {periodoAtivo && <th className="px-3 py-2 font-bold text-right">Entradas no período</th>}
+                      {periodoAtivo && <th className="px-3 py-2 font-bold text-right">Consumo no período</th>}
                       <th className="px-3 py-2 font-bold">Status</th>
                       <th className="px-3 py-2 font-bold"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSupplies.map(s => <SupplyRow key={s.id} supply={s} sellerId={sellerId} allSupplies={supplies} />)}
+                    {filteredSupplies.map(s => (
+                      <SupplyRow key={s.id} supply={s} sellerId={sellerId} allSupplies={supplies} periodoAtivo={periodoAtivo} />
+                    ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t border-line text-xs font-bold text-t1">
+                      <td colSpan={2} className="px-3 py-2.5">Total ({filteredSupplies.length} insumos)</td>
+                      <td className="px-3 py-2.5 text-right text-ok whitespace-nowrap">+{totalResumo.entradas}</td>
+                      <td className="px-3 py-2.5 text-right text-bad whitespace-nowrap">-{totalResumo.consumo}</td>
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap">{totalResumo.saldo}</td>
+                      {periodoAtivo && <td className="px-3 py-2.5 text-right text-ok whitespace-nowrap">+{totalResumo.entradasPeriodo}</td>}
+                      {periodoAtivo && <td className="px-3 py-2.5 text-right text-bad whitespace-nowrap">-{totalResumo.consumoPeriodo}</td>}
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>

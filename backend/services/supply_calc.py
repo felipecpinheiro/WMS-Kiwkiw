@@ -133,16 +133,46 @@ def _supply_consumo_rows(db: Session, supply: models.ClientSupply, visited: froz
     return out
 
 
-def compute_balance(db: Session, supply: models.ClientSupply) -> dict:
-    """{total_entradas, consumo_estimado, saldo_estimado} de um insumo."""
+def _data_consumo(row: dict):
+    """Data que conta no período (filtro do Resumo e extrato): a da importação (25/10/2026)."""
+    if row["imported_at"]:
+        return row["imported_at"].date()
+    return row["order_date"]
+
+
+def _no_periodo(d, de, ate) -> bool:
+    """True se `d` cai dentro de [de, ate]. Limite None não restringe."""
+    if de and (d is None or d < de):
+        return False
+    if ate and (d is None or d > ate):
+        return False
+    return True
+
+
+def compute_balance(db: Session, supply: models.ClientSupply, de=None, ate=None) -> dict:
+    """
+    {total_entradas, consumo_estimado, saldo_estimado} de um insumo — sempre o
+    saldo REAL de todo o período. Com `de`/`ate`, acrescenta
+    {entradas_periodo, consumo_periodo}: só o movimento dentro do intervalo.
+    O período nunca altera o saldo.
+    """
     total_entradas = sum(
         e.quantity for e in supply.entries if e.active
     )
-    consumo = sum(row["quantity"] for row in _supply_consumo_rows(db, supply, frozenset()))
+    rows = _supply_consumo_rows(db, supply, frozenset())
+    consumo = sum(row["quantity"] for row in rows)
+    entradas_periodo = sum(
+        e.quantity for e in supply.entries if e.active and _no_periodo(e.entry_date, de, ate)
+    )
+    consumo_periodo = sum(
+        row["quantity"] for row in rows if _no_periodo(_data_consumo(row), de, ate)
+    )
     return {
         "total_entradas": total_entradas,
         "consumo_estimado": consumo,
         "saldo_estimado": total_entradas - consumo,
+        "entradas_periodo": entradas_periodo,
+        "consumo_periodo": consumo_periodo,
     }
 
 
@@ -173,7 +203,7 @@ def list_movements(db: Session, seller_id: int) -> list[dict]:
             })
         for row in _supply_consumo_rows(db, s, frozenset()):
             out.append({
-                "movement_date": row["order_date"] or (row["imported_at"].date() if row["imported_at"] else None),
+                "movement_date": _data_consumo(row),
                 "type": "consumo", "supply_id": s.id, "supply_name": s.name,
                 "quantity": row["quantity"], "note": None,
                 "nf_number": row["nf_number"], "rule_desc": row["rule_desc"],

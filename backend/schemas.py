@@ -875,6 +875,9 @@ class ClientSupplyOut(BaseModel):
     total_entradas: int
     consumo_estimado: int
     saldo_estimado: int
+    # Só diferem do total quando a listagem recebe `de`/`ate` (25/10/2026).
+    entradas_periodo: int = 0
+    consumo_periodo: int = 0
 
     class Config:
         from_attributes = True

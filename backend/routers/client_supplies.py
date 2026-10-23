@@ -94,8 +94,8 @@ def _rule_to_out(r: models.ClientSupplyRule) -> dict:
     }
 
 
-def _to_out(db: Session, supply: models.ClientSupply) -> dict:
-    bal = supply_calc.compute_balance(db, supply)
+def _to_out(db: Session, supply: models.ClientSupply, de: Optional[date] = None, ate: Optional[date] = None) -> dict:
+    bal = supply_calc.compute_balance(db, supply, de, ate)
     return {
         "id": supply.id,
         "seller_id": supply.seller_id,
@@ -116,6 +116,8 @@ def _to_out(db: Session, supply: models.ClientSupply) -> dict:
 @router.get("", response_model=list[schemas.ClientSupplyOut])
 def list_supplies(
     seller_id: Optional[int] = Query(None),
+    de: Optional[date] = Query(None),
+    ate: Optional[date] = Query(None),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -136,7 +138,7 @@ def list_supplies(
         .order_by(models.ClientSupply.locked.desc(), models.ClientSupply.name.asc())
         .all()
     )
-    return [_to_out(db, s) for s in supplies]
+    return [_to_out(db, s, de, ate) for s in supplies]
 
 
 @router.get("/movements", response_model=list[schemas.ClientSupplyMovementOut])

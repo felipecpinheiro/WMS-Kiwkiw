@@ -1452,6 +1452,8 @@ export interface ClientSupply {
   total_entradas: number;
   consumo_estimado: number;
   saldo_estimado: number;
+  entradas_periodo: number;
+  consumo_periodo: number;
 }
 
 export interface ClientSupplyMovement {
@@ -1466,8 +1468,10 @@ export interface ClientSupplyMovement {
 }
 
 export const clientSuppliesApi = {
-  list: (sellerId?: number) =>
-    api.get<ClientSupply[]>('/client-supplies', { params: sellerId ? { seller_id: sellerId } : undefined }),
+  list: (sellerId?: number, periodo?: { de?: string; ate?: string }) =>
+    api.get<ClientSupply[]>('/client-supplies', {
+      params: { seller_id: sellerId || undefined, de: periodo?.de || undefined, ate: periodo?.ate || undefined },
+    }),
   movements: (sellerId?: number) =>
     api.get<ClientSupplyMovement[]>('/client-supplies/movements', { params: sellerId ? { seller_id: sellerId } : undefined }),
   create: (data: { name: string; count_from_date: string }) =>

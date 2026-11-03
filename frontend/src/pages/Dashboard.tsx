@@ -868,6 +868,9 @@ export default function DashboardPage() {
 
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : { unit_id: null };
+  // Usuário com unidade "Todas" (unit_id vazio) importa na unidade 1; a sessão exige unidade
+  // e cada pedido já usa a unidade do próprio seller.
+  const importUnitId: number = user.unit_id ?? 1;
 
   // Preferência de unidade ativa — salva por usuário no localStorage
   const unitPrefKey = `wms_active_unit_${user.id ?? 'anon'}`;
@@ -926,11 +929,6 @@ export default function DashboardPage() {
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
-    if (!user.unit_id) {
-      toast.error('Usuário sem unidade configurada');
-      e.target.value = '';
-      return;
-    }
     // Para múltiplos arquivos: abre o modal para o primeiro;
     // os demais ficam na fila e são processados automaticamente após cada confirmação.
     setPendingFiles(files);
@@ -948,7 +946,7 @@ export default function DashboardPage() {
     decisionsOverride?: Record<number, 'reactivate' | 'ignore'>,
     sellerLinkOverride?: Record<string, SellerLinkDecision>,
   ) => {
-    if (!pendingFile || !user.unit_id) return;
+    if (!pendingFile) return;
     const decisions = decisionsOverride ?? inactiveDecisions;
     const sellerLinkDecisions = sellerLinkOverride ?? unmatchedDecisions;
     setUploading(true);
@@ -970,7 +968,7 @@ export default function DashboardPage() {
     }, 2000);
 
     try {
-      const res = await ordersApi.import(pendingFile, user.unit_id, {
+      const res = await ordersApi.import(pendingFile, importUnitId, {
         file_type: fileType,
         for_billing: forBilling,
         force_duplicates: forceDuplicates,

@@ -39,6 +39,18 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 04/11/2026 — Nova caixa "Própria GG"
+
+**Commit e push feitos em 04/11/2026.** Acrescentada **"Própria GG"** (entre "Própria G" e "Próprio Saco de Embarque") em
+`CANONICAL_BOXES` (agora **17** chaves) e `PROPRIO_BOXES` (agora **5**), em `billing_calc.py` e `api.ts`.
+Todo o resto lê essas listas: botão do Scanner (verde-água, nome inteiro), aba Caixas do seller, preço global
+e por seller, grupo A, filtro "Caixas próprias" e o insumo travado (criado sozinho por
+`ensure_locked_box_supplies` na próxima abertura da aba Insumos). A linha global em `billing_box_prices`
+nasce no seed do próximo boot (sem preço). **Sem migração** (`box_key` já é `VARCHAR(30)`). Histórico não
+convertido. **Sem testes rodados**, a pedido. Onde o texto acima diz "16 chaves" / "4 caixas próprias", leia 17 / 5.
+
+---
+
 ## Mudanças Recentes — 16/10/2026 — Interrupção por LISTA de motivos (substitui o texto livre)
 
 **Sem push, sem commit.** O texto livre da seção de 15/10 (abaixo) foi **substituído** por uma lista, só na

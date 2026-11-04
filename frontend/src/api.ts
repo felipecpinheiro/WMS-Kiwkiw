@@ -1197,13 +1197,13 @@ export interface BillingBoxPrice { box_key: string; price: number | null }
 export const CANONICAL_BOXES = [
   '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
   'Saco de Embarque',
-  'Própria P', 'Própria M', 'Própria G', 'Próprio Saco de Embarque',
+  'Própria P', 'Própria M', 'Própria G', 'Própria GG', 'Próprio Saco de Embarque',
 ] as const;
 
 // Caixas que o próprio seller envia — usadas pra estilizar o botão no Scanner
 // (cor diferente) e como âncora dos insumos travados na aba Insumos do Portal.
 export const PROPRIO_BOXES = [
-  'Própria P', 'Própria M', 'Própria G', 'Próprio Saco de Embarque',
+  'Própria P', 'Própria M', 'Própria G', 'Própria GG', 'Próprio Saco de Embarque',
 ] as const;
 
 export interface BillingSellerBoxPrices {

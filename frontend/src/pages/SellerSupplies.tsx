@@ -6,7 +6,7 @@
  * saldo aqui é uma ESTIMATIVA calculada pelas regras que o próprio seller
  * define — NUNCA uma contagem física. O aviso abaixo é fixo de propósito.
  *
- * As 4 caixas próprias (Própria P/M/G, Próprio Saco de Embarque) nascem
+ * As 5 caixas próprias (Própria P/M/G/GG, Próprio Saco de Embarque) nascem
  * TRAVADAS: nome e regra fixos (o servidor recusa mudar), só a quantidade/data
  * das entradas fica editável — precisa bater com o que quem bipa vê no botão.
  *

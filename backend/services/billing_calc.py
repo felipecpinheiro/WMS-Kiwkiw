@@ -115,13 +115,13 @@ def reajuste_alerta(inicio_contrato: str, ref_month: str) -> Optional[dict]:
 CANONICAL_BOXES = [
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11",
     "Saco de Embarque",
-    "Própria P", "Própria M", "Própria G", "Próprio Saco de Embarque",
+    "Própria P", "Própria M", "Própria G", "Própria GG", "Próprio Saco de Embarque",
 ]
 
 # Caixas que o próprio seller envia (viram também um "insumo" travado — ver
 # services/supply_calc.py). Usado só para identificar o grupo; a cor/tooltip
 # do botão no Scanner fica no frontend (PROPRIO_BOXES em api.ts).
-PROPRIO_BOXES = ["Própria P", "Própria M", "Própria G", "Próprio Saco de Embarque"]
+PROPRIO_BOXES = ["Própria P", "Própria M", "Própria G", "Própria GG", "Próprio Saco de Embarque"]
 
 
 def normaliza_box(raw) -> Optional[str]:

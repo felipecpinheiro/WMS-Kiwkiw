@@ -171,6 +171,10 @@ class Seller(Base):
     # Outros apelidos/strings do seller usados para match automático na importação.
     # Formato: strings separadas por ponto-e-vírgula, ex: "MERU SERVICOS EMPRESARIAIS;EDITORA LTDA"
     other_aliases = Column(Text, nullable=True)
+    # Caixa padrão no Scanner (05/11/2026): uma das CANONICAL_BOXES. Vazio = sem
+    # padrão (o operador escolhe, como sempre foi). Com valor, a NF de saída
+    # nasce com box_used preenchido, como se alguém tivesse clicado nela.
+    default_box = Column(String(30), nullable=True)
 
     # Propriedade auxiliar: Pydantic from_attributes procura `is_active` no modelo
     @property

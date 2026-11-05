@@ -3584,8 +3584,10 @@ def get_suggested_box(
         raise HTTPException(404, "Pedido não encontrado")
 
     suggested = _suggest_box_for_order(order, db)
+    seller = db.query(models.Seller).filter(models.Seller.id == order.seller_id).first()
     return {
         "order_id":  order_id,
+        "seller_default": seller.default_box if seller else None,  # caixa padrão do seller
         "suggested": suggested,            # None → N.A
         "box_used":  order.box_used,       # operador pode ter ajustado
         "effective": order.box_used or suggested,  # valor a usar

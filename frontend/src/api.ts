@@ -779,7 +779,7 @@ export const scanningApi = {
       {},
     ),
   suggestedBox: (orderId: number) =>
-    api.get<{ order_id: number; suggested: string | null; box_used: string | null; effective: string | null }>(
+    api.get<{ order_id: number; seller_default: string | null; suggested: string | null; box_used: string | null; effective: string | null }>(
       `/scanning/orders/${orderId}/suggested-box`
     ),
   saveOrderBox: (orderId: number, boxUsed: string | null) =>
@@ -1110,6 +1110,9 @@ export const cadastrosApi = {
   reactivateUser: (id: number) => api.post(`/cadastros/users/${id}/reactivate`),
   setTempPassword: (id: number) =>
     api.put(`/cadastros/users/${id}`, { password: '123456', force_password_change: true }),
+  /** Caixa padrão do seller no Scanner (null = sem padrão). manager+ */
+  setSellerDefaultBox: (sellerId: number, defaultBox: string | null) =>
+    api.put(`/cadastros/sellers/${sellerId}/default-box`, { default_box: defaultBox }),
   uploadExperienceFile: (sellerId: number, file: File) => {
     const fd = new FormData();
     fd.append('file', file);

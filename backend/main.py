@@ -255,6 +255,9 @@ def run_light_migrations():
                 if not col_exists("billing_closing_lines", _c):
                     index_migrations.append(
                         f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
+            # Caixa padrão do seller no Scanner (05/11/2026).
+            if not col_exists("sellers", "default_box"):
+                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
             # Faturamento (02/10/2026): linha avulsa com "Repetir nos meses seguintes".
             if not col_exists("billing_closing_adjustments", "repetir"):
                 index_migrations.append(
@@ -424,6 +427,10 @@ def run_light_migrations():
                         "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
                         "VARCHAR(7) DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
+            # Caixa padrão do seller no Scanner (05/11/2026).
+            _seller_cols = {r[1] for r in db.execute(text("PRAGMA table_info(sellers)")).fetchall()}
+            if "default_box" not in _seller_cols:
+                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
             # parâmetros do seller. Colunas aditivas SÓ em billing_seller_params.
             _sp_cols = {r[1] for r in db.execute(
                 text("PRAGMA table_info(billing_seller_params)")).fetchall()}

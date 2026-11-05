@@ -789,6 +789,21 @@ export default function SellersPage() {
 
             {formTab === 'caixas' && (
               <div className="space-y-3">
+                <div className="border border-line-soft rounded-lg p-3 space-y-1.5">
+                  <label className="block text-xs font-semibold text-t2">Caixa padrão no Scanner</label>
+                  <select
+                    value={defaultBox}
+                    onChange={e => setDefaultBox(e.target.value)}
+                    className="w-full border border-line rounded-md px-2 py-1.5 text-sm bg-surface-2 text-t1"
+                  >
+                    <option value="">Nenhuma (operador escolhe)</option>
+                    {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <p className="text-xs text-t4">
+                    Ao abrir uma NF de saída deste seller sem caixa, o Scanner já marca esta caixa
+                    como se o operador tivesse clicado. Ele ainda pode trocar. Vale só para NFs abertas depois de salvar.
+                  </p>
+                </div>
                 <p className="text-xs text-t4">
                   Preço adicional por caixa deste seller. Em branco = usa o valor da
                   tabela global do Faturamento. "Inclusa" = grupo A (sem adicional).
@@ -814,21 +829,6 @@ export default function SellersPage() {
                         />
                       </div>
                     </div>
-                <div className="border border-line-soft rounded-lg p-3 space-y-1.5">
-                  <label className="block text-xs font-semibold text-t2">Caixa padrão no Scanner</label>
-                  <select
-                    value={defaultBox}
-                    onChange={e => setDefaultBox(e.target.value)}
-                    className="w-full border border-line rounded-md px-2 py-1.5 text-sm bg-surface-2 text-t1"
-                  >
-                    <option value="">Nenhuma (operador escolhe)</option>
-                    {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                  <p className="text-xs text-t4">
-                    Ao abrir uma NF de saída deste seller sem caixa, o Scanner já marca esta caixa
-                    como se o operador tivesse clicado. Ele ainda pode trocar. Vale só para NFs abertas depois de salvar.
-                  </p>
-                </div>
                   ))}
                 </div>
               </div>

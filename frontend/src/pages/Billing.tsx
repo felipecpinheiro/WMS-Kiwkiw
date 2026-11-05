@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from 'react-query';
 import toast from 'react-hot-toast';
 import {
   DollarSign, Save, Download, Lock, Unlock, ArrowLeftRight, List as ListIcon,
-  Plus, X, Settings2,
+  Plus, X, Settings2, ChevronDown,
 } from 'lucide-react';
 import { billingApi, cadastrosApi, scanningApi, BillingBoxPrice, CANONICAL_BOXES } from '../api';
 import { todayBrasiliaStr } from '../timezone';
@@ -22,6 +22,20 @@ import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 const brl = (n: number | null | undefined) =>
   'R$ ' + (Number(n ?? 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Celular = largura < 768px (mesmo corte do `md:` do Tailwind). No desktop nada muda.
+function useIsMobile() {
+  const q = '(max-width: 767px)';
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const h = () => setM(mq.matches);
+    h();
+    mq.addEventListener('change', h);
+    return () => mq.removeEventListener('change', h);
+  }, []);
+  return m;
+}
 
 const PARAM_KEYS = [
   'preco_unitario', 'min_pedidos', 'valor_minimo_b2c', 'manuseio_b2b', 'valor_caixa_b2b',
@@ -401,7 +415,7 @@ export default function BillingPage() {
   const lock = isClosed ? 'opacity-50 pointer-events-none' : '';
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-3 md:p-6 space-y-5 pb-24 md:pb-6">
       {/* topo */}
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
@@ -415,21 +429,21 @@ export default function BillingPage() {
             )}
           </div>
         </div>
-        <div className="flex items-end gap-2">
-          <div>
+        <div className="flex items-end gap-2 flex-wrap w-full md:w-auto">
+          <div className="w-full md:w-auto">
             <label className="block text-xs text-t3 mb-1">Seller</label>
             <select value={sellerId} onChange={e => setSellerId(Number(e.target.value) || '')}
-              className="border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1">
+              className="w-full md:w-auto border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1">
               <option value="">Selecione…</option>
               {sellers.map((s: any) => (
                 <option key={s.id} value={s.id}>{s.trade_name || s.name}{s.active ? '' : ' (inativo)'}</option>
               ))}
             </select>
           </div>
-          <div>
+          <div className="flex-1 md:flex-none">
             <label className="block text-xs text-t3 mb-1">Mês</label>
             <input type="month" value={refMonth} onChange={e => setRefMonth(e.target.value)}
-              className="border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1" />
+              className="w-full md:w-auto border border-line rounded-lg px-3 py-2 text-sm bg-surface-2 text-t1" />
           </div>
           <button onClick={() => setShowCfg(true)} title="Tabela global de caixas"
             className="w-10 h-10 flex items-center justify-center rounded-lg border border-line text-t3 hover:text-violet-400">
@@ -442,7 +456,7 @@ export default function BillingPage() {
       <div className="flex gap-1 border-b border-line">
         {(['seller', 'cons'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tab === t ? 'text-violet-400 border-violet-400' : 'text-t3 border-transparent'}`}>
+            className={`flex-1 md:flex-none px-2 md:px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tab === t ? 'text-violet-400 border-violet-400' : 'text-t3 border-transparent'}`}>
             {t === 'seller' ? 'Fechamento do seller' : 'Consolidado do mês'}
           </button>
         ))}
@@ -499,7 +513,7 @@ export default function BillingPage() {
           )}
 
           {/* PARÂMETROS */}
-          <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
+          <section className={`bg-surface rounded-xl border border-line-soft p-3 md:p-5 ${lock}`}>
             <h2 className="text-sm font-semibold text-t2 mb-1">Parâmetros de cobrança</h2>
             <p className="text-xs text-t3 mb-4">
               {isClosed
@@ -599,8 +613,9 @@ export default function BillingPage() {
               </ParamGroup>
             </div>
             <div className="flex items-center gap-3 mt-4 flex-wrap">
+              {/* No celular o botão fica na barra fixa do rodapé (mais abaixo) */}
               <button onClick={() => saveDraft()} disabled={busy || !dirty}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
+                className="hidden md:flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold disabled:opacity-50">
                 <Save size={14} /> Salvar parâmetros
               </button>
               <span className="text-xs text-t3">Grava no cadastro do seller. Vale para todos os meses abertos.</span>
@@ -608,7 +623,7 @@ export default function BillingPage() {
           </section>
 
           {/* AVULSOS */}
-          <section className={`bg-surface rounded-xl border border-line-soft p-5 ${lock}`}>
+          <section className={`bg-surface rounded-xl border border-line-soft p-3 md:p-5 ${lock}`}>
             <h2 className="text-sm font-semibold text-t2 mb-1">Linhas avulsas</h2>
             <p className="text-[11px] text-t4 mb-3">
               Marque <b>Repetir</b> para a linha ser copiada para o mês seguinte deste seller ao salvar ou fechar o mês.
@@ -616,11 +631,11 @@ export default function BillingPage() {
             </p>
             <div className="space-y-2">
               {draft.adjustments.map((a, i) => (
-                <div key={i} className="grid grid-cols-[1.4fr_1.2fr_auto_110px_auto_auto] gap-2 items-center">
+                <div key={i} className="grid grid-cols-2 md:grid-cols-[1.4fr_1.2fr_auto_110px_auto_auto] gap-2 items-center max-md:border max-md:border-line-soft max-md:rounded-xl max-md:p-2.5 max-md:bg-surface-2">
                   <input value={a.descricao} placeholder="Descrição" onChange={e => setAvulso(i, { descricao: e.target.value })}
-                    className="border border-line rounded-lg px-2 py-1.5 text-sm bg-surface-2 text-t1" />
+                    className="col-span-2 md:col-span-1 border border-line rounded-lg px-2 py-2 md:py-1.5 text-sm bg-surface-2 text-t1" />
                   <input value={a.obs} placeholder="Motivo / obs." onChange={e => setAvulso(i, { obs: e.target.value })}
-                    className="border border-line rounded-lg px-2 py-1.5 text-sm bg-surface-2 text-t1" />
+                    className="col-span-2 md:col-span-1 border border-line rounded-lg px-2 py-2 md:py-1.5 text-sm bg-surface-2 text-t1" />
                   <div className="flex gap-1">
                     {[1, -1].map(s => (
                       <button key={s} onClick={() => setAvulso(i, { sign: s })}
@@ -630,7 +645,7 @@ export default function BillingPage() {
                     ))}
                   </div>
                   <input type="number" step="0.01" value={a.valor} onChange={e => setAvulso(i, { valor: Number(e.target.value) })}
-                    className="border border-line rounded-lg px-2 py-1.5 text-sm text-right bg-surface-2 text-t1" />
+                    className="border border-line rounded-lg px-2 py-2 md:py-1.5 text-sm text-right bg-surface-2 text-t1" />
                   <label className="flex items-center gap-1 text-xs text-t3 cursor-pointer whitespace-nowrap"
                     title="Copia esta linha para o mês seguinte deste seller">
                     <input type="checkbox" checked={!!a.repetir}
@@ -638,7 +653,7 @@ export default function BillingPage() {
                       className="w-3.5 h-3.5 accent-violet-600" />
                     Repetir
                   </label>
-                  <button onClick={() => rmAvulso(i)} className="text-t4 hover:text-red-400"><X size={15} /></button>
+                  <button onClick={() => rmAvulso(i)} className="text-t4 hover:text-red-400 max-md:justify-self-end max-md:p-1"><X size={15} /></button>
                 </div>
               ))}
             </div>
@@ -648,10 +663,11 @@ export default function BillingPage() {
           </section>
 
           {/* FATURA FINAL */}
-          <section className="bg-surface rounded-xl border border-line-soft p-5">
+          <section className="bg-surface rounded-xl border border-line-soft p-3 md:p-5">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-sm font-semibold text-t2">Fatura final — {payload.seller_name} · {refMonth}</h2>
-              <div className="flex gap-2">
+              {/* Celular: barra fixa no rodapé (Salvar parâmetros aparece quando há alteração) */}
+              <div className="hidden md:flex gap-2">
                 <button onClick={() => billingApi.downloadClosingPdf(Number(sellerId), refMonth)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> PDF</button>
                 <button onClick={() => billingApi.downloadClosingExcel(Number(sellerId), refMonth)}
@@ -671,7 +687,7 @@ export default function BillingPage() {
           </section>
 
           {/* LISTAS COMPLETAS (último bloco) */}
-          <section className="bg-surface rounded-xl border border-line-soft p-5">
+          <section className="bg-surface rounded-xl border border-line-soft p-3 md:p-5">
             <h2 className="text-sm font-semibold text-t2 mb-1">Notas fiscais de saída — {refMonth}</h2>
             <p className="text-[11px] text-t4 mb-3">Todas as NFs · qualquer status exceto cancelada · por data de importação</p>
             <div className="grid gap-4 lg:grid-cols-2">
@@ -687,6 +703,26 @@ export default function BillingPage() {
         </div>
       )}
 
+      {/* Celular: barra de ações grudada no rodapé da área de rolagem (acima da barra inferior do app) */}
+      {tab === 'seller' && sellerId && !closingQ.isLoading && payload && draft && (
+        <div className="md:hidden sticky bottom-0 -mx-3 -mb-24 z-30 bg-surface border-t border-line p-2 flex gap-2 [&>button]:flex-1 [&>button]:justify-center [&>button]:py-2.5">
+          {dirty && !isClosed && (
+            <button onClick={() => saveDraft()} disabled={busy}
+              className="flex items-center gap-1.5 px-3 rounded-lg bg-amber-500 text-black text-sm font-semibold disabled:opacity-50">
+              <Save size={14} /> Salvar
+            </button>
+          )}
+          <button onClick={() => billingApi.downloadClosingPdf(Number(sellerId), refMonth)}
+            className="flex items-center gap-1.5 px-3 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> PDF</button>
+          <button onClick={() => billingApi.downloadClosingExcel(Number(sellerId), refMonth)}
+            className="flex items-center gap-1.5 px-3 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Excel</button>
+          {!isClosed && (
+            <button onClick={closeMonth} disabled={busy}
+              className="flex items-center gap-1.5 px-3 rounded-lg bg-violet-600 text-white text-sm font-semibold"><Lock size={14} /> Fechar</button>
+          )}
+        </div>
+      )}
+
       {showCfg && <BoxPricesModal onClose={() => setShowCfg(false)} />}
     </div>
   );
@@ -695,10 +731,22 @@ export default function BillingPage() {
 // ── subcomponentes ─────────────────────────────────────────────────────────
 
 function ParamGroup({ title, children }: any) {
+  // Celular: o grupo abre/fecha ao tocar no título. Desktop: sempre aberto.
+  const isMobile = useIsMobile();
+  const [open, setOpen] = useState(false);
+  const show = !isMobile || open;
   return (
     <div className="bg-surface-2 border border-line-soft rounded-xl p-3.5">
-      <h3 className="text-[11px] uppercase tracking-wide text-t3 font-semibold mb-2">{title}</h3>
-      <div className="space-y-1.5">{children}</div>
+      <h3 className={`text-[11px] uppercase tracking-wide text-t3 font-semibold ${show ? 'mb-2' : ''}`}>
+        {isMobile ? (
+          <button type="button" onClick={() => setOpen(o => !o)}
+            className="w-full flex items-center justify-between uppercase py-1">
+            <span>{title}</span>
+            <ChevronDown size={16} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+        ) : title}
+      </h3>
+      {show && <div className="space-y-1.5">{children}</div>}
     </div>
   );
 }
@@ -708,7 +756,7 @@ function NumRow({ label, v, onChange, int }: { label: string; v: number; onChang
       <span className="text-xs text-t2">{label}</span>
       <input type="number" step={int ? '1' : '0.01'} value={v ?? 0}
         onChange={e => onChange(int ? parseInt(e.target.value || '0') : Number(e.target.value))}
-        className="w-24 text-right border border-line rounded-md px-2 py-1 text-sm bg-surface text-t1" />
+        className="w-28 md:w-24 text-right border border-line rounded-md px-2 py-2 md:py-1 text-sm bg-surface text-t1" />
     </div>
   );
 }
@@ -726,15 +774,15 @@ function ToggleRow({ label, v, onChange }: { label: string; v: boolean; onChange
 
 function FaturaTable({ f }: any) {
   const Row = ({ lbl, c, b, strong }: any) => (
-    <div className={`grid grid-cols-[1.4fr_1fr_1fr] px-4 py-2.5 border-b border-line-soft last:border-0 ${strong ? 'font-semibold bg-surface-2' : ''}`}>
+    <div className={`grid grid-cols-[1fr_auto_auto] md:grid-cols-[1.4fr_1fr_1fr] gap-x-3 px-3 md:px-4 py-2.5 border-b border-line-soft last:border-0 max-md:text-xs ${strong ? 'font-semibold bg-surface-2' : ''}`}>
       <span className="text-t2">{lbl}</span>
-      <span className="text-right font-mono text-t1">{c == null ? '—' : brl(c)}</span>
-      <span className="text-right font-mono text-t1">{b == null ? '—' : brl(b)}</span>
+      <span className="text-right font-mono text-t1 whitespace-nowrap">{c == null ? '—' : brl(c)}</span>
+      <span className="text-right font-mono text-t1 whitespace-nowrap min-w-[4.5rem]">{b == null ? '—' : brl(b)}</span>
     </div>
   );
   return (
     <div className="border border-line-soft rounded-xl overflow-hidden">
-      <div className="grid grid-cols-[1.4fr_1fr_1fr] px-4 py-2 bg-surface-2 text-[11px] uppercase tracking-wide text-t4 font-semibold">
+      <div className="grid grid-cols-[1fr_auto_auto] md:grid-cols-[1.4fr_1fr_1fr] gap-x-3 px-3 md:px-4 py-2 bg-surface-2 text-[11px] uppercase tracking-wide text-t4 font-semibold">
         <span>Componente</span><span className="text-right">B2C</span><span className="text-right">B2B</span>
       </div>
       <Row lbl="Mínimo mensal" c={f.b2c_min} b={f.b2b_min} />
@@ -774,7 +822,77 @@ function NfList({ kind, lines, soma, expanded, setExpanded, locked, saving, onMo
         </span>
         <span className="text-[11px] text-t4">{b2c ? 'manuseio + adic. caixa + adic.' : 'manus. + caixa + ad.prod + adic.'}</span>
       </div>
-      <div className="overflow-x-auto">
+      {/* Celular: um cartão por NF (mesmas funções da tabela) */}
+      <div className="md:hidden divide-y divide-line-soft">
+        {lines.map((l: any, i: number) => {
+          const oid = l.order_id;
+          const effBox: string = (oid != null && boxLocal?.[oid]) || l.box || '';
+          const yellow = b2c && (boxLocal?.[oid] ? false : l.sem_caixa);
+          return (
+            <div key={oid ?? `card-${i}`} className={`p-3 space-y-2 ${yellow ? 'bg-amber-900/15' : ''}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-mono text-sm text-t1">NF {l.nf_number}</div>
+                  <div className="text-[11px] text-t4">
+                    {l.order_date ? l.order_date.slice(8, 10) + '/' + l.order_date.slice(5, 7) : '—'} · {l.itens ?? '—'} itens
+                    {!b2c && <> · caixa {brl(l.valor_caixa_b2b || 0)} · ad.prod {brl(l.adic_produto || 0)}</>}
+                    {b2c && <> · adic. caixa {brl(l.adic_caixa)}</>}
+                  </div>
+                </div>
+                <div className="font-mono font-semibold text-sm text-t1">{brl(l.total)}</div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {b2c && (
+                  !locked && oid != null ? (
+                    <select
+                      value={effBox}
+                      disabled={saving}
+                      onChange={e => e.target.value && onSetBox && onSetBox(oid, e.target.value)}
+                      className={'border rounded-lg px-2 py-2 text-sm bg-surface outline-none disabled:opacity-40 '
+                        + (effBox ? 'border-line text-t1' : 'border-amber-500/60 text-amber-300')}
+                    >
+                      <option value="" disabled>Caixa —</option>
+                      {effBox && !(CANONICAL_BOXES as readonly string[]).includes(effBox) && <option value={effBox}>{effBox} (antigo)</option>}
+                      {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  ) : <span className="text-xs text-t3">Caixa {l.box || '—'}</span>
+                )}
+                <label className="flex items-center gap-1.5 text-xs text-t3">
+                  Adic.
+                  <input key={`m-adic-${oid}-${l.b2b_adicional ?? 0}`} type="number" step="0.01"
+                    disabled={locked} defaultValue={l.b2b_adicional ?? 0}
+                    onBlur={e => onB2bAdic && oid != null && onB2bAdic(oid, Number(e.target.value))}
+                    className="w-20 text-right border border-line rounded-lg px-2 py-2 text-sm bg-surface text-t1 disabled:opacity-50" />
+                </label>
+                <div className="ml-auto flex items-center gap-1">
+                  <button onClick={() => oid != null && setExpanded((x: any) => ({ ...x, [oid]: !x[oid] }))}
+                    className="p-2 rounded-lg border border-line text-t3"><ListIcon size={15} /></button>
+                  {!locked && oid != null && (
+                    <button onClick={() => onMove(oid)} title={b2c ? 'Mover para B2B' : 'Mover para B2C'}
+                      className="p-2 rounded-lg border border-line text-t3"><ArrowLeftRight size={15} /></button>
+                  )}
+                </div>
+              </div>
+              {oid != null && expanded[oid] && l.items && (
+                <div className="bg-surface-2 rounded-lg px-2.5 py-2">
+                  <div className="text-[11px] text-t4 mb-1">{l.items.length} SKU(s)</div>
+                  {l.items.map((it: any, j: number) => (
+                    <div key={`${it.sku}-${j}`} className="flex justify-between gap-2 font-mono text-[11px] text-t3">
+                      <span className="break-all">{it.sku} — {it.name}</span><span className="shrink-0">× {it.quantity}</span>
+                    </div>
+                  ))}
+                  {l.note && <div className="text-[11px] text-t4 italic mt-1">{l.note}</div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div className="flex justify-between px-3 py-2.5 font-semibold text-sm text-t2">
+          <span>Soma {b2c ? 'B2C' : 'B2B'}</span>
+          <span className="font-mono text-t1">{brl(soma)}</span>
+        </div>
+      </div>
+      <div className="overflow-x-auto hidden md:block">
         <table className="w-full text-[12px]">
           <thead>
             <tr className="text-[10px] uppercase text-t4">
@@ -887,6 +1005,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
   const rows = data?.rows || [];
   const showFulfillmentLoader = useDelayedLoading(isLoading, 150);
   const [payFilter, setPayFilter] = useState<'all' | 'pending' | 'paid'>('all');
+  const [mobOpen, setMobOpen] = useState<Record<number, boolean>>({});
 
   // Anotação manual "Foi pago?": atualiza na hora e desfaz se o servidor recusar.
   const patchRow = (sellerId: number, patch: any) =>
@@ -922,7 +1041,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
   const grandTotal = rows.reduce((s: number, r: any) => s + (r.total || 0), 0);
 
   return (
-    <div className="bg-surface rounded-xl border border-line-soft p-5">
+    <div className="bg-surface rounded-xl border border-line-soft p-3 md:p-5">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h2 className="text-sm font-semibold text-t2">Consolidado — {refMonth}</h2>
         <div className="flex gap-2 items-center flex-wrap">
@@ -940,7 +1059,66 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-t1 text-sm"><Download size={14} /> Todos os PDFs</button>
         </div>
       </div>
-      <div className="overflow-x-auto relative min-h-[160px]">
+      {/* Celular: um cartão por seller; toque abre o detalhe */}
+      {!isLoading && (
+        <div className="md:hidden space-y-4">
+          {groups.map(g => {
+            const sub = g.rows.reduce((s: number, r: any) => s + (r.total || 0), 0);
+            return (
+              <div key={g.unit} className="space-y-2">
+                <div className="flex justify-between text-[11px] font-semibold uppercase tracking-wide text-violet-300">
+                  <span>{g.unit}</span><span className="font-mono normal-case text-t2">{brl(sub)}</span>
+                </div>
+                {g.rows.map((r: any) => {
+                  const open = !!mobOpen[r.seller_id];
+                  return (
+                    <div key={r.seller_id}
+                      className={`rounded-xl border p-3 ${r.paid ? 'border-teal-500/40 bg-teal-500/[0.08]' : 'border-line-soft bg-surface-2'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <button className="text-left flex-1 min-w-0"
+                          onClick={() => setMobOpen(m => ({ ...m, [r.seller_id]: !m[r.seller_id] }))}>
+                          <div className="text-sm font-semibold text-t1 truncate">{r.seller_name}{r.active ? '' : ' (inativo)'}</div>
+                          <div className="text-[11px] text-t4">{r.nf_count} NFs · {r.status}</div>
+                        </button>
+                        <div className="text-right">
+                          <div className="font-mono font-bold text-sm text-t1">{brl(r.total)}</div>
+                          <label className="flex items-center justify-end gap-1.5 text-[11px] text-t3 mt-1">
+                            Pago
+                            <input type="checkbox" checked={!!r.paid}
+                              onChange={e => togglePaid(r, e.target.checked)}
+                              className="w-5 h-5 accent-violet-600" />
+                          </label>
+                        </div>
+                      </div>
+                      {open && (
+                        <div className="mt-2 pt-2 border-t border-line-soft text-xs space-y-1">
+                          {([['B2C', r.b2c], ['B2B', r.b2b], ['Seguro', r.seguro], ['Armazenagem', r.armazenagem], ['Avulsos', r.avulsos]] as const).map(([k, v]) => (
+                            <div key={k} className="flex justify-between text-t2">
+                              <span>{k}</span><span className="font-mono">{brl(v)}</span>
+                            </div>
+                          ))}
+                          <button onClick={() => onOpen(r.seller_id)}
+                            className="mt-2 w-full py-2 rounded-lg border border-line text-sm text-t1">Abrir fechamento</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {!!rows.length && (
+            <div className="rounded-xl border border-line p-3 space-y-1 text-sm">
+              <div className="flex justify-between font-bold text-t1"><span>TOTAL GERAL</span><span className="font-mono">{brl(grandTotal)}</span></div>
+              <div className="flex justify-between text-t2"><span>Pago ({nPago})</span><span className="font-mono text-teal-400">{brl(totalPago)}</span></div>
+              <div className="flex justify-between text-t2"><span>A receber ({rows.length - nPago})</span><span className="font-mono text-amber-400">{brl(grandTotal - totalPago)}</span></div>
+            </div>
+          )}
+          {!!rows.length && !visibleRows.length && <p className="py-6 text-center text-t4 text-sm">Nenhum seller neste filtro</p>}
+          {!rows.length && <p className="py-6 text-center text-t4 text-sm">Nenhum seller com NF de saída neste mês</p>}
+        </div>
+      )}
+      <div className="overflow-x-auto relative min-h-[160px] max-md:min-h-0 max-md:[&_table]:hidden">
         <FulfillmentLoader show={showFulfillmentLoader} title="Preparando o consolidado" />
         {!isLoading && (
         <table className="w-full text-[12px]">

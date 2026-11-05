@@ -1776,6 +1776,39 @@ def assign_seller_unit(
     return {"seller_id": seller_id, "unit_id": unit_id}
 
 
+@router.put("/sellers/{seller_id}/default-box")
+def set_seller_default_box(
+    seller_id: int,
+    default_box: Optional[str] = Body(None, embed=True),
+    current_user: models.User = Depends(require_manager_or_above),
+    user_seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Caixa padrão do seller no Scanner (05/11/2026). Liberado para manager+ (o
+    PUT geral de seller é admin-only). Gerente só altera sellers que atende.
+    Vazio/None remove o padrão. Só aceita caixa da lista canônica.
+    """
+    from ..services.billing_calc import CANONICAL_BOXES
+    seller = db.query(models.Seller).filter(models.Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller não encontrado")
+    if user_seller_ids is not None and seller_id not in user_seller_ids:
+        raise HTTPException(status_code=403, detail="Sem acesso a este seller")
+    box = (default_box or "").strip() or None
+    if box is not None and box not in CANONICAL_BOXES:
+        raise HTTPException(status_code=400, detail=f"Caixa inválida: {box}")
+    before = seller.default_box
+    seller.default_box = box
+    db.add(models.AuditLog(
+        entity_type="Seller", entity_id=seller_id, action="UPDATE_DEFAULT_BOX",
+        detail=f"Caixa padrão do Scanner: {before or 'nenhuma'} -> {box or 'nenhuma'}",
+        user_id=current_user.id,
+    ))
+    db.commit()
+    return {"seller_id": seller_id, "default_box": seller.default_box}
+
+
 @router.put("/sellers/{seller_id}", response_model=schemas.SellerResponse)
 def update_seller(
     seller_id: int,

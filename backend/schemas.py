@@ -270,6 +270,8 @@ class SellerResponse(BaseModel):
     code: Optional[str] = None
     # Outros apelidos para match automático na importação (separados por ";")
     other_aliases: Optional[str] = None
+    # Caixa padrão no Scanner (05/11/2026)
+    default_box: Optional[str] = None
     # Estatísticas de SKU (enriquecidas pelo list_sellers)
     total_skus: Optional[int] = 0
     skus_with_stock: Optional[int] = 0

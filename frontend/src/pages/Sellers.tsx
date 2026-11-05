@@ -162,6 +162,9 @@ export default function SellersPage() {
   const [discontinuedList, setDiscontinuedList] = useState<DiscontinuedSkuRow[]>([]);
   const [discontinuedMode, setDiscontinuedMode] = useState<'deactivate' | 'reactivate'>('deactivate');
   const [discontinuedPaste, setDiscontinuedPaste] = useState('');
+  // Caixa padrão no Scanner (05/11/2026): valor atual e o original (só grava se mudou)
+  const [defaultBox, setDefaultBox]   = useState<string>('');
+  const [origDefaultBox, setOrigDefaultBox] = useState<string>('');
   const [discontinuedPreview, setDiscontinuedPreview] = useState<DiscontinuedSkuPreviewRow[] | null>(null);
   const [reactivatePreview, setReactivatePreview] = useState<ReactivateSkuPreviewRow[] | null>(null);
   const [discontinuedBusy, setDiscontinuedBusy] = useState(false);
@@ -214,6 +217,7 @@ export default function SellersPage() {
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
     setReactivatePreview(null);
+    setDefaultBox(''); setOrigDefaultBox('');
     setShowModal(true);
   };
 
@@ -227,6 +231,7 @@ export default function SellersPage() {
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
     setReactivatePreview(null);
+    setDefaultBox(s.default_box || ''); setOrigDefaultBox(s.default_box || '');
     // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
@@ -403,6 +408,11 @@ export default function SellersPage() {
         setExpUploading(true);
         try {
           await cadastrosApi.uploadExperienceFile(savedId, expFile);
+      // Caixa padrão no Scanner — só chama se mudou (evita log de auditoria à toa)
+      if (savedId && defaultBox !== origDefaultBox) {
+        await cadastrosApi.setSellerDefaultBox(savedId, defaultBox || null);
+      }
+
           toast.success('Arquivo de experiência enviado!');
           setExpFile(null);
         } catch {
@@ -804,6 +814,21 @@ export default function SellersPage() {
                         />
                       </div>
                     </div>
+                <div className="border border-line-soft rounded-lg p-3 space-y-1.5">
+                  <label className="block text-xs font-semibold text-t2">Caixa padrão no Scanner</label>
+                  <select
+                    value={defaultBox}
+                    onChange={e => setDefaultBox(e.target.value)}
+                    className="w-full border border-line rounded-md px-2 py-1.5 text-sm bg-surface-2 text-t1"
+                  >
+                    <option value="">Nenhuma (operador escolhe)</option>
+                    {CANONICAL_BOXES.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <p className="text-xs text-t4">
+                    Ao abrir uma NF de saída deste seller sem caixa, o Scanner já marca esta caixa
+                    como se o operador tivesse clicado. Ele ainda pode trocar. Vale só para NFs abertas depois de salvar.
+                  </p>
+                </div>
                   ))}
                 </div>
               </div>

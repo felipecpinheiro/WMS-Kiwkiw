@@ -377,17 +377,35 @@ export default function ScannerPage() {
   }, [activeOrderId, sessionId]);
 
   // ── Busca caixa sugerida quando muda o pedido ───────────────
+  // Caixa padrão do seller (05/11/2026): se a NF de SAÍDA ainda não tem caixa e o
+  // seller tem padrão configurado, grava como se o operador tivesse clicado nela.
+  // Roda uma vez por NF (ref) e só depois que a NF aparece em localOrders, pra
+  // saber se é saída e se ainda está aberta. O operador pode trocar depois.
+  const defaultBoxTried = useRef<Set<number>>(new Set());
+  const activeOrderLoaded = localOrders.some(o => o.id === activeOrderId);
   useEffect(() => {
     if (!activeOrderId) { setBoxSuggested(null); setBoxUsed(null); return; }
-    scanningApi.suggestedBox(activeOrderId).then(r => {
+    const orderId = activeOrderId;
+    scanningApi.suggestedBox(orderId).then(async r => {
       setBoxSuggested(r.data.suggested);
       setBoxUsed(r.data.box_used);
+      const ord = localOrders.find(o => o.id === orderId);
+      if (
+        !r.data.box_used && r.data.seller_default && ord
+        && ord.file_type !== 'entrada'
+        && !['completed', 'interrupted', 'cancelled'].includes(ord.status as string)
+        && !defaultBoxTried.current.has(orderId)
+      ) {
+        defaultBoxTried.current.add(orderId);
+        await handleBoxSave(r.data.seller_default, orderId);
+      }
     }).catch(() => {});
-  }, [activeOrderId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrderId, activeOrderLoaded]);
 
-  const handleBoxSave = async (val: string) => {
-    if (!activeOrderId) return;
-    const orderId = activeOrderId;
+  const handleBoxSave = async (val: string, forOrderId?: number) => {
+    const orderId = forOrderId ?? activeOrderId;
+    if (!orderId) return;
     setBoxSaving(true);
     try {
       const v = val.trim() || null;

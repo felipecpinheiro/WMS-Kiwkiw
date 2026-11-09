@@ -538,9 +538,13 @@ def apply_stock_for_entry(
     operator_id: Optional[int] = None,
     operator_name: Optional[str] = None,
     adjusted: Optional[Dict[str, Dict]] = None,
+    manual_reason: Optional[str] = None,
 ) -> Dict:
     """
     Lança no estoque o que foi CONTADO numa NF de entrada, na finalização.
+
+    `manual_reason` (admin, 09/11/2026): lançamento pela quantidade da NF SEM
+    bipagem; cada movimento ganha essa observação. Vazio = comportamento normal.
 
     `adjusted` ({sku: {"original": int, "reason": str}}) marca os SKUs cuja
     contagem foi corrigida na tela de conferência (Finalizar). `counted` já vem
@@ -616,6 +620,13 @@ def apply_stock_for_entry(
                 f"unidades. Motivo: {adj['reason']}."
             )
             note = f"{note} {nota_adj}" if note else f"SKU {sku} — {nota_adj}"
+
+        if manual_reason:
+            nota_manual = (
+                f"Lançado pela NF sem bipagem por {operator_name or 'admin'} em "
+                f"{today_brasilia().strftime('%d/%m/%Y')}. Motivo: {manual_reason}."
+            )
+            note = f"{note} {nota_manual}" if note else f"SKU {sku} — {nota_manual}"
 
         # SKU que não chegou (qty=0) grava um movimento de quantidade ZERO só
         # para carregar a observação: numericamente é inócuo (não mexe na

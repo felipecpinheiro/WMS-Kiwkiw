@@ -279,6 +279,8 @@ export default function ScannerPage() {
   // modal de conferência está aberto. Nada foi gravado ainda nesse ponto.
   const [entryConference, setEntryConference] = useState<EntryConference | null>(null);
   const [finalizingEntry, setFinalizingEntry] = useState(false);
+  // Admin: lançar a NF pela quantidade da NF, sem bipar (modo from_nf).
+  const [fromNfReason, setFromNfReason] = useState('');
   // Correções de contagem feitas na conferência (por SKU). Vivem só na tela até
   // o "Confirmar": o servidor revalida e os bipes originais não são alterados.
   const [entryEdits, setEntryEdits] = useState<Record<string, { counted: number; reason: string }>>({});
@@ -1014,6 +1016,24 @@ export default function ScannerPage() {
     }
   };
 
+  // Admin: abre a conferência no modo "lançar pela NF" (ignora a bipagem).
+  // Serve para a NF aberta e para a NF clicada na lista, sem abrir a bipagem.
+  const handleOpenFromNf = async (orderId: number) => {
+    setFinalizingEntry(true);
+    try {
+      const res = await scanningApi.finalizeEntry(orderId, false, [], {});
+      setEntryEdits({});
+      setEditingSku(null);
+      setEditConfirm(null);
+      setFromNfReason('');
+      setEntryConference(res.data);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Erro ao montar a conferência');
+    } finally {
+      setFinalizingEntry(false);
+    }
+  };
+
   // Linhas da conferência já com as correções aplicadas, divergentes primeiro e
   // as que bateram depois (dentro de cada grupo mantém a ordem por SKU do servidor).
   const confLines = (entryConference?.lines ?? []).map(ln => {
@@ -1071,21 +1091,32 @@ export default function ScannerPage() {
   };
 
   const handleConfirmEntryFinalize = async () => {
-    if (!activeOrder) return;
+    const isFromNf = !!entryConference?.from_nf;
+    const targetId = isFromNf ? entryConference!.order_id : activeOrder?.id;
+    if (!targetId) return;
+    if (isFromNf && !fromNfReason.trim()) {
+      toast.error('Informe o motivo do lançamento sem bipagem.');
+      return;
+    }
     setFinalizingEntry(true);
     try {
       const adjustments = Object.entries(entryEdits).map(([sku, e]) => ({
         sku, counted: e.counted, reason: e.reason,
       }));
-      const res = await scanningApi.finalizeEntry(activeOrder.id, true, adjustments);
+      const res = isFromNf
+        ? await scanningApi.finalizeEntry(targetId, true, [], { reason: fromNfReason.trim() })
+        : await scanningApi.finalizeEntry(targetId, true, adjustments);
       toast.success(res.data?.message || 'Conferência finalizada');
+      setFromNfReason('');
       setEntryConference(null);
       setEntryEdits({});
       setEditingSku(null);
       setEditConfirm(null);
-      setActiveOrderId(null);
-      setFeedback({ state: 'idle', title: '', message: '' });
-      setLastScannedSku(undefined);
+      if (!isFromNf || targetId === activeOrder?.id) {
+        setActiveOrderId(null);
+        setFeedback({ state: 'idle', title: '', message: '' });
+        setLastScannedSku(undefined);
+      }
       qc.invalidateQueries(['session-orders', sessionId, sellerId]);
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Erro ao finalizar a conferência');
@@ -1415,6 +1446,16 @@ export default function ScannerPage() {
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
                   <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>
                   <span className="text-[9px] text-t4">{pct}%</span>
+                  {isAdmin && order.file_type === 'entrada' && !isAuditable && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleOpenFromNf(order.id); }}
+                      disabled={finalizingEntry}
+                      title="Admin: lançar tudo pela NF, sem bipar"
+                      className="opacity-0 group-hover:opacity-100 text-[9px] font-semibold text-warn hover:underline transition disabled:opacity-40"
+                    >
+                      Lançar pela NF
+                    </button>
+                  )}
                   {isAdmin && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setDeactivateTarget(order); setDeactivateReason(''); }}
@@ -1577,6 +1618,16 @@ export default function ScannerPage() {
                           conferência e faz o estoque entrar pela contagem.
                           Fica sempre habilitado — a carga pode ter vindo
                           faltando muito e o operador precisa poder encerrar. */}
+                      {isAdmin && isEntradaOrder && activeOrder && (
+                        <button
+                          onClick={() => handleOpenFromNf(activeOrder.id)}
+                          disabled={finalizingEntry}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-warn border border-warn/40 hover:border-warn rounded-lg transition disabled:opacity-50"
+                          title="Admin: lança o estoque pela quantidade da NF, ignorando a bipagem"
+                        >
+                          Lançar tudo pela NF (sem bipar)
+                        </button>
+                      )}
                       {isEntradaOrder && scanPhase === 'product' && (
                         <button
                           onClick={handleOpenEntryConference}
@@ -1887,7 +1938,27 @@ export default function ScannerPage() {
                   </p>
                 </div>
               </div>
-              {confDivergent.length > 0 ? (
+              {entryConference.from_nf ? (
+                <div className="mt-3">
+                  <p className="text-sm text-warn bg-orange-500/10 border border-warn/25 rounded-xl px-3 py-2">
+                    ⚠️ Lançamento SEM bipagem: o estoque entra pela quantidade da <strong>NF</strong> e
+                    tudo o que já foi bipado é <strong>ignorado</strong> (coluna "Bipado"). Ação de administrador,
+                    registrada na auditoria.
+                  </p>
+                  <label className="block text-xs text-t4 mt-3">
+                    Motivo (obrigatório)
+                    <input
+                      type="text"
+                      value={fromNfReason}
+                      maxLength={300}
+                      onChange={e => setFromNfReason(e.target.value)}
+                      placeholder="Ex.: mercadoria conferida fora do sistema"
+                      className="block w-full mt-1 bg-surface border border-line rounded-lg px-2 py-1.5 text-sm text-t1"
+                    />
+                    <span className="block text-right text-[10px] text-t5">{fromNfReason.length}/300</span>
+                  </label>
+                </div>
+              ) : confDivergent.length > 0 ? (
                 <p className="mt-3 text-sm text-warn bg-orange-500/10 border border-warn/25 rounded-xl px-3 py-2">
                   ⚠️ {confDivergent.length} SKU com quantidade diferente da NF.
                   Ao confirmar, o estoque entra pelo que foi <strong>contado</strong> e cada
@@ -1906,7 +1977,10 @@ export default function ScannerPage() {
                   <tr className="text-t4 text-xs border-b border-line">
                     <th className="text-left font-medium py-2">SKU / Produto</th>
                     <th className="text-right font-medium py-2 w-24">NF</th>
-                    <th className="text-right font-medium py-2 w-24">Contado</th>
+                    {entryConference.from_nf && (
+                      <th className="text-right font-medium py-2 w-24">Bipado</th>
+                    )}
+                    <th className="text-right font-medium py-2 w-24">{entryConference.from_nf ? 'Lança' : 'Contado'}</th>
                     <th className="text-right font-medium py-2 w-28">Diferença</th>
                     <th className="text-right font-medium py-2 w-20"></th>
                   </tr>
@@ -1938,6 +2012,11 @@ export default function ScannerPage() {
                             <div className="text-xs text-t4 truncate max-w-md">{ln.product_name}</div>
                           </td>
                           <td className="text-right py-2 text-t3">{ln.expected}</td>
+                          {entryConference.from_nf && (
+                            <td className={`text-right py-2 ${(ln.scanned ?? 0) > 0 ? 'text-warn' : 'text-t4'}`}>
+                              {ln.scanned ?? 0}
+                            </td>
+                          )}
                           <td className={`text-right py-2 font-semibold ${ok ? 'text-t2' : 'text-warn'}`}>
                             {ln.counted}
                             {ln.edited && (
@@ -1954,13 +2033,15 @@ export default function ScannerPage() {
                             )}
                           </td>
                           <td className="text-right py-2">
-                            <button
-                              onClick={() => (isEditing ? setEditingSku(null) : startEditSku(ln.sku, ln.counted))}
-                              disabled={finalizingEntry}
-                              className="text-xs text-t3 border border-line rounded-lg px-2 py-1 hover:bg-surface-2 transition disabled:opacity-50"
-                            >
-                              {isEditing ? 'Cancelar' : 'Editar'}
-                            </button>
+                            {!entryConference.from_nf && (
+                              <button
+                                onClick={() => (isEditing ? setEditingSku(null) : startEditSku(ln.sku, ln.counted))}
+                                disabled={finalizingEntry}
+                                className="text-xs text-t3 border border-line rounded-lg px-2 py-1 hover:bg-surface-2 transition disabled:opacity-50"
+                              >
+                                {isEditing ? 'Cancelar' : 'Editar'}
+                              </button>
+                            )}
                           </td>
                         </tr>
                         {isEditing && editingSku && (
@@ -2015,16 +2096,17 @@ export default function ScannerPage() {
                   setEntryEdits({});
                   setEditingSku(null);
                   setEditConfirm(null);
+                  setFromNfReason('');
                   setTimeout(() => inputRef.current?.focus(), 50);
                 }}
                 disabled={finalizingEntry}
                 className="flex-1 py-2.5 text-sm text-t3 border border-line rounded-xl hover:bg-surface-2 transition disabled:opacity-50"
               >
-                Voltar e continuar contando
+                {entryConference.from_nf ? 'Cancelar' : 'Voltar e continuar contando'}
               </button>
               <button
                 onClick={handleConfirmEntryFinalize}
-                disabled={finalizingEntry}
+                disabled={finalizingEntry || (!!entryConference.from_nf && !fromNfReason.trim())}
                 className="flex-1 py-2.5 text-sm font-semibold text-ok border border-ok/40 bg-ok-soft rounded-xl hover:bg-green-500/15 transition disabled:opacity-50"
               >
                 {finalizingEntry ? 'Lançando...' : 'Confirmar e lançar no estoque'}

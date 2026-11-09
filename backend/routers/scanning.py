@@ -1411,6 +1411,33 @@ def _build_entry_conference(order: models.Order, db: Session) -> dict:
     }
 
 
+MAX_FROM_NF_REASON = 300
+
+
+def _conference_from_nf(conference: dict) -> dict:
+    """
+    Modo "lançar pela NF" (admin): a conferência passa a valer a quantidade da NF.
+    A bipagem já feita é IGNORADA — vai em `scanned` só para o admin ver o que
+    está sendo descartado.
+    """
+    lines = []
+    for ln in conference["lines"]:
+        new = dict(ln)
+        new["scanned"] = ln["counted"]
+        new["counted"] = ln["expected"]
+        new["diff"] = 0
+        new["status"] = "ok"
+        new["expiry_over_counted"] = new["expiry_sum"] > ln["expected"] and new["expiry_sum"] > 0
+        lines.append(new)
+    return {
+        **conference,
+        "lines": lines,
+        "divergent_count": 0,
+        "total_counted": sum(ln["counted"] for ln in lines),
+        "from_nf": True,
+    }
+
+
 @router.post("/orders/{order_id}/finalize-entry")
 def finalize_entry_order(
     order_id: int,
@@ -1452,7 +1479,29 @@ def finalize_entry_order(
             detail=f"NF {order.nf_number} já está {order_status} — não pode ser finalizada.",
         )
 
+    # Modo "lançar pela NF sem bipar" (só admin). Validado no servidor: a tela
+    # não é a única guarda.
+    from_nf = bool(body.get("from_nf"))
+    from_nf_reason = ""
+    if from_nf:
+        role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+        if str(role).lower() != "admin":
+            raise HTTPException(status_code=403, detail="Somente administrador pode lançar a NF sem bipar.")
+        if body.get("adjustments"):
+            raise HTTPException(status_code=400, detail="Correções por SKU não valem no lançamento pela NF.")
+        if body.get("confirm"):
+            from_nf_reason = str(body.get("reason") or "").strip()
+            if not from_nf_reason:
+                raise HTTPException(status_code=400, detail="Informe o motivo do lançamento sem bipagem.")
+            if len(from_nf_reason) > MAX_FROM_NF_REASON:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Motivo muito longo (máx. {MAX_FROM_NF_REASON} caracteres).",
+                )
+
     conference = _build_entry_conference(order, db)
+    if from_nf:
+        conference = _conference_from_nf(conference)
 
     if not body.get("confirm"):
         # Preview: nada é gravado. O operador ainda pode voltar e continuar
@@ -1467,7 +1516,7 @@ def finalize_entry_order(
 
     # ── Confirmado: estoque entra pela contagem ─────────────────────────────
     expected = _expected_by_sku(order)
-    counted = _scanned_by_sku(order, db)
+    counted = dict(expected) if from_nf else _scanned_by_sku(order, db)
 
     # Correções feitas na tela de conferência. O servidor revalida tudo: a tela
     # não é a única guarda. Os bipes originais NÃO são alterados — a correção
@@ -1508,7 +1557,22 @@ def finalize_entry_order(
         operator_id=current_user.id,
         operator_name=current_user.name if current_user else None,
         adjusted=adjusted,
+        manual_reason=from_nf_reason if from_nf else None,
     )
+
+    if from_nf:
+        db.add(models.AuditLog(
+            entity_type="Order",
+            entity_id=order.id,
+            action="FINALIZE_ENTRY_FROM_NF",
+            detail=(
+                f"NF {order.nf_number} lançada pela quantidade da NF, SEM bipagem, "
+                f"por {current_user.name}. Estoque "
+                f"{'lançado' if result['applied'] else 'NÃO lançado (' + str(result['skipped']) + ')'}. "
+                f"Motivo: {from_nf_reason}."
+            ),
+            user_id=current_user.id,
+        ))
 
     for sku, info in adjusted.items():
         db.add(models.AuditLog(

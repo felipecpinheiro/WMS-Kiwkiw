@@ -192,6 +192,8 @@ export interface EntryConferenceLine {
   /** contado - esperado. Negativo = faltou, positivo = veio a mais. */
   diff: number;
   status: 'ok' | 'over' | 'short' | 'missing';
+  /** Só no modo "lançar pela NF" (admin): o que foi bipado e será DESCARTADO. */
+  scanned?: number;
 }
 
 /** Correção da contagem de um SKU feita na conferência (vale só ao confirmar). */
@@ -211,6 +213,8 @@ export interface EntryConference {
   divergent_count: number;
   total_expected: number;
   total_counted: number;
+  /** true no modo "lançar pela NF sem bipar" (admin). */
+  from_nf?: boolean;
   /** Só na confirmação: */
   message?: string;
   stock_applied?: boolean;
@@ -676,8 +680,18 @@ export const scanningApi = {
    * Sem `confirm` devolve o comparativo esperado x contado sem gravar nada;
    * com `confirm: true` lança o estoque pela contagem e conclui a NF.
    */
-  finalizeEntry: (orderId: number, confirm = false, adjustments: EntryAdjustment[] = []) =>
-    api.post<EntryConference>(`/scanning/orders/${orderId}/finalize-entry`, { confirm, adjustments }),
+  finalizeEntry: (
+    orderId: number,
+    confirm = false,
+    adjustments: EntryAdjustment[] = [],
+    fromNf?: { reason?: string },
+  ) =>
+    api.post<EntryConference>(
+      `/scanning/orders/${orderId}/finalize-entry`,
+      fromNf
+        ? { confirm, from_nf: true, reason: fromNf.reason ?? '' }
+        : { confirm, adjustments },
+    ),
   /** Pausa a conferência de entrada — a NF continua EM ABERTO para retomar depois. */
   pauseEntry: (orderId: number, reason?: string) =>
     api.post(`/scanning/orders/${orderId}/pause`, { reason }),

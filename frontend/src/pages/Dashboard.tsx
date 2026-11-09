@@ -2347,29 +2347,60 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <div className="max-h-72 overflow-y-auto border border-line-soft rounded-lg mb-4">
-              <table className="w-full text-xs">
-                <thead className="bg-surface-2 sticky top-0">
-                  <tr className="text-t3">
-                    <th className="text-left px-3 py-2 font-medium">NF</th>
-                    <th className="text-left px-3 py-2 font-medium">Seller</th>
-                    <th className="text-left px-3 py-2 font-medium">Importada em</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {duplicates.map((d, i) => (
-                    <tr key={i} className="border-t border-line-soft">
-                      <td className="px-3 py-1.5 font-mono text-t1">{d.nf_number}</td>
-                      <td className="px-3 py-1.5 text-t3 truncate max-w-[160px]">{d.seller_name}</td>
-                      <td className="px-3 py-1.5 text-t4">
-                        {d.existing_imported_at
-                          ? format(new Date(d.existing_imported_at), 'dd/MM HH:mm', { locale: ptBR })
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="max-h-96 overflow-y-auto space-y-2 mb-4">
+              {duplicates.map((d, i) => {
+                const diffNumber = !!d.existing_nf_number && d.existing_nf_number !== d.nf_number;
+                const renderItems = (items?: { sku: string; quantity: number }[]) =>
+                  items && items.length > 0 ? (
+                    <ul className="space-y-0.5">
+                      {items.map((it, j) => (
+                        <li key={j} className="flex justify-between gap-2 font-mono text-t2">
+                          <span className="truncate">{it.sku}</span>
+                          <span className="text-t1">×{it.quantity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="text-t4">(sem itens)</span>
+                  );
+                return (
+                  <div key={i} className="border border-line-soft rounded-lg p-3 text-xs">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="font-mono font-semibold text-t1">
+                        NF {d.nf_number}
+                        {diffNumber && (
+                          <span className="text-warn font-sans font-medium">
+                            {' '}— já existe como {d.existing_nf_number}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-t3 truncate max-w-[140px]">{d.seller_name}</span>
+                    </div>
+                    <div className="text-t4 mb-2">
+                      Existente: importada em{' '}
+                      {d.existing_imported_at
+                        ? format(new Date(d.existing_imported_at), 'dd/MM HH:mm', { locale: ptBR })
+                        : '—'}
+                      {d.existing_status ? ` · status ${d.existing_status}` : ''}
+                    </div>
+                    {d.items_match != null && (
+                      <div className={`mb-2 font-medium ${d.items_match ? 'text-ok' : 'text-bad'}`}>
+                        {d.items_match ? 'Os itens são iguais nas duas NFs' : 'Os itens são DIFERENTES entre as duas NFs'}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-t3 font-medium mb-1">Já no sistema ({d.existing_nf_number || d.nf_number})</div>
+                        {renderItems(d.existing_items)}
+                      </div>
+                      <div>
+                        <div className="text-t3 font-medium mb-1">Neste arquivo ({d.nf_number})</div>
+                        {renderItems(d.new_items)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex gap-2 justify-end mt-2">
               <button

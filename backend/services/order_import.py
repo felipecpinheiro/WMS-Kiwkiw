@@ -66,6 +66,18 @@ def parse_nf_safe(value) -> Optional[str]:
     return s or None
 
 
+def normalize_nf_number(nf: Optional[str]) -> str:
+    """
+    Forma usada SÓ para comparar números de NF na checagem de duplicata:
+    tira zeros à esquerda quando a NF é puramente numérica (01234 -> 1234).
+    NF com letra/símbolo é comparada como está. Nunca grava isso no banco.
+    """
+    s = str(nf).strip() if nf is not None else ""
+    if s.isdigit():
+        return s.lstrip("0") or "0"
+    return s
+
+
 def parse_danfe_key_safe(value) -> Optional[str]:
     """
     Converte valor da coluna 'Chave DANFE' para string de até 44 dígitos.
@@ -893,6 +905,49 @@ def import_excel_orders(
         # Antes de criar qualquer coisa, verifica se alguma NF deste arquivo
         # já existe no banco. Se sim e o usuário não confirmou (force_duplicates=False),
         # abortamos e devolvemos a lista pro frontend exibir e perguntar.
+        #
+        # ⚠️ 09/11/2026: o número da NF é comparado SEM os zeros à esquerda
+        # (01234 == 1234) — o ERP do seller às vezes troca o formato entre
+        # arquivos e a NF entrava duas vezes. Só zero à esquerda: nada além disso.
+        # Dentro do próprio arquivo os dois formatos NÃO são fundidos (somaria
+        # quantidades de linhas que podem ser diferentes) — só avisa.
+        _in_file_norm: dict = {}
+        for _ok, _od in orders_dict.items():
+            if _ok in ignored_order_keys:
+                continue
+            _in_file_norm.setdefault(
+                (normalize_nf_number(_od["nf_number"]), _od["seller_name"]), set()
+            ).add(_od["nf_number"])
+        for (_n, _sn), _forms in _in_file_norm.items():
+            if len(_forms) > 1:
+                warnings.append(
+                    f"Seller {_sn}: as NFs {', '.join(sorted(_forms))} do arquivo têm o mesmo "
+                    f"número (só muda o zero à esquerda) — confira se não é a mesma nota repetida"
+                )
+
+        # {seller_id: {numero_normalizado: [(id, nf_number, session_id, imported_at, status)]}}
+        # 1 consulta por seller (e não 1 por NF do arquivo).
+        _seller_nf_index: dict = {}
+
+        def _nf_index_of(sid: int) -> dict:
+            idx = _seller_nf_index.get(sid)
+            if idx is None:
+                idx = {}
+                rows = (
+                    db.query(
+                        models.Order.id, models.Order.nf_number, models.Order.session_id,
+                        models.Order.imported_at, models.Order.status,
+                    )
+                    .filter(models.Order.seller_id == sid)
+                    .order_by(models.Order.id)
+                    .all()
+                )
+                for r in rows:
+                    idx.setdefault(normalize_nf_number(r.nf_number), []).append(r)
+                _seller_nf_index[sid] = idx
+            return idx
+
+        _dup_pairs = []  # (DuplicateOrderInfo, order_data, seller_obj)
         for order_key, order_data in orders_dict.items():
             if order_key in ignored_order_keys:
                 continue
@@ -900,18 +955,67 @@ def import_excel_orders(
             if not seller_obj:
                 # seller ainda não cadastrado → impossível ser duplicata
                 continue
-            existing = db.query(models.Order).filter(
-                models.Order.nf_number == order_data["nf_number"],
-                models.Order.seller_id == seller_obj.id,
-            ).first()
-            if existing:
-                duplicates_info.append(schemas.DuplicateOrderInfo(
+            candidates = _nf_index_of(seller_obj.id).get(
+                normalize_nf_number(order_data["nf_number"]), []
+            )
+            if candidates:
+                # Prefere o de texto idêntico; senão o primeiro (mais antigo)
+                existing = next(
+                    (c for c in candidates if c.nf_number == order_data["nf_number"]),
+                    candidates[0],
+                )
+                info = schemas.DuplicateOrderInfo(
                     nf_number=order_data["nf_number"],
                     seller_name=order_data["seller_name"],
                     existing_order_id=existing.id,
                     existing_session_id=existing.session_id,
                     existing_imported_at=existing.imported_at,
-                ))
+                    existing_nf_number=existing.nf_number,
+                    existing_status=(
+                        existing.status.value if hasattr(existing.status, "value") else str(existing.status)
+                    ) if existing.status is not None else None,
+                )
+                duplicates_info.append(info)
+                _dup_pairs.append((info, order_data, seller_obj))
+
+        # Itens das duas NFs (só das duplicatas, que são poucas) para o modal
+        # mostrar se batem. Os itens novos passam pela mesma expansão de kit que
+        # o pedido teria, senão kit nunca bateria com os componentes gravados.
+        if _dup_pairs:
+            def _sum_by_sku(items):
+                acc: dict = {}
+                for it in items:
+                    k = str(it["sku"]).strip().lower()
+                    if k in acc:
+                        acc[k]["quantity"] += it["quantity"]
+                    else:
+                        acc[k] = {"sku": it["sku"], "quantity": it["quantity"]}
+                return acc
+
+            _existing_rows = (
+                db.query(models.OrderItem.order_id, models.OrderItem.sku, models.OrderItem.quantity)
+                .filter(models.OrderItem.order_id.in_([p[0].existing_order_id for p in _dup_pairs]))
+                .all()
+            )
+            _existing_items: dict = {}
+            for r in _existing_rows:
+                _existing_items.setdefault(r.order_id, []).append({"sku": r.sku, "quantity": r.quantity})
+
+            for info, od, sobj in _dup_pairs:
+                try:
+                    new_items = process_order_items(
+                        seller_id=sobj.id, raw_items=od["items"], db=db,
+                    )
+                except Exception:
+                    new_items = od["items"]
+                old_sum = _sum_by_sku(_existing_items.get(info.existing_order_id, []))
+                new_sum = _sum_by_sku(new_items)
+                info.existing_items = sorted(old_sum.values(), key=lambda x: str(x["sku"]).lower())
+                info.new_items = sorted(new_sum.values(), key=lambda x: str(x["sku"]).lower())
+                info.items_match = (
+                    {k: v["quantity"] for k, v in old_sum.items()}
+                    == {k: v["quantity"] for k, v in new_sum.items()}
+                )
 
         if duplicates_info and not force_duplicates:
             # Aborta sem criar sessão — frontend vai perguntar ao usuário

@@ -278,6 +278,11 @@ export interface DuplicateOrderInfo {
   existing_order_id: number | null;
   existing_session_id: number | null;
   existing_imported_at: string | null;
+  existing_nf_number?: string | null;
+  existing_status?: string | null;
+  existing_items?: { sku: string; quantity: number }[];
+  new_items?: { sku: string; quantity: number }[];
+  items_match?: boolean | null;
 }
 
 export interface InactiveSellerInfo {

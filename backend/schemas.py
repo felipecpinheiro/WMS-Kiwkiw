@@ -917,6 +917,13 @@ class DuplicateOrderInfo(BaseModel):
     existing_order_id: Optional[int] = None
     existing_session_id: Optional[int] = None
     existing_imported_at: Optional[datetime] = None
+    # 09/11/2026 — número como está gravado (pode diferir só no zero à esquerda),
+    # status da NF existente e itens das duas NFs para o modal comparar.
+    existing_nf_number: Optional[str] = None
+    existing_status: Optional[str] = None
+    existing_items: List[dict] = []
+    new_items: List[dict] = []
+    items_match: Optional[bool] = None
 
 
 class InactiveSellerInfo(BaseModel):

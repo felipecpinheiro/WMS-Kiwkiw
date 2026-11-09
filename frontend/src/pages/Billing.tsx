@@ -38,7 +38,8 @@ function useIsMobile() {
 }
 
 const PARAM_KEYS = [
-  'preco_unitario', 'min_pedidos', 'valor_minimo_b2c', 'manuseio_b2b', 'valor_caixa_b2b',
+  'preco_unitario', 'min_pedidos', 'valor_minimo_b2c', 'franquia_recebimentos', 'valor_recebimento',
+  'manuseio_b2b', 'valor_caixa_b2b',
   'adic_produto_b2b', 'franquia_produtos_b2b',
   'limite_itens_b2b', 'tipos_caixa_inclusos', 'cota_caixas_mes', 'franquia_m3',
   'preco_m3', 'seguro_incluso', 'aliquota_seguro', 'armazenagem_inclusa',
@@ -201,7 +202,7 @@ function draftFromPayload(p: any): Draft {
 
 export default function BillingPage() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'seller' | 'cons'>('seller');
+  const [tab, setTab] = useState<'seller' | 'cons' | 'receb'>('seller');
   const [sellerId, setSellerId] = useState<number | ''>('');
   const [refMonth, setRefMonth] = useState(() => todayBrasiliaStr().slice(0, 7));
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -454,15 +455,16 @@ export default function BillingPage() {
 
       {/* abas */}
       <div className="flex gap-1 border-b border-line">
-        {(['seller', 'cons'] as const).map(t => (
+        {(['seller', 'cons', 'receb'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 md:flex-none px-2 md:px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tab === t ? 'text-violet-400 border-violet-400' : 'text-t3 border-transparent'}`}>
-            {t === 'seller' ? 'Fechamento do seller' : 'Consolidado do mês'}
+            {t === 'seller' ? 'Fechamento do seller' : t === 'cons' ? 'Consolidado do mês' : 'Recebimentos'}
           </button>
         ))}
       </div>
 
       {tab === 'cons' && <Consolidated refMonth={refMonth} onOpen={(sid) => { setSellerId(sid); setTab('seller'); }} />}
+      {tab === 'receb' && <ReceiptsTab refMonth={refMonth} onOpen={(sid) => { setSellerId(sid); setTab('seller'); }} />}
 
       {tab === 'seller' && !sellerId && (
         <div className="bg-surface border border-dashed border-line rounded-xl p-12 text-center">
@@ -572,6 +574,14 @@ export default function BillingPage() {
                 <NumRow label="Adicional por produto B2B" v={draft.params.adic_produto_b2b} onChange={v => setParam('adic_produto_b2b', v)} />
                 <NumRow label="Franquia de produtos (grátis)" v={draft.params.franquia_produtos_b2b} onChange={v => setParam('franquia_produtos_b2b', v)} int />
                 <p className="text-[11px] text-t4">Adicional cobrado só a partir do produto seguinte à franquia (ex.: franquia 15 → cobra do 16º).</p>
+              </ParamGroup>
+              <ParamGroup title="Recebimentos de carga">
+                <NumRow label="Franquia (recebimentos grátis / mês)" v={draft.params.franquia_recebimentos} onChange={v => setParam('franquia_recebimentos', v)} int />
+                <NumRow label="Valor por recebimento acima da franquia (R$)" v={draft.params.valor_recebimento} onChange={v => setParam('valor_recebimento', v)} />
+                <p className="text-[11px] text-t4">
+                  Conta 1 por agendamento marcado como Recebido no mês. Cobra só o que passar da franquia
+                  (ex.: franquia 4 → cobra do 5º). Valor 0 = sem cobrança.
+                </p>
               </ParamGroup>
               <ParamGroup title="Classificação B2C × B2B">
                 <NumRow label="É B2B a partir de (itens)" v={draft.params.limite_itens_b2b} onChange={v => setParam('limite_itens_b2b', v)} int />
@@ -790,6 +800,10 @@ function FaturaTable({ f }: any) {
       <Row lbl="Armazenagem" c={f.armazenagem} b={null} />
       <Row lbl="Linhas avulsas" c={f.avulsos} b={null} />
       <Row lbl="Subtotal" c={f.subtotal_b2c} b={f.subtotal_b2b} strong />
+      {f.recebimentos && f.recebimentos.adicional > 0 && (
+        <Row lbl={`Recebimentos de carga (${f.recebimentos.qtd} no mês, franquia ${f.recebimentos.franquia}) — fora dos subtotais`}
+          c={f.recebimentos.adicional} b={null} />
+      )}
       {f.faixa_aplicada && (
         <div className="px-4 py-2 text-[11px] text-t3 bg-surface-2">
           Faixa aplicada: {f.faixa_aplicada.de}–{f.faixa_aplicada.ate} pedidos × {brl(f.faixa_aplicada.preco)}
@@ -1092,7 +1106,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
                       </div>
                       {open && (
                         <div className="mt-2 pt-2 border-t border-line-soft text-xs space-y-1">
-                          {([['B2C', r.b2c], ['B2B', r.b2b], ['Seguro', r.seguro], ['Armazenagem', r.armazenagem], ['Avulsos', r.avulsos]] as const).map(([k, v]) => (
+                          {([['B2C', r.b2c], ['B2B', r.b2b], ['Seguro', r.seguro], ['Armazenagem', r.armazenagem], ['Avulsos', r.avulsos], ['Recebimentos', r.recebimentos]] as const).map(([k, v]) => (
                             <div key={k} className="flex justify-between text-t2">
                               <span>{k}</span><span className="font-mono">{brl(v)}</span>
                             </div>
@@ -1130,6 +1144,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             <th className="text-right px-2 py-1.5">Seguro</th>
             <th className="text-right px-2 py-1.5">Armazenagem</th>
             <th className="text-right px-2 py-1.5">Avulsos</th>
+            <th className="text-right px-2 py-1.5">Recebimentos</th>
             <th className="text-right px-2 py-1.5">Total</th>
             <th className="text-left px-2 py-1.5">Situação</th>
             <th className="text-center px-2 py-1.5">Pago?</th>
@@ -1140,7 +1155,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
               return (
                 <Fragment key={g.unit}>
                   <tr className="bg-surface-2">
-                    <td colSpan={10} className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-300">
+                    <td colSpan={11} className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-300">
                       {g.unit}
                     </td>
                   </tr>
@@ -1155,6 +1170,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
                       <td className="px-2 py-1.5 text-right font-mono">{brl(r.seguro)}</td>
                       <td className="px-2 py-1.5 text-right font-mono">{brl(r.armazenagem)}</td>
                       <td className="px-2 py-1.5 text-right font-mono">{brl(r.avulsos)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{brl(r.recebimentos)}</td>
                       <td className="px-2 py-1.5 text-right font-mono font-semibold">{brl(r.total)}</td>
                       <td className="px-2 py-1.5">{r.status}</td>
                       <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
@@ -1168,7 +1184,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
                     </tr>
                   ))}
                   <tr className="border-t border-line-soft font-semibold text-t2">
-                    <td colSpan={7} className="px-2 py-1.5 text-right">Subtotal {g.unit}</td>
+                    <td colSpan={8} className="px-2 py-1.5 text-right">Subtotal {g.unit}</td>
                     <td className="px-2 py-1.5 text-right font-mono text-t1">{brl(sub)}</td>
                     <td colSpan={2}></td>
                   </tr>
@@ -1177,7 +1193,7 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             })}
             {!!rows.length && (
               <tr className="border-t-2 border-line font-bold">
-                <td colSpan={7} className="px-2 py-2 text-right text-t2">TOTAL GERAL DO MÊS</td>
+                <td colSpan={8} className="px-2 py-2 text-right text-t2">TOTAL GERAL DO MÊS</td>
                 <td className="px-2 py-2 text-right font-mono text-t1">{brl(grandTotal)}</td>
                 <td colSpan={2}></td>
               </tr>
@@ -1185,21 +1201,21 @@ function Consolidated({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: nu
             {!!rows.length && (
               <>
                 <tr className="text-t2">
-                  <td colSpan={7} className="px-2 py-1 text-right">Pago ({nPago} sellers)</td>
+                  <td colSpan={8} className="px-2 py-1 text-right">Pago ({nPago} sellers)</td>
                   <td className="px-2 py-1 text-right font-mono text-teal-400">{brl(totalPago)}</td>
                   <td colSpan={2}></td>
                 </tr>
                 <tr className="text-t2">
-                  <td colSpan={7} className="px-2 py-1 text-right">A receber ({rows.length - nPago} sellers)</td>
+                  <td colSpan={8} className="px-2 py-1 text-right">A receber ({rows.length - nPago} sellers)</td>
                   <td className="px-2 py-1 text-right font-mono text-amber-400">{brl(grandTotal - totalPago)}</td>
                   <td colSpan={2}></td>
                 </tr>
               </>
             )}
             {!!rows.length && !visibleRows.length && (
-              <tr><td colSpan={10} className="px-2 py-6 text-center text-t4">Nenhum seller neste filtro</td></tr>
+              <tr><td colSpan={11} className="px-2 py-6 text-center text-t4">Nenhum seller neste filtro</td></tr>
             )}
-            {!rows.length && <tr><td colSpan={10} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
+            {!rows.length && <tr><td colSpan={11} className="px-2 py-6 text-center text-t4">Nenhum seller com NF de saída neste mês</td></tr>}
           </tbody>
         </table>
         )}
@@ -1245,6 +1261,80 @@ function BoxPricesModal({ onClose }: { onClose: () => void }) {
           <button onClick={save} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-semibold">Salvar tabela</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Aba "Recebimentos" (23/10/2026) ─────────────────────────────────────────
+// Recebimentos de carga (Agendamento de Inbound) do mês, por seller. Mês fechado
+// lê o snapshot congelado; mês aberto é ao vivo. O cálculo vem do servidor.
+function ReceiptsTab({ refMonth, onOpen }: { refMonth: string; onOpen: (sid: number) => void }) {
+  const { data, isLoading, error } = useQuery(['billing-receipts', refMonth], () =>
+    billingApi.receipts(refMonth).then(r => r.data));
+  const [openId, setOpenId] = useState<number | null>(null);
+  const rows = data?.rows || [];
+  const fmt = (iso: string | null) =>
+    iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)} ${iso.slice(11, 16)}` : '—';
+
+  if (isLoading) return <p className="text-sm text-t4">Carregando…</p>;
+  if (error) return <p className="text-sm text-bad">Não foi possível carregar os recebimentos.</p>;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-t4">
+        1 recebimento por agendamento marcado como Recebido no mês. Adicional = (recebimentos − franquia) × valor,
+        quando positivo. Mês fechado mostra o valor congelado.
+      </p>
+      <div className="flex flex-wrap gap-4 text-xs text-t3">
+        <span><strong className="text-t1">{data?.total_qtd ?? 0}</strong> recebimento(s)</span>
+        <span>Adicional do mês: <strong className="text-t1 font-mono">{brl(data?.total_adicional ?? 0)}</strong></span>
+      </div>
+      {!rows.length ? (
+        <div className="bg-surface border border-dashed border-line rounded-xl p-10 text-center text-t4 text-sm">
+          Nenhum recebimento de carga neste mês.
+        </div>
+      ) : (
+        <div className="border border-line rounded-xl overflow-hidden bg-surface">
+          <div className="hidden md:grid grid-cols-[1.6fr_.7fr_.7fr_.9fr_.9fr_.8fr] gap-x-3 px-4 py-2 bg-surface-2 text-[10px] uppercase tracking-wide text-t4 font-semibold">
+            <span>Seller</span><span className="text-right">Recebidos</span><span className="text-right">Franquia</span>
+            <span className="text-right">Valor un.</span><span className="text-right">Adicional</span><span className="text-right">Mês</span>
+          </div>
+          {rows.map(r => (
+            <div key={r.seller_id} className="border-t border-line-soft">
+              <button className="w-full text-left px-4 py-2.5 hover:bg-surface-2"
+                onClick={() => setOpenId(openId === r.seller_id ? null : r.seller_id)}>
+                <div className="grid grid-cols-2 md:grid-cols-[1.6fr_.7fr_.7fr_.9fr_.9fr_.8fr] gap-x-3 gap-y-1 text-[13px] items-center">
+                  <span className="text-t1 font-semibold col-span-2 md:col-span-1">
+                    {r.seller_name}{r.active ? '' : ' (inativo)'}
+                    <span className="block text-[10px] font-normal text-t4">{r.unit_name ?? 'Sem unidade'}</span>
+                  </span>
+                  <span className="md:text-right text-t2"><span className="md:hidden text-t4 text-[11px]">Recebidos: </span>{r.qtd}</span>
+                  <span className="md:text-right text-t2"><span className="md:hidden text-t4 text-[11px]">Franquia: </span>{r.franquia}</span>
+                  <span className="md:text-right font-mono text-t2"><span className="md:hidden text-t4 text-[11px]">Valor un.: </span>{brl(r.valor_unit)}</span>
+                  <span className={`md:text-right font-mono font-semibold ${r.adicional > 0 ? 'text-t1' : 'text-t4'}`}>
+                    <span className="md:hidden text-t4 text-[11px] font-normal">Adicional: </span>{brl(r.adicional)}
+                  </span>
+                  <span className="md:text-right text-[11px] text-t3">{r.status === 'closed' ? 'fechado' : 'em aberto'}</span>
+                </div>
+              </button>
+              {openId === r.seller_id && (
+                <div className="px-4 pb-3 text-xs space-y-1 bg-surface-2/40">
+                  {r.items.map(it => (
+                    <div key={it.id} className="flex flex-wrap gap-x-4 text-t2">
+                      <span>#{it.id}</span>
+                      <span>recebido em {fmt(it.received_at)}</span>
+                      <span>agendado {it.scheduled_date ? it.scheduled_date.split('-').reverse().join('/') : '—'} · {it.period === 'MANHA' ? 'Manhã' : 'Tarde'}</span>
+                      <span className="text-t3">NF {it.nfs.join(', ') || '—'}</span>
+                    </div>
+                  ))}
+                  <button className="text-violet-400 font-semibold pt-1" onClick={() => onOpen(r.seller_id)}>
+                    Abrir fechamento do seller →
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

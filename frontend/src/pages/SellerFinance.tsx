@@ -333,6 +333,10 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
               <FatRow label="Linhas avulsas" b2c={payload.fatura.avulsos}     b2b={null} />
               <FatRow label="Subtotal" strong
                 b2c={payload.fatura.subtotal_b2c} b2b={payload.fatura.subtotal_b2b} />
+              {payload.fatura.recebimentos && payload.fatura.recebimentos.adicional > 0 && (
+                <FatRow label={`Recebimentos de carga (${payload.fatura.recebimentos.qtd} no mês)`}
+                  b2c={payload.fatura.recebimentos.adicional} b2b={null} />
+              )}
             </div>
 
             <div className="flex items-center justify-between gap-3 mt-3 px-4 py-3 rounded-xl bg-t1 text-surface">

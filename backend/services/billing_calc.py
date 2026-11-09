@@ -43,6 +43,8 @@ PARAM_FIELDS = (
     "usar_faixas_pedidos", "faixas_pedidos",
     # Mínimo do plano em R$ (01/10/2026): até `min_pedidos` NFs B2C cobra este valor.
     "valor_minimo_b2c",
+    # Recebimentos de carga (23/10/2026): franquia e valor por recebimento acima dela.
+    "franquia_recebimentos", "valor_recebimento",
 )
 
 DEFAULT_PARAMS = {
@@ -54,6 +56,7 @@ DEFAULT_PARAMS = {
     "armazenagem_inclusa": False, "valor_segurado": 0.0, "cubagem_m3": 0.0,
     "usar_faixas_pedidos": False, "faixas_pedidos": "",
     "valor_minimo_b2c": 0.0,
+    "franquia_recebimentos": 0, "valor_recebimento": 0.0,
 }
 
 
@@ -239,6 +242,44 @@ def faixa_para_contagem(n_b2c: int, faixas: list[dict]):
 
 # ── NFs do mês ───────────────────────────────────────────────────────────────
 
+def list_month_receipts(db: Session, seller_id: int, ref_month: str) -> list[dict]:
+    """
+    Recebimentos de carga do seller no mês (Agendamento de Inbound, 23/10/2026).
+
+    Conta 1 POR AGENDAMENTO que virou Recebido (`received_at` dentro do mês, em
+    horário de Brasília — a coluna já é gravada em `now_brasilia`). Recebido não
+    tem desfazer e não cancela, então a contagem só cresce. Sem estoque aqui.
+    """
+    start, end = month_range(ref_month)
+    appts = (
+        db.query(models.InboundAppointment)
+        .options(joinedload(models.InboundAppointment.nfs))
+        .filter(
+            models.InboundAppointment.seller_id == seller_id,
+            models.InboundAppointment.received_at.isnot(None),
+            models.InboundAppointment.received_at >= start,
+            models.InboundAppointment.received_at <= end,
+        )
+        .order_by(models.InboundAppointment.received_at.asc(), models.InboundAppointment.id.asc())
+        .all()
+    )
+    return [{
+        "id": a.id,
+        "received_at": a.received_at.isoformat() if a.received_at else None,
+        "scheduled_date": a.scheduled_date.isoformat() if a.scheduled_date else None,
+        "period": a.period,
+        "nfs": sorted(n.nf_number for n in a.nfs if n.active),
+    } for a in appts]
+
+
+def receipts_charge(params: dict, qtd: int) -> dict:
+    """adicional = max(0, qtd - franquia) x valor. Exatamente na franquia = 0."""
+    franquia = int(params.get("franquia_recebimentos") or 0)
+    valor = float(params.get("valor_recebimento") or 0.0)
+    return {"qtd": int(qtd), "franquia": franquia, "valor_unit": r2(valor),
+            "adicional": r2(max(0, int(qtd) - franquia) * valor)}
+
+
 def list_month_orders(db: Session, seller_id: int, ref_month: str) -> list[models.Order]:
     start, end = month_range(ref_month)
     return (
@@ -389,13 +430,16 @@ def compute_live(
                 "items": order_items_brief(o),
             })
 
+    receipts = list_month_receipts(db, seller_id, ref_month)
     fatura = _fatura(
         params, soma_b2c, soma_b2b, cubagem_m3, valor_segurado, adjustments,
         n_b2c=n_b2c, preco_b2c=preco_b2c, qtd_cobrada_b2c=qtd_cobrada_b2c,
         faixa_ativa=faixa_ativa, faixa_sel=faixa_sel,
+        recebimentos=receipts_charge(params, len(receipts)),
     )
     return {
         "status": "open",
+        "recebimentos_list": receipts,
         "b2c_lines": b2c_lines,
         "b2b_lines": b2b_lines,
         "soma_b2c": r2(soma_b2c),
@@ -418,7 +462,8 @@ def _faixa_aplicada_dict(faixa_sel, preco_b2c, n_b2c, qtd_cobrada_b2c):
 
 def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments,
             n_b2c=0, preco_b2c=0.0, qtd_cobrada_b2c=None,
-            faixa_ativa=False, faixa_sel=None) -> dict:
+            faixa_ativa=False, faixa_sel=None, recebimentos=None) -> dict:
+    receb = recebimentos or {"qtd": 0, "franquia": 0, "valor_unit": 0.0, "adicional": 0.0}
     preco_unit = float(params.get("preco_unitario") or 0.0)
     min_ped = int(params.get("min_pedidos") or 0)
     # Mínimo do plano (01/10/2026), vale com ou sem faixa: até `min_ped` NFs B2C a
@@ -462,7 +507,9 @@ def _fatura(params, soma_b2c, soma_b2b, cubagem, valor_segurado, adjustments,
         "avulsos": r2(avulsos),
         "subtotal_b2c": r2(subtotal_b2c),
         "subtotal_b2b": r2(subtotal_b2b),
-        "total_geral": r2(subtotal_b2c + subtotal_b2b),
+        # Recebimentos de carga: linha PROPRIA no total (nao entra nos subtotais B2C/B2B).
+        "recebimentos": receb,
+        "total_geral": r2(subtotal_b2c + subtotal_b2b + receb["adicional"]),
         "floor_b2c": r2(floor),
         "soma_real_b2c": r2(soma_b2c),
         "min_atingiu_piso": min_atingiu_piso,
@@ -517,6 +564,12 @@ def freeze(db: Session, closing: models.BillingMonthlyClosing, computed: dict) -
     closing.t_subtotal_b2c = f["subtotal_b2c"]
     closing.t_subtotal_b2b = f["subtotal_b2b"]
     closing.t_total_geral = f["total_geral"]
+    # Recebimentos de carga: congela contagem, adicional e a lista (a tela da aba
+    # le daqui em mes fechado, nao recalcula).
+    rc = f.get("recebimentos") or {}
+    closing.n_recebimentos = int(rc.get("qtd") or 0)
+    closing.t_recebimentos = float(rc.get("adicional") or 0.0)
+    closing.recebimentos_json = json.dumps(computed.get("recebimentos_list") or [], ensure_ascii=False)
 
 
 def clear_snapshot(db: Session, closing: models.BillingMonthlyClosing) -> None:
@@ -524,7 +577,8 @@ def clear_snapshot(db: Session, closing: models.BillingMonthlyClosing) -> None:
         models.BillingClosingLine.closing_id == closing.id
     ).delete(synchronize_session=False)
     for c in ("t_b2c_min", "t_b2b_min", "t_seguro", "t_armazenagem", "t_avulsos",
-              "t_subtotal_b2c", "t_subtotal_b2b", "t_total_geral"):
+              "t_subtotal_b2c", "t_subtotal_b2b", "t_total_geral",
+              "n_recebimentos", "t_recebimentos", "recebimentos_json"):
         setattr(closing, c, None)
 
 
@@ -604,6 +658,13 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
         "seguro": r2(closing.t_seguro), "armazenagem": r2(closing.t_armazenagem),
         "avulsos": r2(closing.t_avulsos), "subtotal_b2c": r2(closing.t_subtotal_b2c),
         "subtotal_b2b": r2(closing.t_subtotal_b2b), "total_geral": r2(closing.t_total_geral),
+        # Mes fechado antes de 23/10/2026: colunas nulas = sem recebimentos cobrados.
+        "recebimentos": {
+            "qtd": int(getattr(closing, "n_recebimentos", None) or 0),
+            "franquia": int(getattr(closing, "franquia_recebimentos", 0) or 0),
+            "valor_unit": r2(getattr(closing, "valor_recebimento", 0.0) or 0.0),
+            "adicional": r2(getattr(closing, "t_recebimentos", None) or 0.0),
+        },
         "floor_b2c": r2(_floor),
         "soma_real_b2c": r2(_soma_b2c),
         "min_atingiu_piso": _min_piso,
@@ -612,8 +673,13 @@ def read_frozen(db: Session, closing: models.BillingMonthlyClosing) -> dict:
                              "n_b2c": _n_b2c} if _usa_min else None),
         "exc_m3": round(max(0.0, (closing.cubagem_m3 or 0.0) - (closing.franquia_m3 or 0.0)), 4),
     }
+    try:
+        _rec_list = json.loads(getattr(closing, "recebimentos_json", None) or "[]")
+    except ValueError:
+        _rec_list = []
     return {
         "status": "closed",
+        "recebimentos_list": _rec_list,
         "b2c_lines": b2c_lines, "b2b_lines": b2b_lines,
         "soma_b2c": r2(sum(l["total"] for l in b2c_lines)),
         "soma_b2b": r2(sum(l["total"] for l in b2b_lines)),

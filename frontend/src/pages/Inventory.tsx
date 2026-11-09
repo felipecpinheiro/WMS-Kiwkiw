@@ -4,6 +4,7 @@
  */
 
 import { useState, useRef, useEffect, Fragment } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from 'react-query';
 import { useForm } from 'react-hook-form';
 import {
@@ -22,6 +23,10 @@ import type { SheetAnalyzeResult } from '../api';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
+import SellerExpiryTab from './SellerExpiry';
+import { expiryApi, ExpiryDisposal } from '../api';
+import { useMutation } from 'react-query';
+import { usePermissions } from '../hooks/usePermissions';
 import { format } from 'date-fns';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -2208,8 +2213,23 @@ export default function InventoryPage() {
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : null;
   const isManager = user?.role === 'manager';
-  const [sellerId, setSellerId] = useState<number | null>(null);
-  const [tab, setTab] = useState<'stock' | 'movements'>('stock');
+  // Link vindo da faixa de avisos de vencimento: ?seller=ID&disposal=ID&notice=ID#expiry
+  const location = useLocation();
+  const linkParams = new URLSearchParams(location.search);
+  const linkSeller = Number(linkParams.get('seller')) || null;
+  const linkDisposal = Number(linkParams.get('disposal')) || null;
+  const linkNotice = Number(linkParams.get('notice')) || null;
+  const linkSku = linkParams.get('sku') || '';
+  const linkExpiry = location.hash === '#expiry';
+  const [sellerId, setSellerId] = useState<number | null>(linkSeller);
+  const [tab, setTab] = useState<'stock' | 'movements' | 'expiry'>(linkExpiry ? 'expiry' : 'stock');
+
+  // Novo clique na faixa estando já nesta tela: reaplica seller e aba.
+  useEffect(() => {
+    if (linkSeller) setSellerId(linkSeller);
+    if (linkExpiry) setTab('expiry');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
   const [search, setSearch] = useState('');
   const isMobile = useIsMobile();
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
@@ -2447,7 +2467,7 @@ export default function InventoryPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 px-6 pt-4">
-        {(['stock', 'movements'] as const).map(key => (
+        {(['stock', 'movements', 'expiry'] as const).map(key => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -2456,7 +2476,9 @@ export default function InventoryPage() {
             }`}
             style={tab === key ? { background: 'rgba(123,99,232,0.20)', border: '1px solid rgba(123,99,232,0.30)' } : {}}
           >
-            {key === 'stock' ? 'Posição de Estoque' : 'Movimentações'}
+            {key === 'stock' ? 'Posição de Estoque'
+              : key === 'movements' ? 'Movimentações'
+              : 'Vencimentos'}
           </button>
         ))}
       </div>
@@ -2845,6 +2867,16 @@ export default function InventoryPage() {
             )}
           </>
         )}
+
+        {/* ── TAB: Vencimentos (03/11/2026) ── */}
+        {tab === 'expiry' && sellerId && (
+          <InventoryExpiryTab
+            sellerId={sellerId}
+            focusDisposalId={linkSeller === sellerId ? linkDisposal : null}
+            focusNoticeId={linkSeller === sellerId ? linkNotice : null}
+            focusSku={linkSeller === sellerId ? linkSku : ''}
+          />
+        )}
       </div>
 
       {/* Modal de edição de movimentação (admin) */}
@@ -2943,6 +2975,192 @@ export default function InventoryPage() {
         </BottomSheet>
       )}
 
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Sub-aba "Vencimentos" (03/11/2026) — leitura + bloco de atendimento
+// ─────────────────────────────────────────────────────────────────────
+
+function InventoryExpiryTab({ sellerId, focusDisposalId, focusNoticeId, focusSku }: {
+  sellerId: number;
+  focusDisposalId?: number | null;
+  focusNoticeId?: number | null;
+  focusSku?: string;
+}) {
+  const qc = useQueryClient();
+  const perms = usePermissions();
+  const canFulfill = perms.user?.role === 'admin' || perms.user?.role === 'manager';
+
+  // Avisos abertos (não dispensados por mim) — para achar o aviso de cada pedido.
+  const noticesQ = useQuery(
+    ['expiry-notices'],
+    () => expiryApi.listNotices().then(r => r.data),
+    { enabled: canFulfill },
+  );
+  const noticeIdByDisposal = (disposalId: number): number | null => {
+    const n = (noticesQ.data || []).find(x => x.disposal_id === disposalId);
+    if (n) return n.id;
+    return focusDisposalId === disposalId ? (focusNoticeId ?? null) : null;
+  };
+
+  const disposalsQ = useQuery(
+    ['expiry-disposals-internal', sellerId, 'solicitado'],
+    () => expiryApi.listDisposals({ seller_id: sellerId, status_filter: 'solicitado' }).then(r => r.data),
+    { enabled: !!sellerId },
+  );
+  const disposals: ExpiryDisposal[] = disposalsQ.data || [];
+
+  const fulfill = useMutation(
+    (data: { id: number; launchStock: boolean }) =>
+      expiryApi.fulfillDisposal(data.id, data.launchStock),
+    {
+      onSuccess: (_res, vars) => {
+        toast.success(vars.launchStock
+          ? 'Atendido — Saída lançada no estoque.'
+          : 'Atendido — lembre de ajustar o estoque pelo fluxo normal.');
+        qc.invalidateQueries(['expiry-disposals-internal', sellerId]);
+        qc.invalidateQueries(['expiry-lines', sellerId]);
+        qc.invalidateQueries(['expiry-notice-count']);
+        qc.invalidateQueries(['expiry-notices']);
+        if (vars.launchStock) {
+          qc.invalidateQueries(['stock', sellerId]);
+          qc.invalidateQueries(['movements', sellerId]);
+        }
+      },
+      onError: (err: any) => { toast.error(err?.response?.data?.detail || 'Falha ao atender.'); },
+    },
+  );
+
+  const dismissNotice = useMutation(
+    (noticeId: number) => expiryApi.dismissNotice(noticeId),
+    {
+      onSuccess: () => {
+        toast.success('Aviso removido para você.');
+        qc.invalidateQueries(['expiry-notice-count']);
+        qc.invalidateQueries(['expiry-notices']);
+      },
+      onError: (err: any) => { toast.error(err?.response?.data?.detail || 'Falha ao tirar o aviso.'); },
+    },
+  );
+
+  // Rola até o pedido vindo da faixa de avisos e o destaca.
+  useEffect(() => {
+    if (!focusDisposalId || disposals.length === 0) return;
+    const el = document.getElementById(`disposal-row-${focusDisposalId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusDisposalId, disposals.length]);
+
+  return (
+    <div className="space-y-6">
+      {/* Lista de linhas em modo somente-leitura (reusa SellerExpiryTab) */}
+      <SellerExpiryTab sellerId={sellerId} readOnly initialSearch={focusSku || ''} />
+
+      {/* Bloco de atendimento interno (manager/admin) */}
+      {canFulfill && (
+        <div className="rounded-lg border border-line overflow-hidden">
+          <div className="px-3 py-2 bg-surface-2 border-b border-line text-sm font-medium text-t2">
+            Pedidos de descarte / retirada aguardando atendimento ({disposals.length})
+          </div>
+          {disposals.length === 0 ? (
+            <div className="px-3 py-6 text-center text-t4 text-sm">
+              Nenhum pedido pendente.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-t4 border-b border-line">
+                  <th className="py-1.5 px-3">SKU</th>
+                  <th className="py-1.5 px-3">Produto</th>
+                  <th className="py-1.5 px-3">Tipo</th>
+                  <th className="py-1.5 px-3 text-right">Qtd</th>
+                  <th className="py-1.5 px-3">Lote</th>
+                  <th className="py-1.5 px-3">Vencimento</th>
+                  <th className="py-1.5 px-3">Obs</th>
+                  <th className="py-1.5 px-3">Pedido em</th>
+                  <th className="py-1.5 px-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {disposals.map((d) => (
+                  <tr
+                    key={d.id}
+                    id={`disposal-row-${d.id}`}
+                    className="border-b border-line/60"
+                    style={d.id === focusDisposalId
+                      ? { background: 'rgb(var(--warn-soft))', outline: '2px solid rgb(var(--warn))', outlineOffset: -2 }
+                      : undefined}
+                  >
+                    <td className="py-1.5 px-3 font-mono text-t1">{d.sku}</td>
+                    <td className="py-1.5 px-3 text-t2">{d.product_name || '—'}</td>
+                    <td className="py-1.5 px-3 text-t2 capitalize">{d.type}</td>
+                    <td className="py-1.5 px-3 text-right text-t2">{d.qty}</td>
+                    <td className="py-1.5 px-3 text-t2">{d.lot_name || '—'}</td>
+                    <td className="py-1.5 px-3 text-t3">
+                      {d.expiry_date
+                        ? d.expiry_date.split('-').reverse().join('/')
+                        : '—'}
+                    </td>
+                    <td className="py-1.5 px-3 text-t4 text-xs max-w-xs truncate" title={d.obs || ''}>
+                      {d.obs || '—'}
+                    </td>
+                    <td className="py-1.5 px-3 text-t4 text-xs">
+                      {new Date(d.requested_at).toLocaleString('pt-BR',
+                        { dateStyle: 'short', timeStyle: 'short' })}
+                    </td>
+                    <td className="py-1.5 px-3 text-right whitespace-nowrap">
+                      <button
+                        className="text-xs px-2.5 py-1 bg-ok text-white rounded hover:opacity-90 mr-1.5 disabled:opacity-50"
+                        disabled={fulfill.isLoading}
+                        onClick={() => {
+                          if (confirm(
+                            `Tirar do estoque? A quantidade (${d.qty} un de ${d.sku}) sai da ` +
+                            `linha de vencimento E é lançada como Saída no estoque do seller.`,
+                          )) {
+                            fulfill.mutate({ id: d.id, launchStock: true });
+                          }
+                        }}
+                      >
+                        Tirar do estoque
+                      </button>
+                      <button
+                        className="text-xs px-2.5 py-1 border border-line text-t2 rounded hover:bg-surface-2 mr-1.5 disabled:opacity-50"
+                        disabled={dismissNotice.isLoading || noticeIdByDisposal(d.id) === null}
+                        title={noticeIdByDisposal(d.id) === null
+                          ? 'Sem aviso aberto para este pedido'
+                          : 'Tira o aviso só para você; o pedido continua aguardando'}
+                        onClick={() => {
+                          const nid = noticeIdByDisposal(d.id);
+                          if (nid !== null) dismissNotice.mutate(nid);
+                        }}
+                      >
+                        Só tirar o aviso
+                      </button>
+                      <button
+                        className="text-xs px-2 py-1 text-t4 hover:underline disabled:opacity-50"
+                        disabled={fulfill.isLoading}
+                        title="Baixa só a linha de vencimento, sem mexer no estoque"
+                        onClick={() => {
+                          if (confirm(
+                            `Marcar como atendido SEM mexer no estoque? A quantidade (${d.qty}) ` +
+                            `sai só da linha de vencimento.`,
+                          )) {
+                            fulfill.mutate({ id: d.id, launchStock: false });
+                          }
+                        }}
+                      >
+                        Atendido (sem estoque)
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ WMS Kiwkiw - Schemas Pydantic
 Define os contratos de entrada/saída da API (validação e serialização).
 """
 
-from pydantic import BaseModel, EmailStr, field_validator, computed_field
+from pydantic import BaseModel, EmailStr, Field, field_validator, computed_field
 from typing import Optional, List, Any
 from datetime import date, datetime
 from enum import Enum
@@ -560,6 +560,13 @@ class ScanResponse(BaseModel):
     # 0 = bipe normal. > 0 = chegou mais do que a NF dizia: a tela avisa o
     # operador para comunicar a empresa. Ver process_scan em routers/scanning.py.
     over_quantity: int = 0
+    # Controle de Vencimentos — Fase 3 (03/11/2026). Alocação FEFO do SKU
+    # bipado, só leitura. `allocation_hint` é a lista
+    # [{expiry_date, quantity, vencido}] ordenada por data. `has_vencido=True`
+    # quando qualquer alocação daquele SKU usou um vencimento vencido — o
+    # Scanner dispara o toast grande (não bloqueia, mantém operador bipando).
+    allocation_hint: Optional[List[dict]] = None
+    has_vencido: bool = False
 
 class InterruptReasonIn(BaseModel):
     """Um motivo escolhido na lista (código fixo + SKUs quando o motivo pede)."""
@@ -754,6 +761,10 @@ class BillingSellerParamsIn(BaseModel):
     preco_unitario: float = 0.0
     min_pedidos: int = 0
     valor_minimo_b2c: float = 0.0   # mínimo do plano em R$ (01/10/2026); 0 = sem
+    # Recebimentos de carga (23/10/2026): cobra valor_recebimento por recebimento
+    # acima da franquia. 0 e 0 = sem cobrança.
+    franquia_recebimentos: int = Field(0, ge=0, le=100000)
+    valor_recebimento: float = Field(0.0, ge=0, le=1000000)
     manuseio_b2b: float = 0.0
     valor_caixa_b2b: float = 0.0
     adic_produto_b2b: float = 0.0
@@ -1154,3 +1165,131 @@ class CrmSuggestIn(BaseModel):
 
 class CrmOriginIn(BaseModel):
     name: str
+
+
+# ============================================================
+# CONTROLE DE VENCIMENTOS (03/11/2026)
+# ============================================================
+# Cada campo evita de propósito nomes que colidem com tipos importados no topo
+# (`date`, `str`) — ver armadilha do CLAUDE.md: Pydantic resolve a anotação
+# usando o namespace da própria classe e vira NoneType sem avisar.
+
+class ExpiryLineIn(BaseModel):
+    sku: str
+    expiry_date_text: str          # texto cru do seller — parse em expiry_calc.parse_expiry_date
+    quantity: int
+    lot_name: Optional[str] = None  # opcional (09/11/2026) — vazio = "Sem lote"
+
+
+class ExpiryLineEditIn(BaseModel):
+    expiry_date_text: Optional[str] = None   # omitido = não muda a data
+    quantity: Optional[int] = None           # omitido = não muda a qty
+    lot_name: Optional[str] = None           # omitido = não muda; "" = tira o lote
+
+
+class ExpiryLineOut(BaseModel):
+    id: int
+    seller_id: int
+    sku: str
+    product_name: Optional[str] = None
+    expiry_date: date
+    lot_name: Optional[str] = None
+    qty_inicial: int
+    qty_atual: int
+    qty_reservada: int             # Σ pedidos de descarte/retirada em "solicitado"
+    qty_disponivel: int            # qty_atual - qty_reservada
+    state: str                     # a_chegar | ativo
+    origin_type: str
+    origin_nf_number: Optional[str] = None
+    situation: str                 # vencido | aviso | ok
+    days_remaining: int
+    aviso_dias: int                # override por SKU ou default do seller
+    created_at: datetime
+
+
+class ExpiryBatchItemIn(BaseModel):
+    """Uma linha de vencimento proposta dentro de um lote (agendamento)."""
+    sku: str
+    expiry_date_text: str
+    quantity: int
+    lot_name: Optional[str] = None
+
+
+class ExpiryBatchValidateIn(BaseModel):
+    """
+    Valida uma proposta de vencimentos por NF x SKU contra a quantidade do XML.
+    O servidor NUNCA grava aqui — devolve só o diagnóstico. A gravação
+    acontece no agendamento (Fase 2).
+    """
+    inbound_nf_id: int
+    items: List[ExpiryBatchItemIn] = []
+
+
+class ExpiryBatchValidateOut(BaseModel):
+    ok: bool
+    errors: List[str] = []
+    warnings: List[str] = []
+    # Soma informada por SKU x soma do XML — útil para a tela.
+    totals_by_sku: dict = {}
+
+
+class ExpiryAlertConfigOut(BaseModel):
+    default_days: int
+    overrides: List[dict] = []     # [{"sku": "X", "days": 15}, ...]
+
+
+class ExpiryAlertConfigIn(BaseModel):
+    default_days: int
+
+
+class ExpiryAlertOverrideIn(BaseModel):
+    sku: str
+    days: Optional[int] = None     # None apaga o override
+
+
+class ExpiryDisposalIn(BaseModel):
+    expiry_line_id: int
+    type: str                      # descarte | retirada
+    qty: int
+    obs: Optional[str] = None
+
+
+class ExpiryDisposalOut(BaseModel):
+    id: int
+    seller_id: int
+    expiry_line_id: int
+    sku: str
+    type: str
+    qty: int
+    obs: Optional[str] = None
+    status: str                    # solicitado | atendido | cancelado
+    requested_at: datetime
+    fulfilled_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    product_name: Optional[str] = None
+    expiry_date: Optional[date] = None
+    lot_name: Optional[str] = None
+
+
+class ExpiryNoticeOut(BaseModel):
+    id: int
+    type: str                      # vencido_enviado | disposal
+    seller_id: int
+    seller_name: Optional[str] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    expiry_date: Optional[date] = None
+    order_id: Optional[int] = None
+    nf_number: Optional[str] = None
+    disposal_id: Optional[int] = None
+    disposal_type: Optional[str] = None
+    disposal_qty: Optional[int] = None
+    lot_name: Optional[str] = None
+    payload: Optional[str] = None
+    created_at: datetime
+
+
+class ExpiryLoginModalOut(BaseModel):
+    show: bool
+    counts: dict = {}              # {"vencidos": n, "aviso": n}
+    top: List[ExpiryLineOut] = []

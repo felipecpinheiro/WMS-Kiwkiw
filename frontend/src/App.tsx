@@ -32,6 +32,7 @@ import BillingPage from './pages/Billing';
 import AuditPage from './pages/Audit';
 import SettingsPage from './pages/Settings';
 import HandlingPage from './pages/Handling';
+import InboundPage from './pages/Inbound';
 import DocumentsPage from './pages/Documents';
 import SellerPortalPage from './pages/SellerPortal';
 import PrivacyPolicyPage from './pages/PrivacyPolicy';
@@ -348,6 +349,14 @@ export default function App() {
               <Route path="audit" element={<AuditPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="manuseios" element={<HandlingPage />} />
+              <Route
+                path="recebimentos"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'manager', 'operator']}>
+                    <InboundPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="documents"
                 element={

@@ -25,6 +25,8 @@ interface BillingFields {
   preco_unitario: string;
   min_pedidos: string;
   valor_minimo_b2c: string;
+  franquia_recebimentos: string;
+  valor_recebimento: string;
   manuseio_b2b: string;
   valor_caixa_b2b: string;
   adic_produto_b2b: string;
@@ -55,7 +57,8 @@ interface SellerForm {
 }
 
 const EMPTY_BILLING: BillingFields = {
-  preco_unitario: '', min_pedidos: '', valor_minimo_b2c: '', manuseio_b2b: '', valor_caixa_b2b: '',
+  preco_unitario: '', min_pedidos: '', valor_minimo_b2c: '', franquia_recebimentos: '', valor_recebimento: '',
+  manuseio_b2b: '', valor_caixa_b2b: '',
   adic_produto_b2b: '', franquia_produtos_b2b: '15',
   limite_itens_b2b: '', tipos_caixa_inclusos: '', cota_caixas_mes: '',
   franquia_m3: '', preco_m3: '', seguro_incluso: false,
@@ -101,6 +104,7 @@ function paramsToFields(p: any): BillingFields {
   return {
     preco_unitario: s(p.preco_unitario), min_pedidos: s(p.min_pedidos),
     valor_minimo_b2c: s(p.valor_minimo_b2c),
+    franquia_recebimentos: s(p.franquia_recebimentos), valor_recebimento: s(p.valor_recebimento),
     manuseio_b2b: s(p.manuseio_b2b), valor_caixa_b2b: s(p.valor_caixa_b2b),
     adic_produto_b2b: s(p.adic_produto_b2b),
     franquia_produtos_b2b: s(p.franquia_produtos_b2b ?? 15),
@@ -119,6 +123,7 @@ function fieldsToParams(b: BillingFields) {
   return {
     preco_unitario: NUM(b.preco_unitario), min_pedidos: NUM(b.min_pedidos, true),
     valor_minimo_b2c: NUM(b.valor_minimo_b2c),
+    franquia_recebimentos: NUM(b.franquia_recebimentos, true), valor_recebimento: NUM(b.valor_recebimento),
     manuseio_b2b: NUM(b.manuseio_b2b), valor_caixa_b2b: NUM(b.valor_caixa_b2b),
     adic_produto_b2b: NUM(b.adic_produto_b2b),
     franquia_produtos_b2b: NUM(b.franquia_produtos_b2b, true),
@@ -157,14 +162,14 @@ export default function SellersPage() {
   const [expUploading, setExpUploading] = useState(false);
   // preço de caixa por seller (aba "Caixas"): { box_key: valor como string }
   const [boxPrices, setBoxPrices]     = useState<Record<string, string>>({});
+  // Caixa padrão no Scanner (05/11/2026): valor atual e o original (só grava se mudou)
+  const [defaultBox, setDefaultBox]   = useState<string>('');
+  const [origDefaultBox, setOrigDefaultBox] = useState<string>('');
   const [saving, setSaving]           = useState(false);
   // aba "Descontinuados" (13/09/2026) + toggle Desativar/Reativar em lote (14/09/2026)
   const [discontinuedList, setDiscontinuedList] = useState<DiscontinuedSkuRow[]>([]);
   const [discontinuedMode, setDiscontinuedMode] = useState<'deactivate' | 'reactivate'>('deactivate');
   const [discontinuedPaste, setDiscontinuedPaste] = useState('');
-  // Caixa padrão no Scanner (05/11/2026): valor atual e o original (só grava se mudou)
-  const [defaultBox, setDefaultBox]   = useState<string>('');
-  const [origDefaultBox, setOrigDefaultBox] = useState<string>('');
   const [discontinuedPreview, setDiscontinuedPreview] = useState<DiscontinuedSkuPreviewRow[] | null>(null);
   const [reactivatePreview, setReactivatePreview] = useState<ReactivateSkuPreviewRow[] | null>(null);
   const [discontinuedBusy, setDiscontinuedBusy] = useState(false);
@@ -212,12 +217,12 @@ export default function SellersPage() {
     setFormTab('basic');
     setExpFile(null);
     setBoxPrices({});
+    setDefaultBox(''); setOrigDefaultBox('');
     setDiscontinuedList([]);
     setDiscontinuedMode('deactivate');
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
     setReactivatePreview(null);
-    setDefaultBox(''); setOrigDefaultBox('');
     setShowModal(true);
   };
 
@@ -226,12 +231,12 @@ export default function SellersPage() {
     setFormTab('basic');
     setExpFile(null);
     setBoxPrices({});
+    setDefaultBox(s.default_box || ''); setOrigDefaultBox(s.default_box || '');
     setDiscontinuedList([]);
     setDiscontinuedMode('deactivate');
     setDiscontinuedPaste('');
     setDiscontinuedPreview(null);
     setReactivatePreview(null);
-    setDefaultBox(s.default_box || ''); setOrigDefaultBox(s.default_box || '');
     // Carrega dados básicos imediatamente
     setForm({
       name: s.name||'', code: s.code||'', cnpj: s.cnpj||'',
@@ -403,16 +408,16 @@ export default function SellersPage() {
         });
       }
 
-      // Upload do arquivo de experiência
-      if (expFile && savedId) {
-        setExpUploading(true);
-        try {
-          await cadastrosApi.uploadExperienceFile(savedId, expFile);
       // Caixa padrão no Scanner — só chama se mudou (evita log de auditoria à toa)
       if (savedId && defaultBox !== origDefaultBox) {
         await cadastrosApi.setSellerDefaultBox(savedId, defaultBox || null);
       }
 
+      // Upload do arquivo de experiência
+      if (expFile && savedId) {
+        setExpUploading(true);
+        try {
+          await cadastrosApi.uploadExperienceFile(savedId, expFile);
           toast.success('Arquivo de experiência enviado!');
           setExpFile(null);
         } catch {
@@ -764,6 +769,26 @@ export default function SellersPage() {
                 <p className="text-[11px] text-t4">
                   As caixas inclusas (grupo A) e o preço por caixa deste seller ficam na aba "Caixas".
                 </p>
+                <div className="rounded-lg border border-line p-2">
+                  <div className="text-[11px] font-semibold text-t2 mb-1">Recebimentos de carga (Agendamento de Inbound)</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-t3 mb-1">Franquia (grátis / mês)</label>
+                      <input type="number" step="1" min="0" value={form.billing.franquia_recebimentos}
+                        onChange={e => setBilling('franquia_recebimentos', e.target.value)}
+                        className={cls} style={clsStyle} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-t3 mb-1">Valor por recebimento acima (R$)</label>
+                      <input type="number" step="0.01" min="0" value={form.billing.valor_recebimento}
+                        onChange={e => setBilling('valor_recebimento', e.target.value)}
+                        className={cls} style={clsStyle} />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-t4 mt-1">
+                    Conta 1 por agendamento recebido no mês; cobra só o que passar da franquia. Valor 0 = sem cobrança.
+                  </p>
+                </div>
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="seg" checked={form.billing.seguro_incluso}

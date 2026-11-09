@@ -35,7 +35,8 @@ from backend.database import init_db, get_db, SessionLocal
 from backend.routers import (
     auth, orders, scanning, inventory, products, billing, billing_access,
     dashboard, returns as returns_router, settings as settings_router,
-    client_supplies, crm, stock_excel, stock_values,
+    client_supplies, crm, stock_excel, stock_values, inbound,
+    expiry,
 )
 from backend import models
 from backend.auth import hash_password
@@ -94,6 +95,16 @@ PERF_INDEXES = [
     # ⚠️ trava gravação em `orders` por alguns segundos no 1º boot do deploy.
     ("ix_orders_seller_imported",
      "CREATE INDEX IF NOT EXISTS ix_orders_seller_imported ON orders (seller_id, imported_at)"),
+    # Agendamento de Inbound (23/10/2026): segurar NF por agendamento consulta
+    # orders por inbound_appointment_id. Coluna nula na quase totalidade das linhas.
+    ("ix_orders_inbound_appointment_id",
+     "CREATE INDEX IF NOT EXISTS ix_orders_inbound_appointment_id ON orders (inbound_appointment_id)"),
+    # Controle de Vencimentos (03/11/2026): o estorno recupera alocações
+    # históricas por order_id (uma consulta por NF estornada). Tabela nasce
+    # pelo create_all; os outros índices da feature estão em
+    # ExpiryLine.__table_args__ / ExpiryNotice.__table_args__.
+    ("ix_expiry_allocations_order",
+     "CREATE INDEX IF NOT EXISTS ix_expiry_allocations_order ON expiry_allocations (order_id)"),
 ]
 
 
@@ -148,6 +159,11 @@ def run_light_migrations():
             # UnicodeEncodeError em console Windows.
             if not col_exists("orders", "reactivated_at"):
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at TIMESTAMP")
+            # Agendamento de Inbound (23/10/2026): coluna aditiva nula (so metadado no Postgres).
+            if not col_exists("orders", "inbound_appointment_id"):
+                index_migrations.append(
+                    "ALTER TABLE orders ADD COLUMN inbound_appointment_id INTEGER "
+                    "REFERENCES inbound_appointments(id)")
             # Valor unitário do seller no Portal (07/10/2026): nullable, sem default.
             if not col_exists("products", "seller_unit_value"):
                 index_migrations.append(
@@ -222,6 +238,16 @@ def run_light_migrations():
                 if not col_exists(_bt, "valor_minimo_b2c"):
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN valor_minimo_b2c FLOAT DEFAULT 0 NOT NULL")
+                # Faturamento (23/10/2026): recebimentos de carga (Agendamento de Inbound).
+                if not col_exists(_bt, "franquia_recebimentos"):
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN franquia_recebimentos INTEGER DEFAULT 0 NOT NULL")
+                if not col_exists(_bt, "valor_recebimento"):
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN valor_recebimento FLOAT DEFAULT 0 NOT NULL")
+            for _c, _t in (("n_recebimentos", "INTEGER"), ("t_recebimentos", "FLOAT"), ("recebimentos_json", "TEXT")):
+                if not col_exists("billing_monthly_closings", _c):
+                    index_migrations.append(f"ALTER TABLE billing_monthly_closings ADD COLUMN {_c} {_t}")
             # Faturamento (09/09/2026): mês de início do contrato do seller
             # (metadado do aviso de reajuste — só em billing_seller_params).
             # Usuário (01/10/2026): vínculo "por unidade" ou "por sellers".
@@ -229,6 +255,15 @@ def run_light_migrations():
                 index_migrations.append(
                     "ALTER TABLE users ADD COLUMN seller_scope VARCHAR(10) "
                     "DEFAULT 'sellers' NOT NULL")
+            # Caixa padrão do seller no Scanner (05/11/2026).
+            if not col_exists("sellers", "default_box"):
+                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
+            # Lote nos vencimentos (09/11/2026): colunas aditivas nullable, sem
+            # reescrever a tabela. Linhas antigas ficam "Sem lote".
+            if not col_exists("expiry_lines", "lot_name"):
+                index_migrations.append("ALTER TABLE expiry_lines ADD COLUMN lot_name VARCHAR(60)")
+            if not col_exists("expiry_allocations", "lot_copiado"):
+                index_migrations.append("ALTER TABLE expiry_allocations ADD COLUMN lot_copiado VARCHAR(60)")
             if not col_exists("billing_seller_params", "inicio_contrato"):
                 index_migrations.append(
                     "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
@@ -255,9 +290,6 @@ def run_light_migrations():
                 if not col_exists("billing_closing_lines", _c):
                     index_migrations.append(
                         f"ALTER TABLE billing_closing_lines ADD COLUMN {_c} FLOAT")
-            # Caixa padrão do seller no Scanner (05/11/2026).
-            if not col_exists("sellers", "default_box"):
-                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
             # Faturamento (02/10/2026): linha avulsa com "Repetir nos meses seguintes".
             if not col_exists("billing_closing_adjustments", "repetir"):
                 index_migrations.append(
@@ -334,7 +366,7 @@ def run_light_migrations():
             existing_perf_idx = {
                 r[0] for r in db.execute(text(
                     "SELECT indexname FROM pg_indexes "
-                    "WHERE tablename IN ('stock_movements', 'scanning_logs', 'order_items', 'orders')"
+                    "WHERE tablename IN ('stock_movements', 'scanning_logs', 'order_items', 'orders', 'expiry_allocations')"
                 )).fetchall()
             }
             for idx_name, idx_sql in PERF_INDEXES:
@@ -401,6 +433,21 @@ def run_light_migrations():
                 index_migrations.append("ALTER TABLE orders ADD COLUMN reactivated_at DATETIME")
             if "stock_applied_at" not in existing_ord:
                 index_migrations.append("ALTER TABLE orders ADD COLUMN stock_applied_at DATETIME")
+            # Caixa padrão do seller no Scanner (05/11/2026).
+            _seller_cols = {r[1] for r in db.execute(text("PRAGMA table_info(sellers)")).fetchall()}
+            if "default_box" not in _seller_cols:
+                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
+            # Lote nos vencimentos (09/11/2026) — mesmo critério do ramo PostgreSQL.
+            _el_cols = {r[1] for r in db.execute(text("PRAGMA table_info(expiry_lines)")).fetchall()}
+            if _el_cols and "lot_name" not in _el_cols:
+                index_migrations.append("ALTER TABLE expiry_lines ADD COLUMN lot_name VARCHAR(60)")
+            _ea_cols = {r[1] for r in db.execute(text("PRAGMA table_info(expiry_allocations)")).fetchall()}
+            if _ea_cols and "lot_copiado" not in _ea_cols:
+                index_migrations.append("ALTER TABLE expiry_allocations ADD COLUMN lot_copiado VARCHAR(60)")
+            if "inbound_appointment_id" not in existing_ord:
+                index_migrations.append(
+                    "ALTER TABLE orders ADD COLUMN inbound_appointment_id INTEGER "
+                    "REFERENCES inbound_appointments(id)")
 
             # Faturamento (01/09/2026): adicional por produto + franquia na NF B2B.
             for _bt in ("billing_seller_params", "billing_monthly_closings"):
@@ -422,15 +469,23 @@ def run_light_migrations():
                 if "valor_minimo_b2c" not in _cols:
                     index_migrations.append(
                         f"ALTER TABLE {_bt} ADD COLUMN valor_minimo_b2c FLOAT DEFAULT 0 NOT NULL")
+                # Faturamento (23/10/2026): recebimentos de carga (Agendamento de Inbound).
+                if "franquia_recebimentos" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN franquia_recebimentos INTEGER DEFAULT 0 NOT NULL")
+                if "valor_recebimento" not in _cols:
+                    index_migrations.append(
+                        f"ALTER TABLE {_bt} ADD COLUMN valor_recebimento FLOAT DEFAULT 0 NOT NULL")
+            _bmc_cols = {r[1] for r in db.execute(
+                text("PRAGMA table_info(billing_monthly_closings)")).fetchall()}
+            for _c, _t in (("n_recebimentos", "INTEGER"), ("t_recebimentos", "FLOAT"), ("recebimentos_json", "TEXT")):
+                if _c not in _bmc_cols:
+                    index_migrations.append(f"ALTER TABLE billing_monthly_closings ADD COLUMN {_c} {_t}")
                 if _bt == "billing_seller_params" and "inicio_contrato" not in _cols:
                     index_migrations.append(
                         "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
                         "VARCHAR(7) DEFAULT '' NOT NULL")
             # Unificação de 01/09/2026: valor segurado e cubagem viraram
-            # Caixa padrão do seller no Scanner (05/11/2026).
-            _seller_cols = {r[1] for r in db.execute(text("PRAGMA table_info(sellers)")).fetchall()}
-            if "default_box" not in _seller_cols:
-                index_migrations.append("ALTER TABLE sellers ADD COLUMN default_box VARCHAR(30)")
             # parâmetros do seller. Colunas aditivas SÓ em billing_seller_params.
             _sp_cols = {r[1] for r in db.execute(
                 text("PRAGMA table_info(billing_seller_params)")).fetchall()}
@@ -482,7 +537,7 @@ def run_light_migrations():
 
             # Índices de performance: mesma checagem do ramo PostgreSQL, via PRAGMA.
             existing_perf_idx = set()
-            for _tbl in ("stock_movements", "scanning_logs", "order_items", "orders"):
+            for _tbl in ("stock_movements", "scanning_logs", "order_items", "orders", "expiry_allocations"):
                 existing_perf_idx |= {
                     r[1] for r in db.execute(text(f"PRAGMA index_list({_tbl})")).fetchall()
                 }
@@ -704,6 +759,8 @@ app.include_router(client_supplies.router)
 app.include_router(crm.router)
 app.include_router(stock_excel.router)
 app.include_router(stock_values.router)
+app.include_router(inbound.router)
+app.include_router(expiry.router)
 
 
 # ============================================================

@@ -4,16 +4,20 @@
  */
 
 import { useState } from 'react';
+import { useQuery } from 'react-query';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ScanLine, Warehouse, Tag,
   PackagePlus, Box, Users, Building2, DollarSign,
   ClipboardList, LogOut, Settings, Layers, MoreHorizontal, Undo2, CalendarCheck, Users2, BarChart3, FileText,
+  CalendarClock, X, ChevronDown, Truck,
 } from 'lucide-react';
+import { inboundApi } from '../api';
 import { useIsMobile } from '../hooks/useIsMobile';
 import BottomSheet from './BottomSheet';
 import ThemeToggle from './ThemeToggle';
 import Logo from './Logo';
+import ExpiryNoticeBand from './ExpiryNoticeBand';
 
 const navItems = [
   { group: 'Principal', items: [
@@ -22,6 +26,7 @@ const navItems = [
   ]},
   { group: 'Operação', items: [
     { to: '/manuseios', icon: Layers,      label: 'Manuseios'        },
+    { to: '/recebimentos', icon: Truck,    label: 'Recebimentos'     },
     { to: '/inventory', icon: Warehouse,   label: 'Estoque'          },
     { to: '/billing',   icon: DollarSign,  label: 'Faturamento'      },
     { to: '/audit',     icon: ScanLine,    label: 'Trilha Auditoria' },
@@ -53,6 +58,7 @@ const navItems = [
 const navOperator = [
   { group: 'Operação', items: [
     { to: '/manuseios', icon: Layers,    label: 'Manuseios' },
+    { to: '/recebimentos', icon: Truck,  label: 'Recebimentos' },
     { to: '/inventory', icon: Warehouse, label: 'Estoque'   },
     { to: '/documents', icon: FileText,  label: 'Documentos' },
   ]},
@@ -84,6 +90,22 @@ export default function Layout() {
     .map(g => ({ ...g, items: g.items.filter(it => it.to !== '/billing' || isAdmin) }))
     .filter(g => g.items.length > 0);
   const mobileTabs = isOperator ? mobileTabsOperator : mobileTabsAdmin;
+
+  // Selo do menu Recebimentos (23/10/2026): Agendados da semana + atrasados.
+  const { data: inboundSummary } = useQuery('inbound-summary', () => inboundApi.summary().then(r => r.data), {
+    refetchInterval: 60000,
+    retry: false,
+  });
+  const inboundBadge = inboundSummary?.badge ?? 0;
+  const badgeEl = (to: string) =>
+    to === '/recebimentos' && inboundBadge > 0 ? (
+      <span
+        className="ml-auto min-w-[18px] px-1.5 py-0.5 rounded-full text-[10px] font-bold text-center text-white bg-violet-600"
+        aria-label={`${inboundBadge} agendamento(s) na semana`}
+      >
+        {inboundBadge}
+      </span>
+    ) : null;
 
   const handleLogout = () => {
     localStorage.removeItem('wms_token');
@@ -149,6 +171,7 @@ export default function Layout() {
                 >
                   <Icon size={14} />
                   {label}
+                  {badgeEl(to)}
                 </NavLink>
               ))}
             </div>
@@ -193,6 +216,7 @@ export default function Layout() {
 
       {/* ── MAIN CONTENT + BARRA INFERIOR (mobile) ────────────── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {(isAdmin || user?.role === 'manager') && <ExpiryNoticeBand />}
         <main className="flex-1 overflow-y-auto bg-app">
           <Outlet />
         </main>
@@ -212,6 +236,7 @@ export default function Layout() {
               >
                 <Icon size={18} />
                 {label}
+                {badgeEl(to)}
               </NavLink>
             ))}
             <button
@@ -263,6 +288,7 @@ export default function Layout() {
                 >
                   <Icon size={16} />
                   {label}
+                  {badgeEl(to)}
                 </NavLink>
               ))}
             </div>

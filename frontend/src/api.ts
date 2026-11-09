@@ -636,7 +636,17 @@ export const ordersApi = {
 // SCANNING (BIPAGEM)
 // ============================================================
 
+export interface OrderExpiryAllocation {
+  expiry_date: string;   // YYYY-MM-DD
+  quantity: number;
+  vencido: boolean;
+  lot_name?: string | null;
+}
+
 export const scanningApi = {
+  /** Vencimentos (FEFO) que o operador deve usar em cada SKU da NF de saída. */
+  orderExpiryAllocation: (orderId: number) =>
+    api.get<Record<string, OrderExpiryAllocation[]>>(`/scanning/orders/${orderId}/expiry-allocation`),
   sessions: (params?: Record<string, any>) =>
     api.get<PickingSession[]>('/scanning/sessions', { params }),
   sessionOrders: (sessionId: number, sellerId?: number, includeInactive?: boolean) =>
@@ -1163,6 +1173,9 @@ export interface BillingSellerParams {
   min_pedidos: number;
   // Mínimo do plano (01/10/2026): até min_pedidos NFs B2C cobra este valor (+ adicionais). 0 = sem.
   valor_minimo_b2c?: number;
+  // Recebimentos de carga (23/10/2026): cobra valor_recebimento por recebimento acima da franquia. 0 e 0 = sem.
+  franquia_recebimentos?: number;
+  valor_recebimento?: number;
   manuseio_b2b: number;
   valor_caixa_b2b: number;
   adic_produto_b2b: number;
@@ -1185,13 +1198,27 @@ export interface BillingSellerParams {
 }
 
 export const EMPTY_BILLING_PARAMS: BillingSellerParams = {
-  preco_unitario: 0, min_pedidos: 0, valor_minimo_b2c: 0, manuseio_b2b: 0, valor_caixa_b2b: 0,
+  preco_unitario: 0, min_pedidos: 0, valor_minimo_b2c: 0, franquia_recebimentos: 0, valor_recebimento: 0,
+  manuseio_b2b: 0, valor_caixa_b2b: 0,
   adic_produto_b2b: 0, franquia_produtos_b2b: 15,
   limite_itens_b2b: 0, tipos_caixa_inclusos: '', cota_caixas_mes: 0,
   franquia_m3: 0, preco_m3: 0, seguro_incluso: false, aliquota_seguro: 0.30,
   armazenagem_inclusa: false,
   usar_faixas_pedidos: false, faixas_pedidos: '', inicio_contrato: '',
 };
+
+export interface BillingReceiptItem {
+  id: number; received_at: string | null; scheduled_date: string | null; period: string; nfs: string[];
+}
+export interface BillingReceiptsRow {
+  seller_id: number; seller_name: string; unit_id: number | null; unit_name: string | null;
+  active: boolean; status: 'open' | 'closed';
+  qtd: number; franquia: number; valor_unit: number; adicional: number;
+  items: BillingReceiptItem[];
+}
+export interface BillingReceiptsMonth {
+  ref_month: string; rows: BillingReceiptsRow[]; total_qtd: number; total_adicional: number;
+}
 
 export interface BillingBoxPrice { box_key: string; price: number | null }
 
@@ -1261,6 +1288,9 @@ export const billingApi = {
   // consolidado do mês
   consolidated: (refMonth: string) =>
     api.get(`/billing/consolidated/${refMonth}`),
+  // aba "Recebimentos" (23/10/2026): recebimentos de carga do mês, por seller
+  receipts: (refMonth: string) =>
+    api.get<BillingReceiptsMonth>(`/billing/receipts/${refMonth}`),
   // anotação manual do financeiro: seller pagou a fatura do mês? (01/10/2026)
   setPaid: (refMonth: string, sellerId: number, paid: boolean) =>
     api.put<{ paid: boolean; paid_at: string | null; paid_by: string | null }>(
@@ -1470,6 +1500,150 @@ export interface ClientSupplyMovement {
   rule_desc: string | null;
 }
 
+// ── Controle de Vencimentos (03/11/2026) ─────────────────────────────────────
+export interface ExpiryLine {
+  id: number;
+  seller_id: number;
+  sku: string;
+  product_name: string | null;
+  expiry_date: string;         // ISO yyyy-mm-dd
+  lot_name: string | null;     // opcional — null = "Sem lote"
+  qty_inicial: number;
+  qty_atual: number;
+  qty_reservada: number;
+  qty_disponivel: number;
+  state: 'a_chegar' | 'ativo';
+  origin_type: 'portal' | 'inbound' | 'estorno';
+  origin_nf_number: string | null;
+  situation: 'vencido' | 'aviso' | 'ok';
+  days_remaining: number;
+  aviso_dias: number;
+  created_at: string;
+}
+
+export interface ExpiryAlertConfig {
+  default_days: number;
+  overrides: { sku: string; days: number }[];
+}
+
+export interface ExpiryDisposal {
+  id: number;
+  seller_id: number;
+  expiry_line_id: number;
+  sku: string;
+  type: 'descarte' | 'retirada';
+  qty: number;
+  obs: string | null;
+  status: 'solicitado' | 'atendido' | 'cancelado';
+  requested_at: string;
+  fulfilled_at: string | null;
+  cancelled_at: string | null;
+  product_name: string | null;
+  expiry_date: string | null;
+  lot_name?: string | null;
+}
+
+export interface ExpiryNotice {
+  id: number;
+  type: 'vencido_enviado' | 'disposal';
+  seller_id: number;
+  seller_name: string | null;
+  sku: string | null;
+  product_name: string | null;
+  expiry_date: string | null;
+  order_id: number | null;
+  nf_number: string | null;
+  disposal_id: number | null;
+  disposal_type: string | null;
+  disposal_qty: number | null;
+  lot_name?: string | null;
+  payload: string | null;
+  created_at: string;
+}
+
+export interface ExpiryLoginModal {
+  show: boolean;
+  counts: { vencidos?: number; aviso?: number };
+  top: ExpiryLine[];
+}
+
+export const expiryApi = {
+  listLines: (params?: {
+    seller_id?: number;
+    sku?: string;
+    include_a_chegar?: boolean;
+    situation_filter?: 'vencido' | 'aviso' | 'ok';
+    search?: string;
+  }) =>
+    api.get<ExpiryLine[]>('/vencimentos/lines', { params }),
+
+  createLine: (data: { sku: string; expiry_date_text: string; quantity: number; lot_name?: string }) =>
+    api.post<ExpiryLine>('/vencimentos/lines', data),
+
+  updateLine: (id: number, data: { expiry_date_text?: string; quantity?: number; lot_name?: string }) =>
+    api.put<ExpiryLine>(`/vencimentos/lines/${id}`, data),
+
+  deleteLine: (id: number) => api.delete(`/vencimentos/lines/${id}`),
+
+  alertConfig: (sellerId?: number) =>
+    api.get<ExpiryAlertConfig>('/vencimentos/alert-config', {
+      params: sellerId ? { seller_id: sellerId } : undefined,
+    }),
+
+  putAlertConfig: (defaultDays: number) =>
+    api.put<ExpiryAlertConfig>('/vencimentos/alert-config', { default_days: defaultDays }),
+
+  putAlertOverride: (sku: string, days: number | null) =>
+    api.put<ExpiryAlertConfig>('/vencimentos/alert-config/sku', { sku, days }),
+
+  listDisposals: (params?: { seller_id?: number; status_filter?: string }) =>
+    api.get<ExpiryDisposal[]>('/vencimentos/disposals', { params }),
+
+  createDisposal: (data: {
+    expiry_line_id: number;
+    type: 'descarte' | 'retirada';
+    qty: number;
+    obs?: string;
+  }) =>
+    api.post<ExpiryDisposal>('/vencimentos/disposals', data),
+
+  cancelDisposal: (id: number) => api.delete(`/vencimentos/disposals/${id}`),
+
+  fulfillDisposal: (id: number, launchStock = false) =>
+    api.post<ExpiryDisposal>(`/vencimentos/disposals/${id}/fulfill`, null, {
+      params: launchStock ? { launch_stock: true } : undefined,
+    }),
+
+  listNotices: () => api.get<ExpiryNotice[]>('/vencimentos/notices'),
+  noticeCount: () => api.get<{ total: number }>('/vencimentos/notices/count'),
+  dismissNotice: (id: number) => api.post(`/vencimentos/notices/${id}/dismiss`),
+  resolveNotice: (id: number) => api.post(`/vencimentos/notices/${id}/resolve`),
+
+  loginModal: () => api.get<ExpiryLoginModal>('/vencimentos/login-modal'),
+  dismissLoginModal: () => api.post('/vencimentos/login-modal/dismiss'),
+
+  exportXlsx: (params?: {
+    seller_id?: number;
+    sku?: string;
+    situation_filter?: string;
+    include_a_chegar?: boolean;
+    search?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.seller_id) qs.set('seller_id', String(params.seller_id));
+    if (params?.sku) qs.set('sku', params.sku);
+    if (params?.situation_filter) qs.set('situation_filter', params.situation_filter);
+    if (params?.include_a_chegar !== undefined) qs.set('include_a_chegar', String(params.include_a_chegar));
+    if (params?.search) qs.set('search', params.search);
+    const q = qs.toString();
+    return downloadAuthenticatedFile(
+      `/vencimentos/export.xlsx${q ? `?${q}` : ''}`,
+      'VENCIMENTOS.xlsx',
+    );
+  },
+};
+
+
 export const clientSuppliesApi = {
   list: (sellerId?: number, periodo?: { de?: string; ate?: string }) =>
     api.get<ClientSupply[]>('/client-supplies', {
@@ -1601,4 +1775,132 @@ export const crmApi = {
     api.post<CrmLead>(`/crm/leads/${id}/interactions`, body).then(r => r.data),
   today: (params?: Record<string, any>) => api.get<CrmTodayData>('/crm/today', { params }).then(r => r.data),
   dashboard: (params?: Record<string, any>) => api.get<CrmDashboardData>('/crm/dashboard', { params }).then(r => r.data),
+};
+
+// ============================================================
+// AGENDAMENTO DE INBOUND (23/10/2026)
+// ============================================================
+
+export type InboundStatus = 'AGENDADO' | 'RECEBIDO' | 'EM_CONFERENCIA' | 'CONFERIDO' | 'CANCELADO';
+export type InboundPeriod = 'MANHA' | 'TARDE';
+
+export interface InboundFileInfo { id: number; kind: 'PDF' | 'XML' | 'XLSX'; filename: string; size: number }
+/** Produto de uma NF do agendamento (tela interna de Recebimentos). */
+export interface InboundNfItem {
+  sku: string; name: string; quantity: number; status: 'ok' | 'sem_cadastro' | 'descontinuado';
+}
+export interface InboundNf {
+  id: number; nf_number: string; danfe_key: string; files: InboundFileInfo[];
+  // só na visão interna (manager/admin/operator); o operador não recebe files nem danfe_key
+  items?: InboundNfItem[]; items_skus?: number; items_units?: number;
+}
+export interface InboundStockRow { sku: string; name: string; expected: number; entered: number; divergent: boolean }
+/** Aviso interno (só manager+ recebe). `link` leva à tela que resolve. */
+export interface InboundWarning {
+  type: 'seller_without_unit' | 'missing_product' | 'discontinued_sku';
+  message: string;
+  link: string;
+  skus?: string[];
+}
+export interface InboundAppointment {
+  id: number;
+  seller_id: number;
+  seller_name: string | null;
+  scheduled_date: string;
+  period: InboundPeriod;
+  status: InboundStatus;
+  overdue: boolean;
+  nf_count: number;
+  unit_id?: number | null;
+  warnings?: InboundWarning[];
+  volumes?: number | null;
+  volumes_unknown?: boolean;
+  pallets?: number | null;
+  pallets_unknown?: boolean;
+  notes?: string | null;
+  cancel_reason?: string | null;
+  can_edit?: boolean;
+  nfs?: InboundNf[];
+  stock_summary?: InboundStockRow[];
+  has_divergence?: boolean;
+}
+
+/** Revisão prévia (POST /inbound/analyze) — não grava nada. */
+export type InboundItemStatus = 'ok' | 'sem_produto' | 'descontinuado';
+export interface InboundExpiryRow { sku: string; expiry_date_text: string; quantity: number | null; lot_name?: string | null }
+export interface InboundAnalyzeItem {
+  sku: string; name: string; quantity: number; status: InboundItemStatus;
+  prefill: { expiry_date_text: string; quantity: number | null; lot_name?: string | null }[];
+}
+export interface InboundAnalyzeNf {
+  index: number; filename: string | null; nf_number: string | null; danfe_key: string | null;
+  issuer: string | null; error: string | null; items: InboundAnalyzeItem[];
+}
+
+/** Arquivos de uma NF no envio: nf{i}_pdf / nf{i}_xml / nf{i}_xlsx. */
+export interface InboundNfFiles { pdf: File | null; xml: File | null; xlsx: File | null }
+
+const INBOUND_UPLOAD = { timeout: 180000, headers: { 'Content-Type': 'multipart/form-data' } };
+
+function inboundNfForm(form: FormData, i: number, f: Partial<InboundNfFiles>) {
+  if (f.pdf) form.append(`nf${i}_pdf`, f.pdf);
+  if (f.xml) form.append(`nf${i}_xml`, f.xml);
+  if (f.xlsx) form.append(`nf${i}_xlsx`, f.xlsx);
+}
+
+export const inboundApi = {
+  list: (params?: {
+    status?: InboundStatus; seller_id?: number; unit_id?: number; no_unit?: boolean;
+    date_from?: string; date_to?: string; limit?: number;
+  }) => api.get<InboundAppointment[]>('/inbound', { params }),
+  /** AGENDADO -> RECEBIDO (manager+). Sem desfazer. */
+  receive: (id: number) => api.post<InboundAppointment>(`/inbound/${id}/receive`),
+  get: (id: number) => api.get<InboundAppointment>(`/inbound/${id}`),
+  summary: () => api.get<{ week_scheduled: number; overdue: number; badge: number }>('/inbound/summary'),
+  create: (data: {
+    scheduled_date: string; period: InboundPeriod;
+    volumes: number | null; volumes_unknown: boolean;
+    pallets: number | null; pallets_unknown: boolean;
+    notes: string; nfs: InboundNfFiles[];
+    expiry?: Record<number, InboundExpiryRow[]>;
+  }) => {
+    const form = new FormData();
+    if (data.expiry && Object.keys(data.expiry).length > 0) {
+      form.append('expiry_json', JSON.stringify(data.expiry));
+    }
+    form.append('scheduled_date', data.scheduled_date);
+    form.append('period', data.period);
+    form.append('volumes', data.volumes == null ? '' : String(data.volumes));
+    form.append('volumes_unknown', String(data.volumes_unknown));
+    form.append('pallets', data.pallets == null ? '' : String(data.pallets));
+    form.append('pallets_unknown', String(data.pallets_unknown));
+    form.append('notes', data.notes);
+    data.nfs.forEach((f, i) => inboundNfForm(form, i, f));
+    return api.post<InboundAppointment>('/inbound', form, INBOUND_UPLOAD);
+  },
+  analyze: (nfs: InboundNfFiles[]) => {
+    const form = new FormData();
+    nfs.forEach((f, i) => { if (f.xml) form.append(`nf${i}_xml`, f.xml); });
+    return api.post<{ nfs: InboundAnalyzeNf[] }>('/inbound/analyze', form, INBOUND_UPLOAD);
+  },
+  update: (id: number, data: {
+    scheduled_date?: string; period?: InboundPeriod;
+    volumes?: number | null; volumes_unknown?: boolean;
+    pallets?: number | null; pallets_unknown?: boolean; notes?: string;
+  }) => api.put<InboundAppointment>(`/inbound/${id}`, data),
+  cancel: (id: number, reason?: string) =>
+    api.post<InboundAppointment>(`/inbound/${id}/cancel`, { reason: reason || null }),
+  addNf: (id: number, files: InboundNfFiles) => {
+    const form = new FormData();
+    inboundNfForm(form, 0, files);
+    return api.post<InboundAppointment>(`/inbound/${id}/nfs`, form, INBOUND_UPLOAD);
+  },
+  replaceFiles: (id: number, nfId: number, files: Partial<InboundNfFiles>) => {
+    const form = new FormData();
+    inboundNfForm(form, 0, files);
+    return api.put<InboundAppointment>(`/inbound/${id}/nfs/${nfId}/files`, form, INBOUND_UPLOAD);
+  },
+  removeNf: (id: number, nfId: number) => api.delete<InboundAppointment>(`/inbound/${id}/nfs/${nfId}`),
+  downloadFile: (fileId: number, filename: string) =>
+    downloadAuthenticatedFile(`/inbound/files/${fileId}`, filename),
 };

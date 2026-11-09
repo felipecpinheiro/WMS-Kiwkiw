@@ -615,7 +615,40 @@ def _my_seller(db: Session, current_user: models.User) -> models.Seller:
     return _seller_or_404(db, current_user.seller_id)
 
 
+def _mask_receipts_for_seller(payload: dict) -> None:
+    """
+    Recebimentos de carga (23/10/2026) para o SELLER: so aparece com o mes
+    FECHADO, e so quantidade + valor da linha (nunca franquia nem valor
+    unitario). Em mes aberto o total_geral dele sai SEM o adicional, para a
+    conta bater com o que esta na tela.
+    """
+    f = payload.get("fatura")
+    payload.pop("recebimentos_list", None)
+    if not isinstance(f, dict):
+        return
+    rec = f.pop("recebimentos", None) or {}
+    adicional = float(rec.get("adicional") or 0.0)
+    if adicional <= 0:
+        return
+    if payload.get("status") == "closed":
+        f["recebimentos"] = {"qtd": rec.get("qtd"), "adicional": adicional}
+    else:
+        f["total_geral"] = calc.r2(float(f.get("total_geral") or 0.0) - adicional)
+    # a franquia/valor unitario vivem em params (ja escondido do seller)
+
+
+def _seller_doc_payload(payload: dict) -> dict:
+    """PDF/Excel do seller: mesma mascara de recebimentos do JSON dele."""
+    _mask_receipts_for_seller(payload)
+    pr = payload.get("params")
+    if isinstance(pr, dict):
+        payload["params"] = {k: v for k, v in pr.items()
+                             if k not in ("franquia_recebimentos", "valor_recebimento")}
+    return payload
+
+
 def _strip_for_seller(payload: dict) -> dict:
+    _mask_receipts_for_seller(payload)
     for k in _SELLER_HIDDEN_TOP:
         payload.pop(k, None)
     fatura = payload.get("fatura")
@@ -644,7 +677,7 @@ def my_closing_pdf(
 ):
     _check_month(ref_month)
     seller = _my_seller(db, current_user)
-    payload = _build_payload(db, seller, ref_month)
+    payload = _seller_doc_payload(_build_payload(db, seller, ref_month))
     buf = io.BytesIO(docs.invoice_pdf_bytes(payload))
     fname = f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.pdf"
     return StreamingResponse(buf, media_type="application/pdf",
@@ -659,7 +692,7 @@ def my_closing_excel(
 ):
     _check_month(ref_month)
     seller = _my_seller(db, current_user)
-    payload = _build_payload(db, seller, ref_month)
+    payload = _seller_doc_payload(_build_payload(db, seller, ref_month))
     buf = io.BytesIO(docs.invoice_xlsx_bytes(payload))
     fname = f"fatura_{_ascii(payload['seller_name'])}_{ref_month}.xlsx"
     return StreamingResponse(
@@ -667,6 +700,78 @@ def my_closing_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ── recebimentos de carga do mês (aba do Financeiro, 23/10/2026) ──────────────
+
+def _receipts_row(db: Session, seller: models.Seller, ref_month: str) -> dict:
+    """Recebimentos de um seller num mês: mês fechado lê o snapshot, aberto é ao vivo."""
+    closing = db.query(models.BillingMonthlyClosing).filter(
+        models.BillingMonthlyClosing.seller_id == seller.id,
+        models.BillingMonthlyClosing.ref_month == ref_month,
+    ).first()
+    if closing and closing.status == "closed":
+        frozen = calc.read_frozen(db, closing)
+        rec = frozen["fatura"]["recebimentos"]
+        items = frozen.get("recebimentos_list") or []
+        status = "closed"
+    else:
+        params = calc.default_params_for_seller(db, seller.id)
+        items = calc.list_month_receipts(db, seller.id, ref_month)
+        rec = calc.receipts_charge(params, len(items))
+        status = "open"
+    unit = seller.unit
+    return {
+        "seller_id": seller.id,
+        "seller_name": seller.trade_name or seller.name,
+        "unit_id": seller.unit_id,
+        "unit_name": unit.name if unit else None,
+        "active": seller.active,
+        "status": status,
+        "qtd": rec["qtd"], "franquia": rec["franquia"],
+        "valor_unit": rec["valor_unit"], "adicional": rec["adicional"],
+        "items": items,
+    }
+
+
+@router.get("/receipts/{ref_month}")
+def get_month_receipts(
+    ref_month: str,
+    current_user: models.User = Depends(require_billing_access),
+    db: Session = Depends(get_db),
+):
+    """Aba "Recebimentos" do Financeiro: sellers com recebimento no mês + adicional."""
+    _check_month(ref_month)
+    if not 1 <= int(ref_month[5:7]) <= 12:
+        raise HTTPException(400, "Mês inválido")
+    start, end = calc.month_range(ref_month)
+    ids = {
+        r[0] for r in db.query(models.InboundAppointment.seller_id).filter(
+            models.InboundAppointment.received_at.isnot(None),
+            models.InboundAppointment.received_at >= start,
+            models.InboundAppointment.received_at <= end,
+        ).distinct().all()
+    }
+    # mês fechado: o snapshot manda (inclui seller que depois ficou sem a linha ao vivo)
+    ids |= {
+        r[0] for r in db.query(models.BillingMonthlyClosing.seller_id).filter(
+            models.BillingMonthlyClosing.ref_month == ref_month,
+            models.BillingMonthlyClosing.status == "closed",
+            models.BillingMonthlyClosing.n_recebimentos > 0,
+        ).all()
+    }
+    sellers = (
+        db.query(models.Seller).options(joinedload(models.Seller.unit))
+        .filter(models.Seller.id.in_(ids or [-1])).all()
+    )
+    rows = [_receipts_row(db, s, ref_month) for s in sellers]
+    rows.sort(key=lambda r: (r["unit_name"] is None, (r["unit_name"] or "").lower(), r["seller_name"].lower()))
+    return {
+        "ref_month": ref_month,
+        "rows": rows,
+        "total_qtd": sum(r["qtd"] for r in rows),
+        "total_adicional": calc.r2(sum(r["adicional"] for r in rows)),
+    }
 
 
 # ── consolidado ──────────────────────────────────────────────────────────────
@@ -695,7 +800,16 @@ def _sellers_for_month(db: Session, ref_month: str) -> tuple[list[models.Seller]
             models.BillingMonthlyClosing.ref_month == ref_month
         ).all()
     }
-    movement_ids = ids_with_nf | ids_with_closing
+    # Recebimentos de carga (23/10/2026): seller que so teve recebimento no mes
+    # tambem precisa ter a fatura calculada (o adicional entra no total).
+    ids_with_receipt = {
+        r[0] for r in db.query(models.InboundAppointment.seller_id).filter(
+            models.InboundAppointment.received_at.isnot(None),
+            models.InboundAppointment.received_at >= start,
+            models.InboundAppointment.received_at <= end,
+        ).distinct().all()
+    }
+    movement_ids = ids_with_nf | ids_with_closing | ids_with_receipt
     active_ids = {r[0] for r in db.query(models.Seller.id).filter(models.Seller.active == True).all()}  # noqa: E712
     ids = movement_ids | active_ids
     if not ids:
@@ -751,6 +865,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
                 "seguro": f["seguro"],
                 "armazenagem": f["armazenagem"],
                 "avulsos": f["avulsos"],
+                "recebimentos": f["recebimentos"]["adicional"],
                 "total": f["total_geral"],
                 "status": "fechado" if payload["status"] == "closed"
                           else ("em aberto" if payload["persisted"] else "não iniciado"),
@@ -772,6 +887,7 @@ def _consolidated_rows(db: Session, ref_month: str) -> list[dict]:
                 "seguro": 0.0,
                 "armazenagem": 0.0,
                 "avulsos": 0.0,
+                "recebimentos": 0.0,
                 "total": 0.0,
                 "status": "não iniciado",
                 **_paid_fields(payments.get(seller.id)),

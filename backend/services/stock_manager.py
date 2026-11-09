@@ -475,6 +475,20 @@ def apply_stock_for_orders(
             })
     negatives.sort(key=lambda n: ((n["seller_name"] or ""), n["sku"]))
 
+    # Controle de Vencimentos — Fase 3 (03/11/2026). FEFO roda DEPOIS da baixa,
+    # em savepoint próprio por order. Falha aqui NUNCA desfaz a baixa (ver
+    # cabeçalho de services/expiry_hooks.py).
+    try:
+        from . import expiry_hooks
+        applied_orders = [o for o in candidates if o.id in applied]
+        if applied_orders:
+            expiry_hooks.allocate_fefo_for_orders(
+                db, orders=applied_orders, operator_id=operator_id,
+            )
+    except Exception:
+        # Nunca propaga: a camada de vencimentos é informativa.
+        pass
+
     return {
         "applied": applied,
         "pending": pending,
@@ -838,6 +852,30 @@ def orders_with_discontinued_skus(db: Session, order_ids: List[int]) -> Dict[int
     for skus in out.values():
         skus.sort()
     return out
+
+
+def orders_held_by_inbound(db: Session, order_ids: List[int]) -> Dict[int, str]:
+    """
+    Das NFs informadas, quais pertencem a um Agendamento de Inbound que AINDA
+    NÃO foi recebido (AGENDADO) ou foi CANCELADO (23/10/2026). Devolve
+    {order_id: status_do_agendamento}.
+
+    Segunda camada de defesa: com a Opção B essas NFs nem têm sessão e por isso
+    nunca aparecem em Manuseios/Scanner. Mesmo assim o servidor recusa bipar por
+    id (`blocked_reason="inbound_not_received"`) — não confia só na ausência da
+    sessão. Motivo PRÓPRIO: nunca entra em `held_orders` nem se mistura com
+    `missing_product`/`discontinued_sku` nos badges.
+    """
+    if not order_ids:
+        return {}
+    rows = db.execute(text("""
+        SELECT o.id, a.status
+          FROM orders o
+          JOIN inbound_appointments a ON a.id = o.inbound_appointment_id
+         WHERE o.id IN :ids
+           AND a.status IN ('AGENDADO', 'CANCELADO')
+    """).bindparams(bindparam("ids", expanding=True)), {"ids": list(order_ids)}).fetchall()
+    return {r[0]: r[1] for r in rows}
 
 
 def pending_orders_with_sku(db: Session, seller_id: int, sku: str) -> List:
@@ -1307,6 +1345,16 @@ def reverse_stock_for_order(
             db=db,
         )
         reversed_count += 1
+
+    # Controle de Vencimentos — Fase 3 (03/11/2026). Estorno das alocações
+    # FEFO: devolve às linhas originais via `data_copiada`, recria quando a
+    # linha de origem foi apagada/editada. Encapsulado — nunca derruba o
+    # estorno de estoque.
+    try:
+        from . import expiry_hooks
+        expiry_hooks.reverse_fefo_for_order(db, order=order, operator_id=operator_id)
+    except Exception:
+        pass
 
     order.stock_applied_at = None
     return reversed_count

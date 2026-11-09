@@ -4,10 +4,10 @@ Todos os modelos SQLAlchemy do sistema.
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, Text,
+    Column, Integer, String, Float, Boolean, DateTime, Text, LargeBinary,
     ForeignKey, Enum, Date, UniqueConstraint, Index, Table, Numeric
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from sqlalchemy.sql import func
 import enum
 
@@ -336,6 +336,7 @@ class Order(Base):
     session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)
     reactivated_at = Column(DateTime, nullable=True)         # marca o "corte de ciclo" ao reativar NF inativada — bipagem/estoque anteriores a esta data não contam mais
     stock_applied_at = Column(DateTime, nullable=True)       # quando esta NF baixou estoque (06/08/2026: a baixa passou a ser no import, não na bipagem). Vazio = ainda não baixou
+    inbound_appointment_id = Column(Integer, ForeignKey("inbound_appointments.id"), nullable=True, index=True)  # Agendamento de Inbound (23/10/2026): NF de entrada criada pelo seller. Nulo = NF comum
 
     # Relacionamentos
     seller = relationship("Seller")
@@ -580,6 +581,11 @@ class BillingSellerParams(Base):
     # Mínimo do plano (01/10/2026): até `min_pedidos` NFs B2C cobra este valor fixo (+ adicionais).
     # 0 = sem mínimo em R$ (comportamento anterior).
     valor_minimo_b2c = Column(Float, default=0.0, nullable=False)
+    # Recebimentos de carga (Agendamento de Inbound, 23/10/2026): 1 por agendamento
+    # recebido no mes. Cobra `valor_recebimento` por recebimento ACIMA de `franquia_recebimentos`.
+    # 0 e 0 = sem cobranca.
+    franquia_recebimentos = Column(Integer, default=0, nullable=False)
+    valor_recebimento = Column(Float, default=0.0, nullable=False)
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
     adic_produto_b2b = Column(Float, default=0.0, nullable=False)     # adicional por produto acima da franquia, na NF B2B
@@ -645,6 +651,11 @@ class BillingMonthlyClosing(Base):
     preco_unitario = Column(Float, default=0.0, nullable=False)
     min_pedidos = Column(Integer, default=0, nullable=False)
     valor_minimo_b2c = Column(Float, default=0.0, nullable=False)
+    # Recebimentos de carga (Agendamento de Inbound, 23/10/2026): 1 por agendamento
+    # recebido no mes. Cobra `valor_recebimento` por recebimento ACIMA de `franquia_recebimentos`.
+    # 0 e 0 = sem cobranca.
+    franquia_recebimentos = Column(Integer, default=0, nullable=False)
+    valor_recebimento = Column(Float, default=0.0, nullable=False)
     manuseio_b2b = Column(Float, default=0.0, nullable=False)
     valor_caixa_b2b = Column(Float, default=0.0, nullable=False)
     adic_produto_b2b = Column(Float, default=0.0, nullable=False)
@@ -677,6 +688,11 @@ class BillingMonthlyClosing(Base):
     t_subtotal_b2c = Column(Float, nullable=True)
     t_subtotal_b2b = Column(Float, nullable=True)
     t_total_geral = Column(Float, nullable=True)
+    # Recebimentos de carga (23/10/2026): contagem, adicional e lista congelados ao fechar.
+    # Nulo em meses fechados antes desta data = sem recebimentos cobrados.
+    n_recebimentos = Column(Integer, nullable=True)
+    t_recebimentos = Column(Float, nullable=True)
+    recebimentos_json = Column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("seller_id", "ref_month", name="uq_billing_closing_seller_month"),
@@ -970,3 +986,260 @@ class AppSetting(Base):
     description = Column(String(300), nullable=True)
     updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
+# ============================================================
+# AGENDAMENTO DE INBOUND (23/10/2026)
+# ============================================================
+# O seller agenda a chegada de uma carga. Status (texto validado em
+# services/inbound_flow.py, sem enum nativo no Postgres):
+#   AGENDADO -> RECEBIDO -> EM_CONFERENCIA -> CONFERIDO   (ou CANCELADO)
+
+class InboundAppointment(Base):
+    __tablename__ = "inbound_appointments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)
+    scheduled_date = Column(Date, nullable=False, index=True)
+    period = Column(String(10), nullable=False)             # MANHA | TARDE
+    status = Column(String(20), nullable=False, default="AGENDADO", index=True)
+    volumes = Column(Integer, nullable=True)
+    volumes_unknown = Column(Boolean, nullable=False, default=False)
+    pallets = Column(Integer, nullable=True)
+    pallets_unknown = Column(Boolean, nullable=False, default=False)
+    notes = Column(Text, nullable=True)
+    cancel_reason = Column(String(200), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=now_brasilia)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia)
+    received_at = Column(DateTime, nullable=True)
+    received_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    conferred_at = Column(DateTime, nullable=True)
+    session_id = Column(Integer, ForeignKey("picking_sessions.id"), nullable=True)  # criada ao virar RECEBIDO
+
+    seller = relationship("Seller")
+    nfs = relationship("InboundNf", back_populates="appointment", cascade="all, delete-orphan")
+
+
+class InboundNf(Base):
+    """Uma NF do agendamento. `active=False` = removida pelo seller (Order cancelado)."""
+    __tablename__ = "inbound_nfs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("inbound_appointments.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    nf_number = Column(String(20), nullable=False)
+    danfe_key = Column(String(60), nullable=False, index=True)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=now_brasilia)
+
+    appointment = relationship("InboundAppointment", back_populates="nfs")
+    files = relationship("InboundFile", back_populates="nf", cascade="all, delete-orphan")
+
+
+class InboundFile(Base):
+    """Arquivo da NF. Fica no banco (disco do Railway é efêmero). `content` é deferred."""
+    __tablename__ = "inbound_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nf_id = Column(Integer, ForeignKey("inbound_nfs.id"), nullable=False, index=True)
+    kind = Column(String(5), nullable=False)                # PDF | XML | XLSX
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=True)
+    size = Column(Integer, nullable=False, default=0)
+    content = deferred(Column(LargeBinary, nullable=False))
+    created_at = Column(DateTime, default=now_brasilia)
+
+    nf = relationship("InboundNf", back_populates="files")
+
+
+# ============================================================
+# CONTROLE DE VENCIMENTOS (03/11/2026)
+# ============================================================
+# Camada INFORMATIVA que mora ao lado do estoque — NUNCA grava em
+# stock_movements/stock_positions. O seller cadastra (SKU, data, qtd); o FEFO
+# escolhe na baixa de saída; a bipagem só exibe/avisa. Veja o cabeçalho de
+# services/expiry_calc.py e a seção dedicada no CLAUDE.md.
+#
+# Status/tipos: texto validado em código, sem enum nativo no Postgres (padrão
+# do CRM, Insumos, Inbound). Tabelas inteiras nascem pelo create_all(); coluna
+# nova em tabela existente exigiria migração idempotente em main.py.
+
+class ExpiryLine(Base):
+    """
+    Uma linha de vencimento = (seller, SKU, data, quantidade). SEM lote.
+    `state`:
+      * `a_chegar` -> cadastrado em agendamento de inbound ainda não conferido.
+                      Não participa do FEFO.
+      * `ativo`    -> conta no FEFO e no saldo cadastrado por SKU.
+    `qty_inicial` nunca muda após criada (histórico "quanto o seller informou");
+    `qty_atual` cai a cada alocação (atômico via UPDATE ... SET x = x - :q) e
+    sobe no estorno. Soft-delete via `active=False`.
+    """
+    __tablename__ = "expiry_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    sku = Column(String(100), nullable=False)
+    expiry_date = Column(Date, nullable=False)
+    # Nome do lote (09/11/2026) — opcional, texto livre até 60. Mesmo lote do mesmo
+    # SKU tem sempre a mesma data (validado nos endpoints). NULL = "Sem lote".
+    lot_name = Column(String(60), nullable=True)
+    qty_inicial = Column(Integer, nullable=False)
+    qty_atual = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, default="ativo")   # a_chegar | ativo
+    origin_type = Column(String(16), nullable=False, default="portal")  # portal | inbound
+    origin_inbound_nf_id = Column(Integer, ForeignKey("inbound_nfs.id"), nullable=True, index=True)
+    origin_nf_number = Column(String(20), nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia, nullable=False)
+
+    seller = relationship("Seller")
+    product = relationship("Product")
+    allocations = relationship("ExpiryAllocation", back_populates="line")
+
+    __table_args__ = (
+        Index("ix_expiry_lines_seller_sku_date", "seller_id", "sku", "expiry_date", "id"),
+        Index("ix_expiry_lines_seller_state", "seller_id", "state", "active"),
+    )
+
+
+class ExpiryAllocation(Base):
+    """
+    Alocação histórica (NF x linha de vencimento). `data_copiada` é a `expiry_date`
+    NO MOMENTO da alocação — nunca muda. Edição posterior da linha não desfaz
+    o passado (ver Q2 da fase 1). `reversed_at` preenchido = estorno aplicado,
+    não conta mais no "quanto saiu desta linha".
+    """
+    __tablename__ = "expiry_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    order_item_id = Column(Integer, ForeignKey("order_items.id"), nullable=True)
+    expiry_line_id = Column(Integer, ForeignKey("expiry_lines.id"), nullable=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    sku = Column(String(100), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    data_copiada = Column(Date, nullable=False)
+    # Lote da linha NO MOMENTO da alocação (cópia, como data_copiada): o estorno
+    # recria a linha com o mesmo lote mesmo que a original tenha sido apagada.
+    lot_copiado = Column(String(60), nullable=True)
+    vencido_na_alocacao = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    reversed_at = Column(DateTime, nullable=True)
+
+    line = relationship("ExpiryLine", back_populates="allocations")
+
+
+class ExpiryAlertConfig(Base):
+    """Configuração de aviso por seller. 1 linha por seller. Default 30 dias."""
+    __tablename__ = "expiry_alert_configs"
+
+    seller_id = Column(Integer, ForeignKey("sellers.id"), primary_key=True)
+    default_days = Column(Integer, nullable=False, default=30)
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia, nullable=False)
+
+
+class ExpiryAlertOverride(Base):
+    """Override de dias de aviso por (seller, SKU)."""
+    __tablename__ = "expiry_alert_overrides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    sku = Column(String(100), nullable=False)
+    days = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia, nullable=False)
+
+    __table_args__ = (UniqueConstraint("seller_id", "sku", name="uq_expiry_alert_override"),)
+
+
+class ExpiryDisposal(Base):
+    """
+    Pedido de descarte ou retirada feito pelo seller sobre uma linha de
+    vencimento. `status`: solicitado -> atendido / cancelado. Em `solicitado`
+    a quantidade fica RESERVADA (sai do FEFO via `qty_disponivel`). Em `atendido`,
+    o servidor decrementa `expiry_lines.qty_atual` atomicamente — nenhum
+    stock_movement é gerado (feature é informativa).
+    """
+    __tablename__ = "expiry_disposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    expiry_line_id = Column(Integer, ForeignKey("expiry_lines.id"), nullable=False, index=True)
+    sku = Column(String(100), nullable=False)
+    type = Column(String(16), nullable=False)       # descarte | retirada
+    qty = Column(Integer, nullable=False)
+    obs = Column(String(500), nullable=True)
+    status = Column(String(16), nullable=False, default="solicitado")  # solicitado | atendido | cancelado
+    requested_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    requested_at = Column(DateTime, default=now_brasilia, nullable=False)
+    fulfilled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    fulfilled_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    line = relationship("ExpiryLine")
+
+
+class ExpiryNotice(Base):
+    """
+    Aviso para a gerência. Dois tipos:
+      * `vencido_enviado` — a bipagem alocou um vencimento vencido (toast disparou).
+        Dedupe por (seller, sku, expiry_date) enquanto não resolvido.
+      * `disposal`        — pedido de descarte/retirada em `solicitado`. Resolvido
+        quando o pedido vira atendido ou cancelado.
+
+    `resolved_at` preenchido = sumiu da faixa para todos.
+    Dispensa POR USUÁRIO vive em `expiry_notice_dismissals`.
+    """
+    __tablename__ = "expiry_notices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    type = Column(String(32), nullable=False, index=True)      # vencido_enviado | disposal
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False, index=True)
+    sku = Column(String(100), nullable=True)
+    expiry_date = Column(Date, nullable=True)
+    disposal_id = Column(Integer, ForeignKey("expiry_disposals.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=now_brasilia, nullable=False)
+    updated_at = Column(DateTime, default=now_brasilia, onupdate=now_brasilia, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    disposal = relationship("ExpiryDisposal")
+
+    __table_args__ = (
+        Index("ix_expiry_notices_scope", "seller_id", "resolved_at"),
+    )
+
+
+class ExpiryNoticeDismissal(Base):
+    """Dispensa de um aviso por um usuário específico — não volta para esse usuário."""
+    __tablename__ = "expiry_notice_dismissals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    notice_id = Column(Integer, ForeignKey("expiry_notices.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    dismissed_at = Column(DateTime, default=now_brasilia, nullable=False)
+
+    __table_args__ = (UniqueConstraint("notice_id", "user_id", name="uq_expiry_notice_dismissal"),)
+
+
+class ExpiryLoginModalDismissal(Base):
+    """
+    "Dispensar por hoje" do modal de login do Portal. Chave (user_id, dismissed_date):
+    unico por usuário por dia. Amanhã o modal volta.
+    """
+    __tablename__ = "expiry_login_modal_dismissals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    dismissed_date = Column(Date, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "dismissed_date", name="uq_expiry_login_modal_dismissal"),)

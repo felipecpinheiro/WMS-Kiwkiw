@@ -12,16 +12,18 @@ import {
   Search, Download, ClipboardList, Warehouse,
   ChevronUp, ChevronDown, ChevronsUpDown, X,
   BarChart2, List, CalendarDays, KeyRound, SlidersHorizontal, Receipt,
-  LayoutDashboard, PackagePlus, FileSpreadsheet,
+  LayoutDashboard, PackagePlus, FileSpreadsheet, Truck, CalendarClock,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend,
 } from 'recharts';
-import { dashboardApi, inventoryApi, authApi } from '../api';
+import { dashboardApi, inventoryApi, authApi, expiryApi } from '../api';
 import SellerFinanceTab from './SellerFinance';
 import SellerDashboardTab from './SellerDashboard';
 import SellerSuppliesTab from './SellerSupplies';
+import SellerExpiryTab from './SellerExpiry';
+import SellerInboundTab from './SellerInbound';
 import ValuesSheetModal, { fmtBRL } from '../components/ValuesSheetModal';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -31,13 +33,14 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
 import ThemeToggle from '../components/ThemeToggle';
+import ExpiryLoginModal from '../components/ExpiryLoginModal';
 import Logo from '../components/Logo';
 import FulfillmentLoader from '../components/FulfillmentLoader';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Tab = 'dashboard' | 'orders' | 'stock' | 'movements' | 'finance' | 'supplies';
+type Tab = 'dashboard' | 'orders' | 'stock' | 'movements' | 'finance' | 'supplies' | 'expiry' | 'inbound';
 type StockSubTab = 'position' | 'chart';
 type SortDir = 'asc' | 'desc' | null;
 interface SortState { col: string; dir: SortDir }
@@ -393,6 +396,18 @@ export default function SellerPortalPage() {
     { enabled: !!sellerId && tab === 'movements' },
   );
 
+  // Bolinha no menu "Vencimentos": linhas em situação vencido/aviso do seller.
+  // Polling mais lento (120s) — é só o indicador do menu.
+  const { data: expiryAlertLines = [] } = useQuery(
+    ['seller-expiry-alerts', sellerId],
+    () => sellerId
+      ? expiryApi.listLines({ seller_id: sellerId }).then(r =>
+          r.data.filter(l => l.situation === 'vencido' || l.situation === 'aviso'))
+      : [],
+    { enabled: !!sellerId, refetchInterval: 120_000, refetchOnWindowFocus: false },
+  );
+  const expiryAlertCount = expiryAlertLines.length;
+
   // Portal do seller: SEMPRE mostra o loader ao trocar de tela ou filtrar
   // (não só na 1ª carga) — decisão explícita, pra o cliente nunca achar que
   // travou. Só a query de "orders" usa isLoading puro (ela faz polling de
@@ -634,12 +649,15 @@ export default function SellerPortalPage() {
     { id: 'movements', label: 'Movimentações',  icon: List },
     { id: 'finance',   label: 'Financeiro',     icon: Receipt },
     { id: 'supplies',  label: 'Insumos',        icon: PackagePlus },
+    { id: 'expiry',    label: 'Lotes e Validades', icon: CalendarClock },
+    { id: 'inbound',   label: isMobile ? 'Inbound' : 'Agendamento de Inbound', icon: Truck },
   ];
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen overflow-hidden bg-app">
+      {user.role === 'client' && <ExpiryLoginModal onOpenTab={() => setTab('expiry')} />}
 
       {/* ══ SIDEBAR (desktop) ════════════════════════════════════════════════ */}
       {!isMobile && (
@@ -700,6 +718,7 @@ export default function SellerPortalPage() {
           <p className="px-2 mb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-t5">Consultas</p>
           {navItems.map(({ id, label, icon: Icon }) => {
             const isActive = tab === id;
+            const badge = id === 'expiry' && expiryAlertCount > 0 ? expiryAlertCount : 0;
             return (
               <button
                 key={id}
@@ -713,7 +732,15 @@ export default function SellerPortalPage() {
                 } : {}}
               >
                 <Icon size={14} style={isActive ? { color: 'rgb(var(--brand))' } : {}} />
-                {label}
+                <span className="flex-1">{label}</span>
+                {badge > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                    style={{ background: 'rgb(var(--bad))', color: '#fff', minWidth: 18, textAlign: 'center' }}
+                  >
+                    {badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -888,6 +915,8 @@ export default function SellerPortalPage() {
               {tab === 'movements' ? 'Histórico de entradas e saídas de estoque' : ''}
               {tab === 'finance'   ? 'Suas faturas mensais na Kiwkiw' : ''}
               {tab === 'supplies'  ? 'Materiais sem código de barras — saldo estimado por regras que você define' : ''}
+              {tab === 'expiry'    ? 'Lotes e validades por SKU — informativo (não altera o estoque)' : ''}
+              {tab === 'inbound'   ? 'Agende a chegada das suas cargas no armazém' : ''}
             </p>
           </div>
 
@@ -901,6 +930,8 @@ export default function SellerPortalPage() {
 
           {/* ── INSUMOS ──────────────────────────────────────────────────── */}
           {tab === 'supplies' && sellerId && <SellerSuppliesTab sellerId={sellerId} />}
+          {tab === 'expiry'   && sellerId && <SellerExpiryTab sellerId={sellerId} />}
+          {tab === 'inbound' && sellerId && <SellerInboundTab sellerId={sellerId} />}
 
           {/* ── PEDIDOS ──────────────────────────────────────────────────── */}
           {tab === 'orders' && (
@@ -1524,15 +1555,24 @@ export default function SellerPortalPage() {
         >
           {navItems.map(({ id, label, icon: Icon }) => {
             const isActive = tab === id;
+            const badge = id === 'expiry' && expiryAlertCount > 0 ? expiryAlertCount : 0;
             return (
               <button
                 key={id}
                 onClick={() => { setTab(id); setSearch(''); }}
-                className="flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
+                className="relative flex-1 flex flex-col items-center gap-1 py-2 text-[10px]"
                 style={{ color: isActive ? 'rgb(var(--brand))' : 'rgb(var(--t4))' }}
               >
                 <Icon size={18} />
                 {label}
+                {badge > 0 && (
+                  <span
+                    className="absolute top-1 right-3 text-[9px] font-bold px-1 rounded-full"
+                    style={{ background: 'rgb(var(--bad))', color: '#fff', minWidth: 14, textAlign: 'center' }}
+                  >
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
               </button>
             );
           })}

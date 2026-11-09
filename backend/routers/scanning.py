@@ -26,10 +26,12 @@ from ..services.stock_manager import (
     order_has_stock_applied,
     orders_missing_product_skus,
     orders_with_discontinued_skus,
+    orders_held_by_inbound,
     orders_with_scan_overage,
     is_entrada_order,
 )
 from .. import models, schemas
+from ..services import inbound_flow
 
 router = APIRouter(prefix="/scanning", tags=["Bipagem"])
 
@@ -398,6 +400,24 @@ def get_session_orders(
     # Quais NFs estão pausadas — em lote, nunca 1 consulta por pedido.
     paused_ids = _paused_order_ids(db, order_ids)
 
+    # Controle de Vencimentos (03/11/2026): quantidade de linhas "a chegar"
+    # cadastradas para cada NF. Uma consulta agrupada, nunca N+1.
+    expiry_count_by_order: dict[int, int] = {}
+    if order_ids:
+        rows = db.query(
+            models.InboundNf.order_id,
+            func.count(models.ExpiryLine.id),
+        ).join(
+            models.ExpiryLine,
+            models.ExpiryLine.origin_inbound_nf_id == models.InboundNf.id,
+        ).filter(
+            models.InboundNf.order_id.in_(order_ids),
+            models.InboundNf.active == True,  # noqa: E712
+            models.ExpiryLine.active == True,  # noqa: E712
+            models.ExpiryLine.state == "a_chegar",
+        ).group_by(models.InboundNf.order_id).all()
+        expiry_count_by_order = {int(oid): int(cnt) for oid, cnt in rows}
+
     result = []
     for order in orders:
         total_items = sum(item.quantity for item in order.items)
@@ -425,6 +445,9 @@ def get_session_orders(
             "scanned_items": scanned,
             "remaining": max(0, total_items - scanned),
             "completion_pct": round((scanned / total_items * 100) if total_items > 0 else 0, 1),
+            # Vencimentos cadastrados pelo seller no agendamento (Fase 2, 03/11/2026).
+            # 0 ou chave ausente = não cadastrou nada.
+            "expiry_pending_count": expiry_count_by_order.get(order.id, 0),
             "items": [
                 _build_item_dict(item, order.seller_id, item_scan_counts, db)
                 for item in order.items
@@ -502,6 +525,16 @@ def open_order_by_nfe(
     if order_status == "inactive":
         admin_name = _get_deactivation_admin_name(order.id, db)
         return {"success": False, "blocked_reason": "inactive", "message": f"Esta NF foi inativada por {admin_name}."}
+
+    # NF de Agendamento de Inbound que ainda não foi recebida (ou foi cancelada):
+    # não pode ser conferida. Com a sessão só criada no "Recebido" isto não
+    # deveria acontecer; fica como segunda camada (23/10/2026).
+    if orders_held_by_inbound(db, [order.id]).get(order.id):
+        return {
+            "success": False,
+            "blocked_reason": "inbound_not_received",
+            "message": f"NF {order.nf_number} pertence a um agendamento ainda não recebido.",
+        }
 
     is_entrada = _is_entrada(order)
 
@@ -583,6 +616,10 @@ def open_order_by_nfe(
             is_error=False,
             error_message="Conferência retomada",
         ))
+        db.commit()
+
+    # Agendamento de Inbound: abrir a NF para conferir = início da bipagem.
+    if is_entrada and inbound_flow.on_scan_started(db, order, current_user.id):
         db.commit()
 
     return {
@@ -908,6 +945,18 @@ def process_scan(
 
     is_entrada = _is_entrada(order)
 
+    # Agendamento de Inbound ainda não recebido/cancelado (23/10/2026).
+    if orders_held_by_inbound(db, [order.id]).get(order.id):
+        return schemas.ScanResponse(
+            success=False,
+            message=f"NF {order.nf_number} pertence a um agendamento ainda não recebido.",
+            status="inbound_not_received",
+            items_remaining=0,
+        )
+    # Início da bipagem do agendamento (idempotente; commita junto com o log do scan).
+    if is_entrada:
+        inbound_flow.on_scan_started(db, order, current_user.id)
+
     # Pedido sem transportadora não pode ser bipado — mesma trava de
     # open_order_by_nfe, aqui como segunda camada de defesa. Ver CLAUDE.md.
     #
@@ -1108,6 +1157,20 @@ def process_scan(
         _save_audit_csv(log, order, current_user)
         return scan_response
 
+    # Saída: anexa a alocação FEFO do SKU (Fase 3, 03/11/2026). Só leitura,
+    # nunca bloqueia. Ver services/expiry_hooks.py.
+    def _attach_expiry(resp: schemas.ScanResponse) -> schemas.ScanResponse:
+        try:
+            from ..services import expiry_hooks
+            alloc_map = expiry_hooks.allocations_for_order(db, order.id)
+            allocs = alloc_map.get(matched_item.sku) or []
+            if allocs:
+                resp.allocation_hint = allocs
+                resp.has_vencido = any(a.get("vencido") for a in allocs)
+        except Exception:
+            pass
+        return resp
+
     if remaining == 0:
         # Caixa obrigatória na SAÍDA (17/08/2026): sem ela, o pedido fica
         # "aguardando caixa" — todos os itens batem 100%, mas o status não vira
@@ -1163,7 +1226,7 @@ def process_scan(
     # Grava trilha de auditoria em CSV
     _save_audit_csv(log, order, current_user)
 
-    return scan_response
+    return _attach_expiry(scan_response)
 
 
 @router.post("/interrupt", response_model=dict)
@@ -1299,6 +1362,11 @@ def _build_entry_conference(order: models.Order, db: Session) -> dict:
     counted = _scanned_by_sku(order, db)
     names = {it.sku: it.product_name for it in order.items}
 
+    # Vencimentos "a chegar" cadastrados pelo seller no agendamento (Fase 2 do
+    # Controle de Vencimentos, 03/11/2026). Só leitura; nunca bloqueia.
+    from ..services import expiry_hooks
+    expiry_pending = expiry_hooks.pending_lines_for_order(db, order)
+
     lines = []
     for sku in sorted(set(expected) | set(counted)):
         exp = int(expected.get(sku, 0) or 0)
@@ -1313,6 +1381,8 @@ def _build_entry_conference(order: models.Order, db: Session) -> dict:
             status = "over"
         else:
             status = "short"
+        pend = expiry_pending.get(sku) or []
+        pend_sum = sum(int(p["quantity"]) for p in pend)
         lines.append({
             "sku": sku,
             "product_name": names.get(sku) or sku,
@@ -1320,6 +1390,15 @@ def _build_entry_conference(order: models.Order, db: Session) -> dict:
             "counted": cnt,
             "diff": cnt - exp,
             "status": status,
+            # Vencimentos informados pelo seller p/ este SKU, ordenados data ASC.
+            "expiry_pending": [
+                {"expiry_date": p["expiry_date"], "quantity": int(p["quantity"])}
+                for p in pend
+            ],
+            "expiry_sum": pend_sum,
+            # Aviso informativo: a soma cadastrada é maior que o contado →
+            # o seller cadastrou a mais ou faltou mercadoria. Nunca trava.
+            "expiry_over_counted": pend_sum > cnt and pend_sum > 0,
         })
 
     divergent = [ln for ln in lines if ln["status"] != "ok"]
@@ -1328,6 +1407,7 @@ def _build_entry_conference(order: models.Order, db: Session) -> dict:
         "divergent_count": len(divergent),
         "total_expected": sum(ln["expected"] for ln in lines),
         "total_counted": sum(ln["counted"] for ln in lines),
+        "has_expiry_pending": any(ln["expiry_pending"] for ln in lines),
     }
 
 
@@ -1444,6 +1524,13 @@ def finalize_entry_order(
         ))
 
     _finalize_order(order, order.session_id, db)
+    # Agendamento de Inbound: Conferido quando todas as NFs dele estiverem finalizadas.
+    inbound_flow.on_order_finalized(db, order, current_user.id)
+    # Controle de Vencimentos (03/11/2026): vira linhas "a chegar" em "ativo".
+    # Encapsulado — camada informativa nunca derruba a conferência (ver cabeçalho
+    # de services/expiry_hooks.py).
+    from ..services import expiry_hooks
+    expiry_hooks.activate_a_chegar(db, order=order, user_id=current_user.id)
 
     # Auditoria: uma linha com o resumo da conferência. As observações por SKU
     # divergente ficam no próprio movimento de estoque, que é onde o time olha.
@@ -3631,3 +3718,24 @@ def save_order_box(
 
     db.commit()
     return {"order_id": order_id, "box_used": order.box_used, "order_completed": order_completed}
+
+
+# ─── Controle de Vencimentos — Fase 3 (03/11/2026) ──────────────────────────
+
+@router.get("/orders/{order_id}/expiry-allocation")
+def get_order_expiry_allocation(
+    order_id: int,
+    current_user: models.User = Depends(require_internal),
+    db: Session = Depends(get_db),
+):
+    """
+    Devolve a alocação FEFO desta NF, por SKU, numa consulta agrupada.
+    Formato: `{sku: [{expiry_date, quantity, vencido}, ...]}`.
+    Usado pelo painel de item do Scanner (saída). Vazio = sem vencimentos
+    cadastrados para esta NF, nada a exibir.
+    """
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    from ..services import expiry_hooks
+    return expiry_hooks.allocations_for_order(db, order_id)

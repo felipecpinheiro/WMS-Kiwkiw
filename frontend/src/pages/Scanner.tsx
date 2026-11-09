@@ -83,9 +83,11 @@ interface ProductModalState {
 // ─── Helper: item card ───────────────────────────────────
 
 function ItemCard({
-  item, isLast, isFlashing, isFirst, isSmall, onRightClick, onImageClick,
+  item, isLast, isFlashing, isFirst, isSmall, expiry, onRightClick, onImageClick,
 }: {
   item: SessionOrderItem;
+  /** Vencimentos a usar neste SKU (FEFO). Vazio/undefined = nada a avisar. */
+  expiry?: { expiry_date: string; quantity: number; vencido: boolean; lot_name?: string | null }[];
   isLast: boolean;
   isFlashing?: boolean;
   /** Item em curso (primeiro na fila) — 50% com destaque */
@@ -143,6 +145,33 @@ function ItemCard({
           <Package size={iconSize} className="text-t5" />
         </div>
       )}
+
+      {/* Aviso de vencimento (FEFO) — logo abaixo da foto, à direita */}
+      {!isSmall && !done && expiry && expiry.length > 0 && (() => {
+        const fmt = (iso: string) => iso.split('-').reverse().join('/');
+        const anyVencido = expiry.some(e => e.vencido);
+        // Com lote: "L2501 — vence 15/03/2027". Sem lote: só a data (como antes).
+        const um = (e: { expiry_date: string; lot_name?: string | null }) =>
+          e.lot_name ? `${e.lot_name} (${fmt(e.expiry_date)})` : fmt(e.expiry_date);
+        const temLote = expiry.some(e => !!e.lot_name);
+        const texto = expiry
+          .map(e => expiry.length > 1 ? `${um(e)} · ${e.quantity} un` : um(e))
+          .join(' e ');
+        return (
+          <div className="flex justify-end mb-1.5">
+            <span
+              className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                anyVencido
+                  ? 'bg-bad text-white border-bad'
+                  : 'bg-amber-500/15 text-warn border-warn/40'
+              }`}
+              title={anyVencido ? 'Este vencimento já venceu' : 'Vencimento mais próximo a separar'}
+            >
+              {anyVencido ? '⚠ VENCIDO — ' : ''}{temLote ? 'Usar o lote' : 'Usar o vencimento'} {texto}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Badge SEM CADASTRO */}
       {!item.barcode_seller && !isSmall && (
@@ -471,6 +500,15 @@ export default function ScannerPage() {
   const isBipandoView = !!activeOrder && scanPhase === 'product';
   const isAuditView = !isBipandoView && !!auditOrder;
   const displayOrder: SessionOrder | null = isBipandoView ? activeOrder : (isAuditView ? auditOrder : null);
+
+  // Vencimento a usar em cada SKU (FEFO decidido na importação). Só saída, só
+  // leitura, uma consulta por NF aberta. Falha aqui nunca atrapalha a bipagem.
+  const expiryOrderId = displayOrder && displayOrder.file_type !== 'entrada' ? displayOrder.id : null;
+  const { data: expiryAllocs } = useQuery(
+    ['order-expiry-allocation', expiryOrderId],
+    () => scanningApi.orderExpiryAllocation(expiryOrderId!).then(r => r.data),
+    { enabled: !!expiryOrderId, staleTime: 5 * 60 * 1000, retry: false },
+  );
 
   // Campo de quantidade só existe na ENTRADA (17/08/2026): uma caixa de entrada
   // pode ter 1.000 peças iguais. Na saída cada bipe é uma conferência de
@@ -1717,6 +1755,7 @@ export default function ScannerPage() {
                               isFlashing={item.sku === flashedSku}
                               isFirst={isFirst}
                               isSmall={isDone}
+                              expiry={expiryAllocs?.[item.sku]}
                               onRightClick={(e) => handleItemRightClick(e, item)}
                               onImageClick={(url) => setLightboxUrl(url)}
                             />

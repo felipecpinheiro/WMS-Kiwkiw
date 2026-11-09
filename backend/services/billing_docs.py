@@ -122,6 +122,11 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         ["Valor mínimo B2C (até o nº mínimo de pedidos)",
          brl(pr.get("valor_minimo_b2c")) if pr.get("valor_minimo_b2c") else "—", "", ""],
     ]
+    # Recebimentos de carga (23/10/2026): so no documento INTERNO (a copia do seller
+    # chega sem essas chaves em `params`).
+    if "franquia_recebimentos" in pr:
+        par_rows.append(["Franquia de recebimentos de carga", str(pr["franquia_recebimentos"]),
+                         "Valor por recebimento acima", brl(pr.get("valor_recebimento"))])
     el.append(Paragraph("Parâmetros do mês", h2))
     t = Table([[Paragraph(c, cell) for c in r] for r in par_rows],
               colWidths=[5.2 * cm, 3.4 * cm, 5.2 * cm, 3.4 * cm])
@@ -143,8 +148,12 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         ["Armazenagem", brl(f["armazenagem"]), "—"],
         ["Linhas avulsas", brl(f["avulsos"]), "—"],
         ["Subtotal", brl(f["subtotal_b2c"]), brl(f["subtotal_b2b"])],
-        ["TOTAL GERAL", brl(f["total_geral"]), ""],
     ]
+    _rc = f.get("recebimentos") or {}
+    if _rc.get("adicional"):
+        # linha propria: fora dos subtotais B2C/B2B, soma so no total geral
+        fin_rows.append([f"Recebimentos de carga ({_rc.get('qtd')} no mês)", brl(_rc["adicional"]), "—"])
+    fin_rows.append(["TOTAL GERAL", brl(f["total_geral"]), ""])
     ft = Table(fin_rows, colWidths=[8.0 * cm, 4.6 * cm, 4.6 * cm])
     ft.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PURPLE),
@@ -275,7 +284,10 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Cobrança por faixa de pedidos B2C", "Sim" if pr.get("usar_faixas_pedidos") else "Não"),
         ("Faixas de pedidos B2C", _faixas_txt(pr)),
         ("Valor mínimo B2C (R$)", pr.get("valor_minimo_b2c") or 0),
-    ]:
+    ] + ([
+        ("Franquia de recebimentos de carga", pr.get("franquia_recebimentos") or 0),
+        ("Valor por recebimento acima da franquia (R$)", pr.get("valor_recebimento") or 0),
+    ] if "franquia_recebimentos" in pr else []):
         ws.cell(r, 1, k)
         ws.cell(r, 2, v)
         r += 1
@@ -303,6 +315,8 @@ def invoice_xlsx_bytes(p: dict) -> bytes:
         ("Armazenagem", f["armazenagem"], None),
         ("Linhas avulsas", f["avulsos"], None),
         ("Subtotal", f["subtotal_b2c"], f["subtotal_b2b"]),
+    ] + ([("Recebimentos de carga", f["recebimentos"]["adicional"], None)]
+         if (f.get("recebimentos") or {}).get("adicional") else []) + [
         ("TOTAL GERAL", f["total_geral"], None),
     ]:
         ws.cell(r, 1, lbl)
@@ -375,7 +389,7 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
     ws.cell(1, 1, f"Consolidado de faturamento — {_month_label(ref_month)}").font = Font(bold=True, size=13)
     # `rows` já vem agrupado por unidade (unidade A–Z, seller A–Z dentro).
     headers = ["Unidade", "Seller", "Ativo", "NFs", "B2C", "B2B", "Seguro",
-               "Armazenagem", "Avulsos", "Total", "Situação", "Pago", "Pago por", "Pago em"]
+               "Armazenagem", "Avulsos", "Recebimentos", "Total", "Situação", "Pago", "Pago por", "Pago em"]
     for c, h in enumerate(headers, 1):
         cell = ws.cell(3, c, h)
         cell.fill = hdr_fill
@@ -393,22 +407,23 @@ def consolidated_xlsx_bytes(ref_month: str, rows: list[dict]) -> bytes:
         ws.cell(r, 7, row["seguro"])
         ws.cell(r, 8, row["armazenagem"])
         ws.cell(r, 9, row["avulsos"])
-        ws.cell(r, 10, row["total"])
-        ws.cell(r, 11, row["status"])
-        ws.cell(r, 12, "Sim" if row.get("paid") else "Não")
-        ws.cell(r, 13, row.get("paid_by") or "")
+        ws.cell(r, 10, row.get("recebimentos") or 0.0)
+        ws.cell(r, 11, row["total"])
+        ws.cell(r, 12, row["status"])
+        ws.cell(r, 13, "Sim" if row.get("paid") else "Não")
+        ws.cell(r, 14, row.get("paid_by") or "")
         pa = row.get("paid_at")
-        ws.cell(r, 14, f"{pa[8:10]}/{pa[5:7]}/{pa[0:4]}" if pa else "")
+        ws.cell(r, 15, f"{pa[8:10]}/{pa[5:7]}/{pa[0:4]}" if pa else "")
         tot += row["total"]
         if row.get("paid"):
             tot_pago += row["total"]
         r += 1
     ws.cell(r, 1, f"{len(rows)} sellers").font = Font(bold=True)
-    ws.cell(r, 10, round(tot, 2)).font = Font(bold=True)
+    ws.cell(r, 11, round(tot, 2)).font = Font(bold=True)
     ws.cell(r + 1, 1, "Pago").font = Font(bold=True)
-    ws.cell(r + 1, 10, round(tot_pago, 2))
+    ws.cell(r + 1, 11, round(tot_pago, 2))
     ws.cell(r + 2, 1, "A receber").font = Font(bold=True)
-    ws.cell(r + 2, 10, round(tot - tot_pago, 2))
+    ws.cell(r + 2, 11, round(tot - tot_pago, 2))
 
     out = io.BytesIO()
     wb.save(out)

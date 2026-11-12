@@ -122,8 +122,7 @@ def invoice_pdf_bytes(p: dict) -> bytes:
         ["Valor mínimo B2C (até o nº mínimo de pedidos)",
          brl(pr.get("valor_minimo_b2c")) if pr.get("valor_minimo_b2c") else "—", "", ""],
     ]
-    # Recebimentos de carga (23/10/2026): so no documento INTERNO (a copia do seller
-    # chega sem essas chaves em `params`).
+    # Recebimentos de carga (23/10/2026): desde 12/11/2026 tambem na copia do seller.
     if "franquia_recebimentos" in pr:
         par_rows.append(["Franquia de recebimentos de carga", str(pr["franquia_recebimentos"]),
                          "Valor por recebimento acima", brl(pr.get("valor_recebimento"))])

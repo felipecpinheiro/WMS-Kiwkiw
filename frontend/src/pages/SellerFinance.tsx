@@ -12,7 +12,7 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import { useQuery } from 'react-query';
-import { Download, List as ListIcon } from 'lucide-react';
+import { Download, List as ListIcon, ChevronDown } from 'lucide-react';
 import { billingApi } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -226,6 +226,102 @@ function FatRow({ label, b2c, b2b, strong }: {
   );
 }
 
+// ─── Parâmetros do mês (somente leitura, recolhível) ──────────────────────────
+// 12/11/2026: mesma tabela "Parâmetros do mês" que já ia no PDF/Excel.
+
+const faixasTxt = (pr: any): string => {
+  if (!pr?.usar_faixas_pedidos) return '—';
+  try {
+    const fx = JSON.parse(pr.faixas_pedidos || '[]');
+    return fx.map((f: any) => `${f.de}-${f.ate}: ${brl(f.preco)}/ped`).join(' · ') || '—';
+  } catch {
+    return '—';
+  }
+};
+
+function ParametrosMes({ payload }: { payload: any }) {
+  const [open, setOpen] = useState(false);
+  const pr = payload?.params;
+  if (!pr) return null;
+  const sn = (v: any) => (v ? 'Sim' : 'Não');
+  const rows: [string, string][] = [
+    ['Preço unitário / manuseio B2C', brl(pr.preco_unitario)],
+    ['Nº mínimo de pedidos', String(pr.min_pedidos ?? 0)],
+    ['Manuseio B2B', brl(pr.manuseio_b2b)],
+    ['Valor caixa B2B', brl(pr.valor_caixa_b2b)],
+    ['Adicional por produto B2B', brl(pr.adic_produto_b2b)],
+    ['Franquia de produtos B2B', String(pr.franquia_produtos_b2b ?? 0)],
+    ['É B2B a partir de (itens)', String(pr.limite_itens_b2b ?? 0)],
+    ['Tipos de caixa inclusos', pr.tipos_caixa_inclusos || '—'],
+    ['Cota de caixas / mês', String(pr.cota_caixas_mes ?? 0)],
+    ['Cubagem medida (m³)', String(payload.cubagem_m3 ?? 0)],
+    ['Franquia grátis (m³)', String(pr.franquia_m3 ?? 0)],
+    ['Preço por m³ adicional', brl(pr.preco_m3)],
+    ['Cobrar seguro', sn(pr.seguro_incluso)],
+    ['Alíquota do seguro (%)', String(pr.aliquota_seguro ?? 0)],
+    ['Valor segurado', brl(payload.valor_segurado)],
+    ['Armazenagem inclusa', sn(pr.armazenagem_inclusa)],
+    ['Cobrança por faixa de pedidos B2C', sn(pr.usar_faixas_pedidos)],
+    ['Faixas', faixasTxt(pr)],
+    ['Valor mínimo B2C (até o nº mínimo de pedidos)', pr.valor_minimo_b2c ? brl(pr.valor_minimo_b2c) : '—'],
+  ];
+  if ('franquia_recebimentos' in pr) {
+    rows.push(['Franquia de recebimentos de carga', String(pr.franquia_recebimentos ?? 0)]);
+    rows.push(['Valor por recebimento acima da franquia', brl(pr.valor_recebimento)]);
+  }
+  return (
+    <div className="bg-surface border border-line-soft rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 text-left hover:bg-surface-2 transition"
+      >
+        <span>
+          <span className="block text-[13px] font-semibold text-t2">Parâmetros do mês</span>
+          <span className="block text-[11px] text-t4 mt-0.5">Condições usadas no cálculo desta fatura.</span>
+        </span>
+        <ChevronDown size={16} className={`text-t4 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-4 sm:px-5 pb-4 sm:pb-5">
+          <div className="border border-line-soft rounded-xl overflow-hidden text-[13px]">
+            {rows.map(([k, v]) => (
+              <div key={k}
+                className="grid grid-cols-1 sm:grid-cols-[1.4fr_1fr] gap-x-3 px-3.5 py-2 border-b border-line-soft last:border-b-0">
+                <span className="text-t3">{k}</span>
+                <span className="font-mono text-t1 sm:text-right break-words">{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Notas explicativas do mínimo/faixa (mesmo texto do PDF).
+function NotasFatura({ f }: { f: any }) {
+  const notas: string[] = [];
+  if (f?.min_atingiu_piso) {
+    notas.push(`Mínimo mensal B2C: soma real ${brl(f.soma_real_b2c)} < piso ${brl(f.floor_b2c)} → cobra-se o maior.`);
+  }
+  const fa = f?.faixa_aplicada;
+  if (fa) {
+    notas.push(`Faixa aplicada: ${fa.de}-${fa.ate} pedidos x ${brl(fa.preco)} (${fa.n_b2c} NFs B2C, cobradas ${fa.qtd_cobrada}).`);
+  }
+  const mn = f?.minimo_aplicado;
+  if (mn) {
+    notas.push(`Mínimo do plano: ${mn.n_b2c} NFs B2C (até ${mn.pedidos} pedidos) → cobra-se o valor mínimo de ${brl(mn.valor)} mais os adicionais por NF.`);
+  }
+  if (!notas.length) return null;
+  return (
+    <div className="mt-3 space-y-1">
+      {notas.map((n, i) => <p key={i} className="text-[11.5px] text-t4 leading-snug">{n}</p>)}
+    </div>
+  );
+}
+
 // ─── Aba ──────────────────────────────────────────────────────────────────────
 
 export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
@@ -313,6 +409,9 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
             </div>
           )}
 
+          {/* Parâmetros do mês (recolhível, só leitura) */}
+          <ParametrosMes payload={payload} />
+
           {/* Resumo da fatura */}
           <div className="bg-surface border border-line-soft rounded-2xl p-4 sm:p-5">
             <h2 className="text-[13px] font-semibold text-t2">
@@ -343,6 +442,7 @@ export default function SellerFinanceTab({ sellerId }: { sellerId: number }) {
               <span className="text-[13px] font-semibold">TOTAL GERAL DA FATURA</span>
               <span className="text-[19px] font-bold font-mono">{brl(payload.fatura.total_geral)}</span>
             </div>
+            <NotasFatura f={payload.fatura} />
           </div>
 
           {/* Linhas avulsas — logo abaixo do resumo, pois é onde o cliente vê o total */}

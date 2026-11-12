@@ -604,9 +604,14 @@ def closing_excel(
 
 # Campos podados do payload antes de devolver ao seller: são as tarifas do
 # contrato (o "como se calcula"), que ele não deve enxergar no portal.
-_SELLER_HIDDEN_TOP = ("params", "box_prices", "grupo_a", "inicio_contrato", "reajuste_alerta")
-_SELLER_HIDDEN_FATURA = ("min_atingiu_piso", "soma_real_b2c", "floor_b2c", "faixa_aplicada",
-                         "minimo_aplicado")
+#
+# 12/11/2026: `params` (os "Parametros do mes") e os campos de piso/faixa da
+# fatura deixaram de ser podados — o seller ja os recebia no PDF/Excel e agora
+# tambem os ve no portal (aba Financeiro, bloco recolhivel, so leitura). Segue
+# escondido: tabela global/por seller de preco de caixa, grupo A, mes de inicio
+# do contrato e o aviso de reajuste.
+_SELLER_HIDDEN_TOP = ("box_prices", "grupo_a", "inicio_contrato", "reajuste_alerta")
+_SELLER_HIDDEN_FATURA: tuple = ()
 
 
 def _my_seller(db: Session, current_user: models.User) -> models.Seller:
@@ -639,11 +644,8 @@ def _mask_receipts_for_seller(payload: dict) -> None:
 
 def _seller_doc_payload(payload: dict) -> dict:
     """PDF/Excel do seller: mesma mascara de recebimentos do JSON dele."""
+    # 12/11/2026: franquia/valor de recebimento agora ficam visiveis (igual ao portal).
     _mask_receipts_for_seller(payload)
-    pr = payload.get("params")
-    if isinstance(pr, dict):
-        payload["params"] = {k: v for k, v in pr.items()
-                             if k not in ("franquia_recebimentos", "valor_recebimento")}
     return payload
 
 

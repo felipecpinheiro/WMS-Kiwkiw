@@ -22,7 +22,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation, useQuery, useQueryClient } from 'react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from 'react-query';
 import {
   AlertTriangle, Plus, Trash2, Pencil, Lock, X, ChevronDown, ChevronUp,
   PackagePlus, List as ListIcon, Scale,
@@ -192,7 +192,11 @@ function SkuPicker({ sellerId, value, onPick }: { sellerId: number; value: strin
 
   useEffect(() => {
     if (!open) return;
-    const fechar = () => setOpen(false);
+    // Rolar a lista de SKUs (dentro do painel) NÃO fecha — só rolar a página.
+    const fechar = (e?: Event) => {
+      if (e?.target instanceof Node && panelRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     window.addEventListener('scroll', fechar, true);
     window.addEventListener('resize', fechar);
     return () => {
@@ -201,12 +205,23 @@ function SkuPicker({ sellerId, value, onPick }: { sellerId: number; value: strin
     };
   }, [open]);
 
-  const { data } = useQuery(
+  // Carrega 30 por vez e busca mais quando a rolagem chega ao fim da lista.
+  const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useInfiniteQuery(
     ['supply-products', sellerId, debounced],
-    () => cadastrosApi.products({ seller_id: sellerId, search: debounced || undefined, active_only: true, page: 1, page_size: 30 }).then(r => r.data),
-    { enabled: open, keepPreviousData: true },
+    ({ pageParam = 1 }) => cadastrosApi.products({ seller_id: sellerId, search: debounced || undefined, active_only: true, page: pageParam, page_size: 30 }).then(r => r.data),
+    {
+      enabled: open,
+      keepPreviousData: true,
+      getNextPageParam: (last) => (last.page < last.pages ? last.page + 1 : undefined),
+    },
   );
-  const items = data?.items ?? [];
+  const items = data?.pages.flatMap(p => p.items) ?? [];
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  };
 
   return (
     <div className="relative" ref={boxRef}>
@@ -238,7 +253,7 @@ function SkuPicker({ sellerId, value, onPick }: { sellerId: number; value: strin
             value={term}
             onChange={e => setTerm(e.target.value)}
           />
-          <div className="max-h-56 overflow-y-auto mt-2 space-y-0.5">
+          <div className="max-h-56 overflow-y-auto mt-2 space-y-0.5" onScroll={onListScroll}>
             {items.length === 0 && <p className="text-xs text-t5 px-2 py-3 text-center">Nenhum produto encontrado</p>}
             {items.map((p: any) => (
               <button
@@ -250,6 +265,7 @@ function SkuPicker({ sellerId, value, onPick }: { sellerId: number; value: strin
                 <span className="font-semibold">{p.sku}</span> — {p.name}
               </button>
             ))}
+            {isFetchingNextPage && <p className="text-xs text-t5 px-2 py-2 text-center">Carregando mais...</p>}
           </div>
         </div>,
         document.body,

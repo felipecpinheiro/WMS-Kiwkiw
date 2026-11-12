@@ -16,7 +16,7 @@
 
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation, useQuery, useQueryClient } from 'react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from 'react-query';
 import {
   AlertTriangle, Plus, Trash2, Pencil, X, Download, Settings as SettingsIcon,
   Clock, PackageX, ListChecks, Check,
@@ -79,14 +79,26 @@ function SkuPicker({
 
   useEffect(() => { setQuery(value); }, [value]);
 
-  const { data = { items: [] } } = useQuery(
+  // 20 por vez; busca mais quando a rolagem chega ao fim da lista.
+  const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useInfiniteQuery(
     ['sku-picker', sellerId, query],
-    () => cadastrosApi.products({ seller_id: sellerId, search: query, page_size: 20 }),
-    { enabled: open && !!sellerId },
+    ({ pageParam = 1 }) =>
+      cadastrosApi.products({ seller_id: sellerId, search: query, page: pageParam, page_size: 20 })
+        .then(r => r.data),
+    {
+      enabled: open && !!sellerId,
+      getNextPageParam: (last) => (last.page < last.pages ? last.page + 1 : undefined),
+    },
   );
-  const items: SkuOption[] = (data as any).items?.map((p: any) => ({
+  const items: SkuOption[] = data?.pages.flatMap(pg => pg.items).map((p: any) => ({
     sku: p.sku, name: p.name,
   })) || [];
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  };
 
   function reposition() {
     const el = inputRef.current;
@@ -122,6 +134,9 @@ function SkuPicker({
       {open && coords && createPortal(
         <div
           className="z-[2000] rounded-lg border border-line shadow-lg max-h-64 overflow-auto"
+          // Clicar na barra de rolagem não pode tirar o foco do campo (o onBlur fecharia a lista).
+          onMouseDown={(e) => e.preventDefault()}
+          onScroll={onListScroll}
           style={{
             position: 'fixed',
             left: coords.left, top: coords.top, width: coords.width,
@@ -142,6 +157,7 @@ function SkuPicker({
               <span className="text-t4"> — {it.name}</span>
             </button>
           ))}
+          {isFetchingNextPage && <div className="px-3 py-2 text-xs text-t4 text-center">Carregando mais...</div>}
         </div>,
         document.body,
       )}

@@ -14,7 +14,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery, useQueryClient } from 'react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from 'react-query';
 import {
   Undo2, Download, Upload, Plus, Trash2, AlertTriangle, Check, X, FileSpreadsheet,
 } from 'lucide-react';
@@ -99,7 +99,11 @@ function SkuPicker({
   // janela (ver abaixo), rolar a página a deixaria "solta" longe do campo.
   useEffect(() => {
     if (!open) return;
-    const fechar = () => setOpen(false);
+    // Rolar a lista de SKUs (dentro do painel) NÃO fecha — só rolar a página.
+    const fechar = (e?: Event) => {
+      if (e?.target instanceof Node && panelRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     window.addEventListener('scroll', fechar, true);
     window.addEventListener('resize', fechar);
     return () => {
@@ -115,20 +119,31 @@ function SkuPicker({
     setOpen(o => !o);
   };
 
-  const { data, isFetching } = useQuery(
+  // 30 por vez; busca mais quando a rolagem chega ao fim da lista.
+  const { data, isFetching, hasNextPage, isFetchingNextPage, fetchNextPage } = useInfiniteQuery(
     ['returns-products', sellerId, debounced],
-    () => cadastrosApi.products({
+    ({ pageParam = 1 }) => cadastrosApi.products({
       seller_id: sellerId as number,
       search: debounced || undefined,
       active_only: true,
-      page: 1,
+      page: pageParam,
       page_size: 30,
     }).then(r => r.data),
-    { enabled: open && !!sellerId, keepPreviousData: true },
+    {
+      enabled: open && !!sellerId,
+      keepPreviousData: true,
+      getNextPageParam: (last) => (last.page < last.pages ? last.page + 1 : undefined),
+    },
   );
 
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
+  const items = data?.pages.flatMap(p => p.items) ?? [];
+  const total = data?.pages[0]?.total ?? 0;
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  };
 
   if (!sellerId) {
     return <span className="text-xs text-t5 italic">escolha o seller</span>;
@@ -166,7 +181,7 @@ function SkuPicker({
             className={inputCls}
             style={inputStyle}
           />
-          <div className="mt-2 max-h-64 overflow-y-auto">
+          <div className="mt-2 max-h-64 overflow-y-auto" onScroll={onListScroll}>
             {isFetching && items.length === 0 && (
               <p className="text-xs text-t4 px-2 py-3">Buscando...</p>
             )}
@@ -184,12 +199,11 @@ function SkuPicker({
                 <span className="text-xs text-t4 ml-2">{p.name}</span>
               </button>
             ))}
+            {isFetchingNextPage && <p className="text-xs text-t4 px-2 py-2 text-center">Carregando mais...</p>}
           </div>
-          {total > items.length && (
-            <p className="text-[11px] text-t5 px-2 pt-1">
-              Mostrando {items.length} de {total} — refine a busca
-            </p>
-          )}
+          <p className="text-[11px] text-t5 px-2 pt-1">
+            Mostrando {items.length} de {total}{hasNextPage ? ' — role para carregar mais' : ''}
+          </p>
         </div>,
         document.body,
       )}

@@ -186,6 +186,9 @@ function InboundCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-bold text-t1 truncate">{a.seller_name ?? '—'}</p>
+          <p className="text-[11px] text-t2 font-mono break-words">
+            NF {(a.nfs ?? []).map(n => n.nf_number).filter(Boolean).join(', ') || '—'}
+          </p>
           <p className="text-[11px] text-t4">#{a.id} · {a.nf_count} NF(s)</p>
         </div>
         <StatusBadge a={a} />
@@ -306,6 +309,7 @@ export default function InboundPage() {
   const [preset, setPreset] = useState<Preset>('week');
   const [statusFilter, setStatusFilter] = useState<InboundStatus | ''>('');
   const [sellerFilter, setSellerFilter] = useState('');
+  const [nfSearch, setNfSearch] = useState('');
   const [toReceive, setToReceive] = useState<InboundAppointment | null>(null);
 
   const { data: units } = useQuery('units', () => cadastrosApi.units().then(r => r.data), { enabled: role !== 'operator' });
@@ -337,8 +341,10 @@ export default function InboundPage() {
 
   const visible = useMemo(() => {
     const rows = data ?? [];
+    const nfTerm = nfSearch.trim().toLowerCase();
     return rows.filter(a => {
       if (sellerFilter && a.seller_name !== sellerFilter) return false;
+      if (nfTerm && !(a.nfs ?? []).some(n => String(n.nf_number).toLowerCase().includes(nfTerm))) return false;
       // Pendências sempre aparecem: atrasado (Agendado com data passada) e carga
       // já recebida que ainda está em conferência, mesmo com data anterior à janela.
       const pending = a.overdue || a.status === 'RECEBIDO' || a.status === 'EM_CONFERENCIA';
@@ -346,7 +352,7 @@ export default function InboundPage() {
       if (preset === 'next15' && a.scheduled_date < today && !pending) return false;
       return true;
     });
-  }, [data, sellerFilter, preset, monday, today]);
+  }, [data, sellerFilter, nfSearch, preset, monday, today]);
 
   const sellers = useMemo(() => Array.from(new Set((data ?? []).map(a => a.seller_name).filter(Boolean) as string[])).sort(), [data]);
 
@@ -405,6 +411,8 @@ export default function InboundPage() {
           <option value="">Todos os sellers</option>
           {sellers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <input className={`${selectCls} w-44`} style={selectStyle} value={nfSearch}
+          onChange={e => setNfSearch(e.target.value)} placeholder="Buscar nº da NF..." aria-label="Buscar NF" />
         {preset !== 'overdue' && (
           <select className={selectCls} style={selectStyle} value={statusFilter}
             onChange={e => setStatusFilter(e.target.value as InboundStatus | '')} aria-label="Status">

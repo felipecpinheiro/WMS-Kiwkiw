@@ -20,7 +20,7 @@ import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from 'react-query';
 import {
-  Truck, Plus, X, FileText, FileCode, FileSpreadsheet, Trash2, Download, AlertTriangle, Upload,
+  Truck, Plus, X, FileText, FileCode, FileSpreadsheet, Trash2, Download, AlertTriangle, Upload, Search,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -132,6 +132,12 @@ function FilePick({
         onChange={e => { onChange(e.target.files?.[0] ?? null); e.target.value = ''; }} />
     </label>
   );
+}
+
+/** Números das NFs ativas do agendamento, separados por vírgula ("—" se não houver). */
+function nfNumbersText(a: InboundAppointment): string {
+  const nums = (a.nfs ?? []).map(n => n.nf_number).filter(Boolean);
+  return nums.length ? nums.join(', ') : '—';
 }
 
 /** Volumes / paletes: número ou "Não sei". */
@@ -728,8 +734,13 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
 
+  const [nfSearch, setNfSearch] = useState('');
+
   const { data, isLoading } = useQuery(['inbound', sellerId], () => inboundApi.list().then(r => r.data));
-  const rows = (data ?? []).filter(a => !statusFilter || a.status === statusFilter);
+  const nfTerm = nfSearch.trim().toLowerCase();
+  const rows = (data ?? []).filter(a =>
+    (!statusFilter || a.status === statusFilter) &&
+    (!nfTerm || (a.nfs ?? []).some(n => String(n.nf_number).toLowerCase().includes(nfTerm))));
 
   return (
     <div className="space-y-4">
@@ -742,9 +753,22 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
             </button>
           ))}
         </div>
-        <button className={`${btnPrimary} flex items-center gap-1.5`} onClick={() => setShowNew(true)}>
-          <Plus size={13} /> Novo agendamento
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
+            <input
+              value={nfSearch}
+              onChange={e => setNfSearch(e.target.value)}
+              placeholder="Buscar nº da NF..."
+              inputMode="numeric"
+              aria-label="Buscar pelo número da NF"
+              className="w-44 pl-7 pr-2.5 py-1.5 border border-line rounded-lg text-sm bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500 placeholder-t5"
+            />
+          </div>
+          <button className={`${btnPrimary} flex items-center gap-1.5`} onClick={() => setShowNew(true)}>
+            <Plus size={13} /> Novo agendamento
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -752,7 +776,7 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
       ) : rows.length === 0 ? (
         <div className="border border-line rounded-xl p-8 text-center">
           <Truck size={28} className="mx-auto text-t5 mb-2" />
-          <p className="text-sm text-t3">{(data ?? []).length === 0 ? 'Nenhum agendamento ainda.' : 'Nenhum agendamento com esse status.'}</p>
+          <p className="text-sm text-t3">{(data ?? []).length === 0 ? 'Nenhum agendamento ainda.' : 'Nenhum agendamento encontrado com esses filtros.'}</p>
         </div>
       ) : (
         <>
@@ -761,7 +785,8 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
             <table className="w-full text-sm">
               <thead className="bg-surface-2 text-t4 text-xs">
                 <tr>
-                  <th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">Período</th>
+                  <th className="text-left px-3 py-2">Data</th><th className="text-left px-3 py-2">NF</th>
+                  <th className="text-left px-3 py-2">Período</th>
                   <th className="text-left px-3 py-2">Status</th><th className="text-right px-3 py-2">NFs</th>
                   <th className="text-right px-3 py-2">Volumes</th><th className="text-right px-3 py-2">Paletes</th><th />
                 </tr>
@@ -770,6 +795,7 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
                 {rows.map(a => (
                   <tr key={a.id} className="border-t border-line-soft hover:bg-surface-2/50 cursor-pointer" onClick={() => setOpenId(a.id)}>
                     <td className="px-3 py-2 text-t1 font-bold">{brDate(a.scheduled_date)}</td>
+                    <td className="px-3 py-2 text-t2 font-mono text-xs break-words max-w-[14rem]">{nfNumbersText(a)}</td>
                     <td className="px-3 py-2 text-t3">{PERIOD_LABEL[a.period]}</td>
                     <td className="px-3 py-2"><StatusBadge a={a} /></td>
                     <td className="px-3 py-2 text-right text-t3">{a.nf_count}</td>
@@ -790,6 +816,7 @@ export default function SellerInboundTab({ sellerId }: { sellerId: number }) {
                   <span className="text-sm font-bold text-t1">{brDate(a.scheduled_date)} · {PERIOD_LABEL[a.period]}</span>
                   <StatusBadge a={a} />
                 </div>
+                <div className="text-xs font-mono text-t2 break-words">NF {nfNumbersText(a)}</div>
                 <div className="text-xs text-t3">
                   {a.nf_count} NF(s) · Volumes: {countText(a.volumes, a.volumes_unknown)} · Paletes: {countText(a.pallets, a.pallets_unknown)}
                 </div>

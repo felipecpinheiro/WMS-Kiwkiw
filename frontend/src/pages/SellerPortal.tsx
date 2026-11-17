@@ -51,9 +51,9 @@ interface SortState { col: string; dir: SortDir }
 // usava palavras próprias ("Separação do Produto", "Em Preparação") que não
 // batiam com o resto do site.
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  pending:     { label: 'Pendente',          cls: 'bg-surface-2 text-t3 border border-line' },
-  validated:   { label: 'Separando Produto', cls: 'bg-info-soft text-info' },
-  separating:  { label: 'Separando Produto', cls: 'bg-info-soft text-info' },
+  pending:     { label: 'Em separação',      cls: 'bg-surface-2 text-t3 border border-line' },
+  validated:   { label: 'Em separação',      cls: 'bg-info-soft text-info' },
+  separating:  { label: 'Em separação',      cls: 'bg-info-soft text-info' },
   scanning:    { label: 'Bipando',           cls: 'bg-violet-900/40 text-violet-300' },
   completed:   { label: 'Concluído',         cls: 'bg-ok-soft text-ok' },
   interrupted: { label: 'Interrompido',      cls: 'bg-warn-soft text-warn' },

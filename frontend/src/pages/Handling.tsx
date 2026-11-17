@@ -645,7 +645,7 @@ export default function HandlingPage() {
   const [heldCard, setHeldCard] = useState<SessionCard | null>(null);
 
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
-  // Aqui só precisamos buscar e aplicar o filtro visual de seller (admin only).
+  // Aqui só precisamos buscar e aplicar o filtro visual de seller.
   const { data: serverCards, isLoading, refetch } = useQuery<SessionCard[]>(
     ['session-cards', dateFrom, dateTo, activeUnitId],
     () => scanningApi.sessionCards({
@@ -674,14 +674,14 @@ export default function HandlingPage() {
     [cards, fileTypeView]
   );
 
-  // Seller list for filter dropdown (admin only)
+  // Seller list for filter dropdown (todos os níveis; o backend já limita os cards)
   const allSellers = useMemo(() => {
     const s = new Set<string>();
     byFileType.forEach(c => { if (c.seller_name) s.add(c.seller_name); });
     return Array.from(s).sort();
   }, [byFileType]);
 
-  // Admin: filtro visual por seller. Operador/gerente já chegam pré-filtrados do backend.
+  // Filtro visual por seller (todos os níveis). Operador/gerente já chegam pré-filtrados do backend.
   const filtered = useMemo(() =>
     sellerFilter ? byFileType.filter(c => c.seller_name === sellerFilter) : byFileType,
     [byFileType, sellerFilter]
@@ -837,7 +837,7 @@ export default function HandlingPage() {
           </select>
         )}
 
-        {isAdmin && allSellers.length > 1 && (
+        {allSellers.length > 1 && (
           <select value={sellerFilter} onChange={e => setSellerFilter(e.target.value)}
             className={inputCls} style={inputStyle}>
             <option value="">Todos os sellers</option>

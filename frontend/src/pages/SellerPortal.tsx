@@ -54,14 +54,15 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   pending:     { label: 'Em separação',      cls: 'bg-surface-2 text-t3 border border-line' },
   validated:   { label: 'Em separação',      cls: 'bg-info-soft text-info' },
   separating:  { label: 'Em separação',      cls: 'bg-info-soft text-info' },
-  scanning:    { label: 'Bipando',           cls: 'bg-violet-900/40 text-violet-300' },
+  scanning:    { label: 'Em separação',      cls: 'bg-info-soft text-info' },
   completed:   { label: 'Concluído',         cls: 'bg-ok-soft text-ok' },
   interrupted: { label: 'Interrompido',      cls: 'bg-warn-soft text-warn' },
   cancelled:   { label: 'Cancelado',         cls: 'bg-bad-soft text-bad' },
 };
 
-// Filtro "Não Concluídos" — mesma definição do KPI "Pendentes" da sidebar
-// (total - concluídos): valor de filtro que não colide com nenhum status real.
+// Filtro "Não Concluídos" — mesma definição do KPI "Em separação" da sidebar:
+// tudo que não é concluído nem interrompido (interrompida conta como feita,
+// 18/11/2026). Valor de filtro que não colide com nenhum status real.
 const STATUS_FILTER_NOT_COMPLETED = '__NAO_CONCLUIDOS__';
 
 // ─── Opções de ordenação / filtro do Estoque ──────────────────────────────────
@@ -454,7 +455,7 @@ export default function SellerPortalPage() {
     (!search || o.nf_number?.includes(search) || o.customer_name?.toLowerCase().includes(search.toLowerCase())) &&
     (!statusFilter || (
       statusFilter === STATUS_FILTER_NOT_COMPLETED
-        ? o.status !== 'completed'
+        ? (o.status !== 'completed' && o.status !== 'interrupted')
         : (STATUS_CONFIG[o.status]?.label ?? o.status) === statusFilter
     )),
   );
@@ -692,9 +693,10 @@ export default function SellerPortalPage() {
           {[
             { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-t2' },
             { label: 'Concluídos',    value: ordersCompleted,                color: 'text-ok' },
-            { label: 'Interrompidos', value: ordersInterrupted,              color: 'text-warn' },
-            { label: 'Pendentes',     value: ordersPending,                  color: 'text-violet-400' },
+            { label: 'Em separação',  value: ordersPending,                  color: 'text-violet-400' },
             { label: 'Estoque Baixo', value: (stock as any[]).filter((s: any) => s.level === 'BAIXO').length, color: 'text-bad' },
+            // Só informativo: já está dentro de "Concluídos".
+            { label: 'Interrompidos', value: ordersInterrupted,              color: 'text-warn' },
           ].map(k => (
             <div key={k.label} className="flex items-center justify-between">
               <span className="text-[11px] text-t4">{k.label}</span>

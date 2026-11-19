@@ -706,11 +706,16 @@ def seller_dashboard(
     completed = db.query(func.count(models.Order.id)).filter(
         *base_filter, models.Order.status == models.OrderStatus.COMPLETED,
     ).scalar() or 0
-    pending = total - completed
     interrupted = db.query(func.count(models.Order.id)).filter(
         *base_filter, models.Order.status == models.OrderStatus.INTERRUPTED,
     ).scalar() or 0
-    completion_rate = round(((completed + interrupted) / total * 100) if total > 0 else 0, 1)
+    # 18/11/2026: interrompida conta como FEITA no Portal: "Concluídos" já inclui
+    # as interrompidas (o número de interrompidas na tela é só informativo) e
+    # "Em separação" = tudo que sobra (inclui NF em bipagem). Antes "Pendentes"
+    # era total - concluídos e somava as interrompidas.
+    completed = completed + interrupted
+    pending = total - completed
+    completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
 
     # 17/09/2026: SEM limite — um `limit(500)` fixo aqui escondia a maioria dos
     # pedidos de sellers grandes (Feel MG: 2-3 mil pedidos no período) e, pior,
@@ -851,9 +856,12 @@ def seller_dashboard_analytics(
     )
     today_total          = sum(today_rows.values())
     today_completed      = today_rows.get(S.COMPLETED, 0)
-    today_in_preparation = today_rows.get(S.SCANNING, 0)
     today_interrupted    = today_rows.get(S.INTERRUPTED, 0)
-    today_pending        = today_total - today_completed - today_in_preparation - today_interrupted
+    # 18/11/2026: "Em separação" única (antes eram "Em preparação" = bipando e
+    # "Pendentes"). Os três grupos não se sobrepõem: soma = total.
+    # Interrompida conta como concluída (today_interrupted segue só informativo).
+    today_completed      = today_completed + today_interrupted
+    today_pending        = today_total - today_completed
 
     # ── Uma varredura de ~370 dias monta os dois buckets ────────────────
     day_from = today - timedelta(days=370)
@@ -942,7 +950,6 @@ def seller_dashboard_analytics(
             "date": today.isoformat(),
             "total": today_total,
             "completed": today_completed,
-            "in_preparation": today_in_preparation,
             "interrupted": today_interrupted,
             "pending": today_pending,
         },

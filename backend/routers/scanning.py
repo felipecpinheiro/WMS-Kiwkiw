@@ -2372,7 +2372,7 @@ def reactivate_order(
         action="REACTIVATE_NF",
         detail=(
             f"NF {order.nf_number} ({order.customer_name}) reativada por {current_user.name}. "
-            f"Seller: {seller_name}. Voltou como pendente — bipagem anterior não conta mais. "
+            f"Seller: {seller_name}. Voltou para em separação — bipagem anterior não conta mais. "
             + ("Estoque baixado novamente." if stock_applied
                else "Estoque NÃO baixado: NF pendente (falta transportadora ou produto cadastrado).")
         ),
@@ -2384,7 +2384,7 @@ def reactivate_order(
     return {
         "success": True,
         "message": (
-            f"NF {order.nf_number} reativada — voltou para pendente."
+            f"NF {order.nf_number} reativada — voltou para em separação."
             + (" Estoque baixado novamente." if stock_applied
                else " Atenção: estoque não baixou (NF pendente).")
         ),
@@ -2886,7 +2886,7 @@ def _nf_status_rows(
         rows.append({
             "order_id": o.id,
             "nf": o.nf_number,
-            "situacao": _NF_STATUS_SITUACAO.get(status_raw, "4 - NAO BIPADA"),
+            "situacao": _NF_STATUS_SITUACAO.get(status_raw, "4 - EM SEPARACAO"),
             "cliente_final": o.customer_name,
             "transportadora": o.carrier,
             "itens_previstos": int(itens_map.get(o.id) or 0),

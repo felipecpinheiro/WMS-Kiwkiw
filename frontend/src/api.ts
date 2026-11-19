@@ -515,7 +515,6 @@ export interface SellerAnalytics {
     date: string;
     total: number;
     completed: number;
-    in_preparation: number;
     interrupted: number;
     pending: number;
   };

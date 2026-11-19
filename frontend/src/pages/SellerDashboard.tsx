@@ -106,9 +106,7 @@ export default function SellerDashboardTab({
     if (!t || t.total === 0) return [];
     return [
       { key: 'completed',      label: 'Concluídos',     value: t.completed,      color: cc.brand },
-      { key: 'in_preparation', label: 'Em preparação',  value: t.in_preparation, color: '#8b7bf0' },
-      { key: 'pending',        label: 'Pendentes',      value: t.pending,        color: cc.axisText },
-      { key: 'interrupted',    label: 'Interrompidos',  value: t.interrupted,    color: cc.bad },
+      { key: 'pending',        label: 'Em separação',   value: t.pending,        color: '#8b7bf0' },
     ].filter(s => s.value > 0);
   }, [t, cc]);
 
@@ -128,11 +126,10 @@ export default function SellerDashboardTab({
         <>
           {/* ── Bloco 1 — Hoje ───────────────────────────────────────────── */}
           <Card title="Hoje" subtitle={`Status dos pedidos importados em ${dd(t!.date)}`}>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               <Tile label="Pedidos"       value={t!.total} />
               <Tile label="Concluídos"    value={t!.completed}      tone="ok" />
-              <Tile label="Em preparação" value={t!.in_preparation} tone="brand" />
-              <Tile label="Pendentes"     value={t!.pending} />
+              <Tile label="Em separação"  value={t!.pending}        tone="brand" />
               <Tile label="Interrompidos" value={t!.interrupted}    tone="warn" />
             </div>
             {statusSegments.length > 0 ? (

@@ -33,6 +33,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useChartColors } from '../hooks/useChartColors';
 import BottomSheet from '../components/BottomSheet';
 import ThemeToggle from '../components/ThemeToggle';
+import PeriodFilter from '../components/PeriodFilter';
 import ExpiryLoginModal from '../components/ExpiryLoginModal';
 import Logo from '../components/Logo';
 import FulfillmentLoader from '../components/FulfillmentLoader';
@@ -689,7 +690,7 @@ export default function SellerPortalPage() {
 
         {/* KPIs compactos */}
         <div className="px-3 py-3 border-b border-line-soft space-y-1.5">
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 text-t5">Hoje</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 text-t5">Período</p>
           {[
             { label: 'Pedidos',       value: dashboard?.total_orders ?? 0,  color: 'text-t2' },
             { label: 'Concluídos',    value: ordersCompleted,                color: 'text-ok' },
@@ -924,7 +925,13 @@ export default function SellerPortalPage() {
 
           {/* ── DASHBOARD ────────────────────────────────────────────────── */}
           {tab === 'dashboard' && sellerId && (
-            <SellerDashboardTab sellerId={sellerId} onSelectSku={setSelectedSku} />
+            <SellerDashboardTab
+              sellerId={sellerId}
+              onSelectSku={setSelectedSku}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onPeriodChange={(from, to) => { setDateFrom(from); setDateTo(to); }}
+            />
           )}
 
           {/* ── FINANCEIRO ───────────────────────────────────────────────── */}
@@ -938,26 +945,12 @@ export default function SellerPortalPage() {
           {/* ── PEDIDOS ──────────────────────────────────────────────────── */}
           {tab === 'orders' && (
             <>
-              {/* Filtros: período + busca + status */}
-              <div className="flex gap-3 flex-wrap items-center bg-surface/60 border border-line-soft rounded-xl px-4 py-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <CalendarDays size={14} className="text-violet-400 flex-shrink-0" />
-                  <span className="text-xs text-t4">De</span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={e => setDateFrom(e.target.value)}
-                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2"
-                  />
-                  <span className="text-xs text-t4">até</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={e => setDateTo(e.target.value)}
-                    className="border border-line rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-violet-500 text-t2 bg-surface-2"
-                  />
-                </div>
-
+              {/* Filtros: mesma barra de período do Dashboard + busca + status */}
+              <PeriodFilter
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onChange={(from, to) => { setDateFrom(from); setDateTo(to); }}
+              >
                 <div className="relative flex-1 min-w-[160px]">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-t4" />
                   <input value={search} onChange={e => setSearch(e.target.value)}
@@ -977,7 +970,7 @@ export default function SellerPortalPage() {
                   {Array.from(new Set(Object.entries(STATUS_CONFIG).filter(([k]) => k !== 'cancelled').map(([, v]) => v.label)))
                     .map(label => <option key={label} value={label}>{label}</option>)}
                 </select>
-              </div>
+              </PeriodFilter>
 
               {/* Total no topo — antes só aparecia no rodapé, obrigando rolar a lista
                   inteira pra saber quantos pedidos existem no período. */}

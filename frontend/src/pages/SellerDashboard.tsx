@@ -21,7 +21,7 @@ import {
 } from 'recharts';
 import { AlertTriangle, TrendingDown } from 'lucide-react';
 import { dashboardApi } from '../api';
-import { todayBrasiliaStr } from '../timezone';
+import PeriodFilter from '../components/PeriodFilter';
 import { useChartColors } from '../hooks/useChartColors';
 import { useIsMobile } from '../hooks/useIsMobile';
 import FulfillmentLoader from '../components/FulfillmentLoader';
@@ -35,12 +35,6 @@ const dd = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
 const MONTHS_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 /** '2026-08' -> 'ago/26' */
 const mmm = (s: string) => `${MONTHS_PT[Number(s.slice(5, 7)) - 1]}/${s.slice(2, 4)}`;
-
-function daysAgoStr(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
 
 // ─── tiles ────────────────────────────────────────────────────────────────────
 
@@ -70,30 +64,32 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
 // ─── aba ──────────────────────────────────────────────────────────────────────
 
 export default function SellerDashboardTab({
-  sellerId, onSelectSku,
+  sellerId, onSelectSku, dateFrom, dateTo, onPeriodChange,
 }: {
   sellerId: number;
   onSelectSku: (sku: string) => void;
+  /** Período compartilhado com a aba Meus Pedidos (estado vive no SellerPortal). */
+  dateFrom: string;
+  dateTo: string;
+  onPeriodChange: (from: string, to: string) => void;
 }) {
   const isMobile = useIsMobile();
   const cc = useChartColors();
 
   const { data, isLoading, isError } = useQuery(
-    ['seller-analytics', sellerId],
-    () => dashboardApi.sellerAnalytics().then(r => r.data),
-    { enabled: !!sellerId, refetchInterval: 120000 },
+    ['seller-analytics', sellerId, dateFrom, dateTo],
+    () => dashboardApi.sellerAnalytics({ date_from: dateFrom, date_to: dateTo }).then(r => r.data),
+    { enabled: !!sellerId, refetchInterval: 120000, keepPreviousData: true },
   );
 
-  // Bloco 6 — período e quantidade editáveis
-  const [topFrom, setTopFrom] = useState(() => daysAgoStr(30));
-  const [topTo, setTopTo]     = useState(() => todayBrasiliaStr());
+  // Bloco 6 — segue o período compartilhado; só a quantidade é própria
   const [topLimit, setTopLimit] = useState(10);
 
   const { data: top, isFetching: topFetching } = useQuery(
-    ['seller-top-skus', sellerId, topFrom, topTo, topLimit],
+    ['seller-top-skus', sellerId, dateFrom, dateTo, topLimit],
     () => dashboardApi.sellerTopSkus({
-      date_from: topFrom || undefined,
-      date_to: topTo || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
       limit: topLimit,
     }).then(r => r.data),
     { enabled: !!sellerId, keepPreviousData: true },
@@ -122,10 +118,17 @@ export default function SellerDashboardTab({
         </div>
       )}
 
+      <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} onChange={onPeriodChange} />
+
       {data && (
         <>
-          {/* ── Bloco 1 — Hoje ───────────────────────────────────────────── */}
-          <Card title="Hoje" subtitle={`Status dos pedidos importados em ${dd(t!.date)}`}>
+          {/* ── Bloco 1 — Período ────────────────────────────────────────── */}
+          <Card
+            title="Período"
+            subtitle={t!.date_from === t!.date_to
+              ? `Status dos pedidos importados em ${dd(t!.date_from)}`
+              : `Status dos pedidos importados de ${dd(t!.date_from)} a ${dd(t!.date_to)}`}
+          >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               <Tile label="Pedidos"       value={t!.total} />
               <Tile label="Concluídos"    value={t!.completed}      tone="ok" />
@@ -150,7 +153,7 @@ export default function SellerDashboardTab({
                 </div>
               </>
             ) : (
-              <p className="text-sm text-t4 py-3 text-center">Nenhum pedido importado hoje.</p>
+              <p className="text-sm text-t4 py-3 text-center">Nenhum pedido importado no período.</p>
             )}
           </Card>
 
@@ -234,16 +237,6 @@ export default function SellerDashboardTab({
           {/* ── Bloco 6 — Top SKUs mais vendidos ─────────────────────────── */}
           <Card title="Mais vendidos" subtitle="SKUs com maior saída de estoque no período escolhido">
             <div className="flex flex-wrap items-end gap-2.5 mb-4">
-              <div>
-                <label className="block text-[11px] text-t3 mb-1">De</label>
-                <input type="date" value={topFrom} max={topTo} onChange={e => setTopFrom(e.target.value)}
-                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
-              </div>
-              <div>
-                <label className="block text-[11px] text-t3 mb-1">Até</label>
-                <input type="date" value={topTo} min={topFrom} onChange={e => setTopTo(e.target.value)}
-                  className="border border-line rounded-lg px-2.5 py-1.5 text-xs bg-surface-2 text-t2 outline-none focus:ring-2 focus:ring-violet-500" />
-              </div>
               <div>
                 <label className="block text-[11px] text-t3 mb-1">Qtd. de SKUs</label>
                 <select value={topLimit} onChange={e => setTopLimit(Number(e.target.value))}

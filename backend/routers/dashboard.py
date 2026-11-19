@@ -823,12 +823,16 @@ def _portal_seller_id(current_user: models.User) -> int:
 
 @router.get("/seller/analytics", response_model=schemas.SellerAnalytics)
 def seller_dashboard_analytics(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Blocos da aba Dashboard do portal com janelas fixas:
-      - status dos pedidos de hoje
+    Blocos da aba Dashboard do portal. Só o bloco de status (`today`) segue o
+    período escolhido (`date_from`/`date_to`, default = hoje); os demais têm
+    janelas fixas:
+      - status dos pedidos do período (default: hoje)
       - pedidos por dia (últimos 30 dias)
       - NFs por mês (últimos 12 meses)
       - resumo de estoque + SKUs prestes a romper (previsão <= 15 dias)
@@ -843,12 +847,17 @@ def seller_dashboard_analytics(
         models.Order.status != S.INACTIVE,
     )
 
-    # ── Hoje: contagem por status ────────────────────────────────────────
+    # ── Período: contagem por status (default = hoje) ───────────────────
+    period_from = date_from or today
+    period_to = date_to or today
+    if period_from > period_to:
+        period_from, period_to = period_to, period_from
     today_rows = dict(
         db.query(models.Order.status, func.count(models.Order.id))
         .filter(
             models.Order.seller_id == seller_id,
-            func.date(models.Order.imported_at) == today,
+            func.date(models.Order.imported_at) >= period_from,
+            func.date(models.Order.imported_at) <= period_to,
             *excl,
         )
         .group_by(models.Order.status)
@@ -948,6 +957,8 @@ def seller_dashboard_analytics(
         "seller_id": seller_id,
         "today": {
             "date": today.isoformat(),
+            "date_from": period_from.isoformat(),
+            "date_to": period_to.isoformat(),
             "total": today_total,
             "completed": today_completed,
             "interrupted": today_interrupted,

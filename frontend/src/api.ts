@@ -503,8 +503,8 @@ export const dashboardApi = {
     api.get<string[]>('/dashboard/available-dates', { params: { limit } }),
 
   // Aba "Dashboard" do portal do seller (escopo pelo token, sem seller_id)
-  sellerAnalytics: () =>
-    api.get<SellerAnalytics>('/dashboard/seller/analytics'),
+  sellerAnalytics: (params?: { date_from?: string; date_to?: string }) =>
+    api.get<SellerAnalytics>('/dashboard/seller/analytics', { params }),
   sellerTopSkus: (params?: { date_from?: string; date_to?: string; limit?: number }) =>
     api.get<SellerTopSkus>('/dashboard/seller/top-skus', { params }),
 };
@@ -513,6 +513,8 @@ export interface SellerAnalytics {
   seller_id: number;
   today: {
     date: string;
+    date_from: string;
+    date_to: string;
     total: number;
     completed: number;
     interrupted: number;

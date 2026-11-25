@@ -238,11 +238,11 @@ function ExpiryToggle({ on, onChange, disabled }: { on: boolean; onChange: (v: b
     <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-warn rounded-xl bg-warn-soft p-4">
       <div className="flex items-center gap-3 min-w-0">
         <AlertTriangle size={24} className="text-warn shrink-0" aria-hidden="true" />
-        <p className="text-base font-bold text-t1">Seus produtos têm validade?</p>
+        <p className="text-base font-bold text-t1">Seus produtos têm controle de lote e validade?</p>
       </div>
       <div className="flex items-center gap-2.5 ml-auto">
         <span className="text-sm font-bold text-t1 min-w-[2rem] text-right">{on ? 'Sim' : 'Não'}</span>
-        <button type="button" role="switch" aria-checked={on} aria-label="Seus produtos têm validade?"
+        <button type="button" role="switch" aria-checked={on} aria-label="Seus produtos têm controle de lote e validade?"
           disabled={disabled} onClick={() => onChange(!on)}
           className={`w-14 h-[30px] rounded-full relative transition shrink-0 disabled:opacity-40 ${on ? 'bg-violet-600' : 'bg-line-strong'}`}>
           <span className={`absolute top-[3px] w-6 h-6 rounded-full bg-white shadow transition-all ${on ? 'left-[29px]' : 'left-[3px]'}`} />

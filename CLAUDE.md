@@ -39,7 +39,7 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
-## Mudanças Recentes — 25/11/2026 — Toggle "Seus produtos têm validade?" no Agendamento de Inbound
+## Mudanças Recentes — 25/11/2026 — Toggle "Seus produtos têm controle de lote e validade?" no Agendamento de Inbound
 
 **Commit `15362650`, push na `main` em 25/11/2026.** O deploy em produção não foi conferido na
 hora. Antes disso o seller via os campos de vencimento/lote em todo agendamento. Como o inbound

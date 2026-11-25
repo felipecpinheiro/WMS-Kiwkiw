@@ -429,7 +429,7 @@ def _create_sync(db, user, fields, nfs):
     if expiry and not has_expiry:
         # Inclui a tela antiga aberta, que manda vencimentos sem o toggle.
         raise InboundError(
-            'Para informar vencimentos, ligue "Seus produtos têm validade?". '
+            'Para informar vencimentos, ligue "Seus produtos têm controle de lote e validade?". '
             "Se essa opção não aparece, atualize a tela (F5)."
         )
 
@@ -641,7 +641,7 @@ def _update_sync(db, user, appt, body: InboundUpdateIn):
         appt.notes = flow.clean_notes(body.notes)
     if body.has_expiry is not None and body.has_expiry != bool(appt.has_expiry):
         if _role(user) != "client":
-            raise InboundError('Só o seller altera "Seus produtos têm validade?".', 403)
+            raise InboundError('Só o seller altera "Seus produtos têm controle de lote e validade?".', 403)
         appt.has_expiry = body.has_expiry
         removed = 0
         if not body.has_expiry:
@@ -984,7 +984,7 @@ def put_expiry_items(
     if appt.status != flow.AGENDADO:
         raise HTTPException(409, "O agendamento não está mais em edição.")
     if not appt.has_expiry:
-        raise HTTPException(409, 'Ligue "Seus produtos têm validade?" antes de informar vencimentos.')
+        raise HTTPException(409, 'Ligue "Seus produtos têm controle de lote e validade?" antes de informar vencimentos.')
     nf = _get_nf_or_404(db, appt_id, nf_id)
 
     # Lê os itens do XML já parseado

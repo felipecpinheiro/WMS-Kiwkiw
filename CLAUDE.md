@@ -39,6 +39,123 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 25/11/2026 — Toggle "Seus produtos têm validade?" no Agendamento de Inbound
+
+**Commit `15362650`, push na `main` em 25/11/2026.** O deploy em produção não foi conferido na
+hora. Antes disso o seller via os campos de vencimento/lote em todo agendamento. Como o inbound
+funciona está na seção logo abaixo.
+
+**Regras decididas com o dono do sistema:**
+
+| Ponto | Regra |
+|---|---|
+| Alcance | **Por agendamento**, padrão **desligado** |
+| Onde aparece | Passo 1 do "Novo agendamento", antes das notas fiscais, e no detalhe. Cartão **amarelo** com ícone de alerta (destaque pedido pelo dono) e só **Sim** / **Não** ao lado do interruptor |
+| Desligado | A revisão mostra só SKU e quantidade; as datas do `<rastro>` do XML são **ignoradas** |
+| Ligado | Vencimento e lote **continuam opcionais**, pré-preenchidos pelo XML |
+| Editar depois | **Só o seller** e **só em AGENDADO**. No detalhe, o toggle salva na hora; os vencimentos têm botão **"Salvar vencimentos"** por NF |
+| Depois de AGENDADO | Seller vê somente leitura (a quantidade **informada**, `qty_inicial`, quando já ativada) |
+| Desligar com dados | Pede confirmação e apaga as linhas `a_chegar` do agendamento |
+| Trocar o XML | Apaga as linhas `a_chegar` daquela NF (trocar PDF/Excel não apaga) |
+| Equipe | Selo **"Com validade"** no card de Recebimentos, inclusive para operador |
+| Fora do escopo | A aba "Lotes e Validades", avisos, estoque, faturamento e bipagem não mudaram |
+
+**Coluna nova `inbound_appointments.has_expiry`** (BOOLEAN NOT NULL, default falso). Migração
+idempotente em `run_light_migrations()` (Postgres e SQLite). O backfill
+`INBOUND_HAS_EXPIRY_BACKFILL` roda **uma única vez, na mesma transação que cria a coluna**: liga o
+toggle em quem já tinha linha de vencimento ativa.
+
+**Servidor (`routers/inbound.py`):**
+- `POST /inbound` lê `has_expiry`; `expiry_json` com o toggle desligado → **400** (inclui tela
+  antiga aberta: a mensagem pede F5).
+- `PUT /inbound/{id}` aceita `has_expiry`; mudar o valor sendo manager/admin → 403 (mandar o mesmo
+  valor não barra). `AuditLog` `EXPIRY_TOGGLE` com a contagem de linhas removidas.
+- `PUT /inbound/{id}/nfs/{nf_id}/expiry-items` → 409 com o toggle desligado.
+- **Novo** `GET /inbound/{id}/expiry` (só `client`): por NF, SKUs com quantidade e situação,
+  sugestão do XML (só quando editável) e linhas gravadas.
+- `inbound_flow.discard_expiry()` é o caminho para apagar a pedido do seller: usa o hook
+  `discard_a_chegar_from_nf` (que **nunca lança erro**) e **confere** se sobrou linha — se sobrou,
+  desfaz a operação.
+
+**Frontend:** `SellerInbound.tsx` (`ExpiryToggle`, `ExpirySection`, `SkuExpiryRows`; no celular a
+data ocupa a 1ª linha e lote/quantidade a 2ª), `Inbound.tsx` (selo), `api.ts`
+(`has_expiry`, `inboundApi.getExpiry/saveExpiry`).
+
+**Testes:** 57 verificações E2E novas (incluindo a migração) + as 113 de
+`.claude/tmp_test_inbound.py`, verdes em **SQLite e PostgreSQL** (bancos descartáveis). O script
+das 57 **não está versionado**. `tsc --noEmit` e `vite build` ok; conferência visual no app local
+(computador e celular).
+
+---
+
+## Agendamento de Inbound — como funciona (desde 09/11/2026)
+
+> Commits `5a2cf15f` (09/11), `96081eb3` e `52d2dc59` (12/11). Os comentários no código datam de
+> 23/10 a 04/11. `PROMPT_AGENDAMENTO_INBOUND.md` (raiz) é o **planejamento original**, não a
+> descrição do que foi feito — em caso de divergência, vale o código.
+
+O seller (`client`) agenda no Portal a chegada de uma carga; o time marca quando ela chega; a
+conferência usa a **bipagem de entrada que já existe**.
+
+| Status (texto em `inbound_flow.py`, sem enum) | Quem dispara | Efeito |
+|---|---|---|
+| `AGENDADO` | Seller cria | Cada XML vira um `Order` de entrada **sem `session_id`** e **sem estoque** |
+| `RECEBIDO` | Manager/admin (`POST /inbound/{id}/receive`) | Cria **uma** `PickingSession` de entrada por agendamento; só então vira card no Manuseios. **Sem desfazer** |
+| `EM_CONFERENCIA` | Automático ao abrir/bipar a 1ª NF (`on_scan_started`) | — |
+| `CONFERIDO` | Automático no `finalize-entry`, quando todas as NFs não canceladas estão concluídas (`on_order_finalized`) | — |
+| `CANCELADO` | Seller, manager ou admin, **só em AGENDADO** | Cancela os pedidos e descarta vencimentos `a_chegar` |
+
+**O estoque entra só no `finalize-entry`, pela contagem física** — o inbound nunca lança movimento.
+"Atrasado" = AGENDADO com data passada.
+
+**Regras:**
+- Data: dia útil (sem feriados), de hoje até 60 dias; período `MANHA`/`TARDE`; sem limite de cargas.
+- Arquivos por NF: **XML obrigatório**, PDF e Excel opcionais (não são lidos). 10 MB por arquivo,
+  5 MB o XML, 30 MB no total, 20 NFs. Ficam **no banco** (disco do Railway é efêmero).
+- XML: só NF-e modelo 55, quantidade inteira, recusa DOCTYPE/ENTITY, soma SKU repetido, **não
+  valida CNPJ**.
+- Duplicidade bloqueia: mesma chave de acesso, ou mesmo número de NF de entrada do seller.
+- Volumes e paletes: inteiro ou "Não sei". Observação até 1.000; motivo de cancelamento até 200.
+- SKU sem produto ou descontinuado: agendamento aceito; a NF fica **retida no Manuseios** pelo
+  mecanismo de sempre. Aviso interno só para manager/admin (a revisão prévia mostra a situação ao
+  seller). Seller sem unidade agenda, mas **não pode ser marcado como Recebido**.
+- `orders_held_by_inbound()` recusa bipar NF de agendamento AGENDADO/CANCELADO
+  (`inbound_not_received`) — motivo próprio, **fora** de `held_orders`.
+
+**Acesso:** `client` só o próprio seller (id do token); manager e admin veem **todos** os sellers;
+operador só leitura (status, produtos, quantidades, selo), preso à unidade e aos seus sellers, sem
+anexos, chave nem observação.
+
+**Telas:** aba "Agendamento de Inbound" no Portal (`SellerInbound.tsx`, criação em 2 passos:
+dados+arquivos → revisão via `POST /inbound/analyze`, que não grava) e `/recebimentos`
+(`Inbound.tsx`, cards por data, selo no menu = agendados até o fim da semana, incluindo atrasados).
+
+**Cobrança:** +1 por **agendamento** com `received_at` no mês. Adicional =
+`max(0, qtd − franquia_recebimentos) × valor_recebimento`, linha própria no total (fora dos
+subtotais B2C/B2B), congelada no fechamento (`n_recebimentos`, `t_recebimentos`,
+`recebimentos_json`). Aba "Recebimentos" no Faturamento (`GET /billing/receipts/{mes}`). Para o
+seller, o adicional só aparece com o mês **fechado**; franquia e valor ele vê nos parâmetros.
+
+**Tabelas:** `inbound_appointments`, `inbound_nfs`, `inbound_files`;
+`orders.inbound_appointment_id` (índice `ix_orders_inbound_appointment_id`). Vencimentos em
+`expiry_lines` (`origin_inbound_nf_id`, `a_chegar` → `ativo` no Finalizar; hooks em
+`services/expiry_hooks.py`).
+
+### ⚠️ Pontos em aberto no inbound (achados por LEITURA de código em 25/11, não reproduzidos, não corrigidos)
+
+| # | Situação | Efeito |
+|---|---|---|
+| 1 | "Finalizar sem bipagem" (menu admin do Manuseios) aparece também em entrada | NF vira `completed` **sem lançar estoque**, o Finalizar passa a recusar e o agendamento não avança. O caminho certo é lançar a NF sem bipar, no Scanner |
+| 2 | Inativar uma NF do agendamento, ou cancelar pelo Manuseios a última pendente | Agendamento nunca vira CONFERIDO |
+| 3 | `stock_summary` soma quantidades sem olhar o sinal | NF estornada depois de conferida mostra "Entrou" dobrado |
+| 4 | Ativação dos vencimentos no Finalizar | Ativa a quantidade **declarada**, mesmo com contagem menor |
+| 5 | A NF criada no agendamento tem `imported_at` = agora | Aparece em "Meus Pedidos"/Dashboard do seller como "Em separação" antes de a carga chegar |
+| 6 | `GET /inbound` ordena por data crescente e limita (Portal: 200; visão "Tudo" interna: 500) | Passando disso, os agendamentos **novos** somem da lista |
+| 7 | Tela interna não tem botão de cancelar/editar (só API) | RECEBIDO não pode ser cancelado por ninguém e continua cobrado |
+| 8 | Aba "Lotes e Validades" edita/remove linhas `a_chegar` em qualquer status | Caminho fora da trava do toggle/status |
+
+---
+
 ## Mudanças Recentes — 04/11/2026 — Nova caixa "Própria GG"
 
 **Commit e push feitos em 04/11/2026.** Acrescentada **"Própria GG"** (entre "Própria G" e "Próprio Saco de Embarque") em
@@ -1718,11 +1835,14 @@ WMS Kiwkiw/
 │   │   ├── returns.py       ← Devoluções: modelo Excel, conferência e lançamento
 │   │   ├── stock_excel.py   ← "Lançar por Excel" na tela de Estoque (modelo, conferência, lançamento)
 │   │   ├── client_supplies.py ← Insumos do Cliente: saldo estimado por regra, client-only
+│   │   ├── inbound.py       ← Agendamento de Inbound (cargas agendadas pelo seller)
 │   │   └── settings.py      ← Configurações gerais + controle do folder_watcher
 │   └── services/
 │       ├── order_import.py  ← Importação de Excel de pedidos (lógica principal)
 │       ├── stock_manager.py ← Atualização de estoque, relatórios, histórico SKU
 │       ├── supply_calc.py   ← Cálculo do saldo estimado de Insumos do Cliente
+│       ├── inbound_flow.py  ← Regras e transições do Agendamento de Inbound
+│       ├── inbound_xml.py   ← Leitura do XML da NF-e enviada no agendamento
 │       ├── pdf_generator.py ← PDFs de separação e expedição (ReportLab)
 │       ├── folder_watcher.py← Robô de pasta (background thread, ainda não em produção)
 │       ├── kit_handler.py   ← Expansão de kits em SKUs reais
@@ -1758,7 +1878,9 @@ WMS Kiwkiw/
 │   │       ├── Audit.tsx        ← Auditoria
 │   │       ├── Settings.tsx     ← Configurações do sistema
 │   │       ├── SellerPortal.tsx ← Portal somente leitura para o seller (role=client)
-│   │       └── SellerSupplies.tsx ← Aba "Insumos" do Portal (saldo estimado, gerido pelo seller)
+│   │       ├── SellerSupplies.tsx ← Aba "Insumos" do Portal (saldo estimado, gerido pelo seller)
+│   │       ├── Inbound.tsx      ← Recebimentos (agendamentos, tela interna)
+│   │       └── SellerInbound.tsx ← Aba "Agendamento de Inbound" do Portal
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vercel.json
@@ -2273,13 +2395,14 @@ de propósito: senão o admin subiria um arquivo e ele sumiria da tela sem deixa
   registro**: `billing_seller_params`, via `GET/PUT /billing/seller-params/{seller_id}`
   (`require_manager_or_above`) e `PUT /billing/closing/{s}/{m}` (`require_admin`). Fonte única —
   ver "FONTE ÚNICA de parâmetros de faturamento" no topo. Nada grava em `billing_configs`.
-- Campos (**18** desde 09/09/2026): `preco_unitario`, `min_pedidos`, `manuseio_b2b`,
+- Campos (**21** em 25/11/2026 — conferir `calc.PARAM_FIELDS`): `valor_minimo_b2c`,
+  `franquia_recebimentos`, `valor_recebimento`, `preco_unitario`, `min_pedidos`, `manuseio_b2b`,
   `valor_caixa_b2b`, `adic_produto_b2b`, `franquia_produtos_b2b`, `limite_itens_b2b`,
   `tipos_caixa_inclusos` (texto), `cota_caixas_mes`, `franquia_m3`, `preco_m3`, `seguro_incluso`,
   `aliquota_seguro` (%, default 0.30), `armazenagem_inclusa`, `valor_segurado`, `cubagem_m3`,
   **`usar_faixas_pedidos`** (bool), **`faixas_pedidos`** (JSON `[{"de","ate","preco"}]`, contíguas
   — ver "Cobrança por FAIXA de pedidos" em Mudanças Recentes 09/09).
-- ⚠️ O front **tem que mandar os 18** no PUT — Pydantic preenche default nos ausentes e zeraria o
+- ⚠️ O front **tem que mandar todos os 21** no PUT — Pydantic preenche default nos ausentes e zeraria o
   resto. `fieldsToParams` (Sellers.tsx) e `buildBody` (Billing.tsx) mandam. `faixas_pedidos` é
   validado e re-serializado em forma canônica por `_normalize_faixas` no router.
 - **`billing_configs` (tabela `BillingConfig`) está MORTA** — só para rollback. Não reintroduzir.
@@ -2388,6 +2511,7 @@ esses números** (decisão do dono do sistema).
 | `/inventory/planilha` | `routers/stock_excel.py` | **Lançar por Excel (23/09/2026), manager+ (gerente só nos sellers que atende).** `modelo`, `{seller_id}/analyze` (**não grava**), `{seller_id}/lancar` (revalida, **tudo-ou-nada**). Um seller por arquivo; movimento com `nature="Lançamento de planilha"` e **sem `order_id`**. Sem tabela nova |
 | `/inventory/valores` | `routers/stock_values.py` | **Valor Un por SKU no Meu Estoque (07/10/2026), só `client`** grava (próprio seller); `admin` só lê via `?seller_id=`; manager/operator 403. `modelo`, `analyze` (**não grava**), `lancar` (revalida, **tudo-ou-nada**), `PUT sku` (edição individual, `null` apaga). Coluna `products.seller_unit_value` (NÃO a `unit_value` legada). Nunca mexe em estoque nem faturamento |
 | `/client-supplies` | `routers/client_supplies.py` | **Insumos do Cliente (14/09/2026), só `client`** (o próprio seller_id) cria/edita/apaga; `admin` só lê via `?seller_id=`. CRUD de insumo/entrada/regra + `GET /client-supplies` (lista com saldo) e `GET /client-supplies/movements` (extrato combinado). **Nunca mexe em estoque nem faturamento** — saldo é estimativa calculada em `services/supply_calc.py` |
+| `/inbound` | `routers/inbound.py` | **Agendamento de Inbound.** `client` cria/edita/cancela os próprios (só AGENDADO) + `analyze` (não grava), anexos, vencimentos (`/{id}/expiry` e `expiry-items`, exigem `has_expiry`); manager+ lista, `receive` e cancela; operador só leitura. **Nunca lança estoque.** Ver a seção própria no topo |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |
@@ -2419,6 +2543,7 @@ esses números** (decisão do dono do sistema).
 | `/audit` | Audit.tsx | admin, manager, operator |
 | `/settings` | Settings.tsx | admin, manager, operator |
 | `/manuseios` | Handling.tsx | admin, manager, operator |
+| `/recebimentos` | Inbound.tsx | admin, manager, operator (operator só lê) |
 
 **Nota:** A página `Handling.tsx` (kanban de manuseios) é a **interface principal dos operadores** no dia a dia.
 

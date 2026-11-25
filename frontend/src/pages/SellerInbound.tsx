@@ -234,16 +234,20 @@ const ITEM_STATUS_LABEL: Record<string, string> = {
 /** O interruptor "Seus produtos têm validade?" — libera os vencimentos e lotes. */
 function ExpiryToggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="text-xs font-bold text-t1">Seus produtos têm validade?</p>
-        <p className="text-[11px] text-t4">{on ? 'Sim' : 'Não'}</p>
+    // Destaque em amarelo (25/11/2026): o seller não pode passar sem ver a pergunta.
+    <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-warn rounded-xl bg-warn-soft p-4">
+      <div className="flex items-center gap-3 min-w-0">
+        <AlertTriangle size={24} className="text-warn shrink-0" aria-hidden="true" />
+        <p className="text-base font-bold text-t1">Seus produtos têm validade?</p>
       </div>
-      <button type="button" role="switch" aria-checked={on} aria-label="Seus produtos têm validade?"
-        disabled={disabled} onClick={() => onChange(!on)}
-        className={`w-10 h-5 rounded-full relative transition shrink-0 disabled:opacity-40 ${on ? 'bg-violet-600' : 'bg-line-strong'}`}>
-        <span className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-5' : 'left-0.5'}`} />
-      </button>
+      <div className="flex items-center gap-2.5 ml-auto">
+        <span className="text-sm font-bold text-t1 min-w-[2rem] text-right">{on ? 'Sim' : 'Não'}</span>
+        <button type="button" role="switch" aria-checked={on} aria-label="Seus produtos têm validade?"
+          disabled={disabled} onClick={() => onChange(!on)}
+          className={`w-14 h-[30px] rounded-full relative transition shrink-0 disabled:opacity-40 ${on ? 'bg-violet-600' : 'bg-line-strong'}`}>
+          <span className={`absolute top-[3px] w-6 h-6 rounded-full bg-white shadow transition-all ${on ? 'left-[29px]' : 'left-[3px]'}`} />
+        </button>
+      </div>
     </div>
   );
 }

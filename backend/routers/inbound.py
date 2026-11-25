@@ -3,6 +3,8 @@ Agendamento de Inbound (23/10/2026) — endpoints.
 
   client   : cria / edita / reagenda / cancela os PRÓPRIOS agendamentos (só em
              AGENDADO) — o seller_id vem sempre do token, nunca de parâmetro.
+             Vencimentos só com "Seus produtos têm validade?" ligado
+             (`has_expiry`, 25/11/2026), que só o seller altera.
   manager+ : lista (no escopo de sellers), marca RECEBIDO, cancela, baixa anexos.
   operator : só leitura simplificada (status + resumo ao conferir).
   admin    : tudo.
@@ -48,6 +50,7 @@ class InboundUpdateIn(BaseModel):
     pallets: Optional[int] = None
     pallets_unknown: Optional[bool] = None
     notes: Optional[str] = None
+    has_expiry: Optional[bool] = None
 
 
 class InboundCancelIn(BaseModel):
@@ -233,6 +236,7 @@ def _to_dict(db: Session, a: models.InboundAppointment, role: str, warnings=None
         "status": a.status,
         "overdue": flow.is_overdue(a),
         "nf_count": len(active_nfs),
+        "has_expiry": bool(a.has_expiry),
     }
     if detail and a.status == flow.CONFERIDO:
         base["stock_summary"] = flow.stock_summary(db, a)
@@ -420,12 +424,19 @@ def _create_sync(db, user, fields, nfs):
     if len(nfs) > flow.MAX_NFS:
         raise InboundError(f"No máximo {flow.MAX_NFS} NFs por agendamento.")
 
+    has_expiry = _truthy(fields.get("has_expiry"))
     expiry = _parse_expiry_json(fields.get("expiry_json"), set(nfs))
+    if expiry and not has_expiry:
+        # Inclui a tela antiga aberta, que manda vencimentos sem o toggle.
+        raise InboundError(
+            'Para informar vencimentos, ligue "Seus produtos têm validade?". '
+            "Se essa opção não aparece, atualize a tela (F5)."
+        )
 
     appt = models.InboundAppointment(
         seller_id=seller.id, unit_id=seller.unit_id, scheduled_date=sdate, period=period,
         status=flow.AGENDADO, volumes=volumes, volumes_unknown=v_unk, pallets=pallets,
-        pallets_unknown=p_unk, notes=notes, created_by_id=user.id,
+        pallets_unknown=p_unk, notes=notes, created_by_id=user.id, has_expiry=has_expiry,
     )
     db.add(appt)
     db.flush()
@@ -553,18 +564,23 @@ def _analyze_sync(db, user, nfs):
                 status = "descontinuado"
             else:
                 status = "ok"
-            tracks = [t for t in (it.get("tracks") or []) if t.get("d_val")]
-            pre = []
-            for t in tracks:
-                q = t.get("q_lote") or (it["quantity"] if len(tracks) == 1 else None)
-                lote_xml = " ".join(str(t.get("lote") or "").split())[:60] or None
-                pre.append({"expiry_date_text": t["d_val"].strftime("%d/%m/%Y"), "quantity": q,
-                            "lot_name": lote_xml})
             entry["items"].append({
                 "sku": sku, "name": it["name"], "quantity": it["quantity"],
-                "status": status, "prefill": pre,
+                "status": status, "prefill": _xml_prefill(it),
             })
     return {"nfs": out}
+
+
+def _xml_prefill(item: Dict) -> List[Dict]:
+    """Linhas de vencimento sugeridas pelo <rastro> de um item do XML."""
+    tracks = [t for t in (item.get("tracks") or []) if t.get("d_val")]
+    out = []
+    for t in tracks:
+        q = t.get("q_lote") or (item["quantity"] if len(tracks) == 1 else None)
+        lote = " ".join(str(t.get("lote") or "").split())[:60] or None
+        out.append({"expiry_date_text": t["d_val"].strftime("%d/%m/%Y"), "quantity": q,
+                    "lot_name": lote})
+    return out
 
 
 @router.post("/analyze")
@@ -623,10 +639,20 @@ def _update_sync(db, user, appt, body: InboundUpdateIn):
             body.pallets_unknown if "pallets_unknown" in sent else False)
     if "notes" in sent:
         appt.notes = flow.clean_notes(body.notes)
+    if body.has_expiry is not None and body.has_expiry != bool(appt.has_expiry):
+        if _role(user) != "client":
+            raise InboundError('Só o seller altera "Seus produtos têm validade?".', 403)
+        appt.has_expiry = body.has_expiry
+        removed = 0
+        if not body.has_expiry:
+            removed = sum(flow.discard_expiry(db, n.id, user.id) for n in appt.nfs if n.active)
+        flow.audit(db, user.id, appt.id, "EXPIRY_TOGGLE",
+                   f"Produtos com validade: {'sim' if body.has_expiry else 'não'}."
+                   + (f" {removed} linha(s) de vencimento removida(s)." if removed else ""))
     if changed_when:
         flow.audit(db, user.id, appt.id, "RESCHEDULE",
                    f"Reagendado de {before} para {appt.scheduled_date.isoformat()} {appt.period}.")
-    else:
+    elif sent - {"has_expiry", "scheduled_date", "period"}:
         flow.audit(db, user.id, appt.id, "UPDATE", "Dados do agendamento editados.")
 
 
@@ -791,6 +817,80 @@ def _get_nf_or_404(db: Session, appt_id: int, nf_id: int) -> models.InboundNf:
     return nf
 
 
+@router.get("/{appt_id}/expiry")
+def get_appointment_expiry(
+    appt_id: int,
+    current_user: models.User = Depends(get_current_user),
+    seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Painel de vencimentos do detalhe do agendamento (Portal do seller): por NF,
+    os SKUs com quantidade e situação, a sugestão do XML e o que está gravado.
+    Só leitura — a gravação continua no PUT .../expiry-items.
+    """
+    if _role(current_user) != "client":
+        raise HTTPException(403, "Só o seller vê os vencimentos do agendamento.")
+    appt = _load(db, appt_id, current_user, seller_ids)
+    nfs = sorted((n for n in appt.nfs if n.active), key=lambda n: n.id)
+    nf_ids = [n.id for n in nfs]
+    editable = appt.status == flow.AGENDADO
+
+    active_skus = {sku for _, sku in flow._product_map(db, appt.seller_id).values()}
+    disc = {r[0] for r in db.query(models.DiscontinuedSku.sku).filter(
+        models.DiscontinuedSku.seller_id == appt.seller_id).all()}
+
+    lines: Dict[int, List[Dict]] = {}
+    for r in db.query(models.ExpiryLine).filter(
+        models.ExpiryLine.origin_inbound_nf_id.in_(nf_ids or [-1]),
+        models.ExpiryLine.active == True,  # noqa: E712
+    ).order_by(models.ExpiryLine.sku, models.ExpiryLine.expiry_date, models.ExpiryLine.id).all():
+        lines.setdefault(r.origin_inbound_nf_id, []).append({
+            "id": r.id,
+            "sku": r.sku,
+            "expiry_date": r.expiry_date.isoformat(),
+            # Já conferida: mostra o que o seller INFORMOU (as saídas consomem qty_atual).
+            "quantity": int(r.qty_inicial if r.state == "ativo" else r.qty_atual),
+            "lot_name": r.lot_name,
+        })
+
+    items: Dict[int, List] = {}
+    order_ids = [n.order_id for n in nfs if n.order_id]
+    for oid, sku, name, qty in db.query(
+        models.OrderItem.order_id, models.OrderItem.sku,
+        models.OrderItem.product_name, models.OrderItem.quantity,
+    ).filter(models.OrderItem.order_id.in_(order_ids or [-1])).order_by(models.OrderItem.id).all():
+        items.setdefault(oid, []).append((sku, name, int(qty or 0)))
+
+    # A sugestão do XML só interessa enquanto dá para editar.
+    prefill: Dict[int, Dict[str, List[Dict]]] = {}
+    if editable and appt.has_expiry:
+        for f in db.query(models.InboundFile).filter(
+            models.InboundFile.nf_id.in_(nf_ids or [-1]), models.InboundFile.kind == "XML",
+        ).all():
+            try:
+                parsed = parse_nfe_xml(bytes(f.content))
+            except InboundXmlError:
+                continue
+            prefill[f.nf_id] = {it["sku"].lower(): _xml_prefill(it) for it in parsed["items"]}
+
+    out = []
+    for n in nfs:
+        rows: Dict[str, Dict] = {}
+        for sku, name, qty in items.get(n.order_id, []):
+            row = rows.get(sku)
+            if row:
+                row["quantity"] += qty
+                continue
+            status = "sem_produto" if sku not in active_skus else (
+                "descontinuado" if sku in disc else "ok")
+            rows[sku] = {"sku": sku, "name": name, "quantity": qty, "status": status,
+                         "prefill": prefill.get(n.id, {}).get(sku.lower(), [])}
+        out.append({"id": n.id, "nf_number": n.nf_number, "items": list(rows.values()),
+                    "lines": lines.get(n.id, [])})
+    return {"has_expiry": bool(appt.has_expiry), "editable": editable, "nfs": out}
+
+
 @router.get("/{appt_id}/nfs/{nf_id}/xml-rastro")
 def get_xml_rastro(
     appt_id: int,
@@ -883,6 +983,8 @@ def put_expiry_items(
     appt = _load(db, appt_id, current_user, seller_ids)
     if appt.status != flow.AGENDADO:
         raise HTTPException(409, "O agendamento não está mais em edição.")
+    if not appt.has_expiry:
+        raise HTTPException(409, 'Ligue "Seus produtos têm validade?" antes de informar vencimentos.')
     nf = _get_nf_or_404(db, appt_id, nf_id)
 
     # Lê os itens do XML já parseado

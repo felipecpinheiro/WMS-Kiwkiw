@@ -108,6 +108,16 @@ PERF_INDEXES = [
 ]
 
 
+# Roda UMA vez, junto da criação da coluna `has_expiry` (mesma transação): o
+# agendamento que já tinha vencimentos informados nasce com o toggle ligado.
+INBOUND_HAS_EXPIRY_BACKFILL = (
+    "UPDATE inbound_appointments SET has_expiry = TRUE WHERE id IN ("
+    "SELECT n.appointment_id FROM inbound_nfs n "
+    "JOIN expiry_lines e ON e.origin_inbound_nf_id = n.id "
+    "WHERE e.active = TRUE)"
+)
+
+
 def run_light_migrations():
     """
     Migração compatível com SQLite (dev) e PostgreSQL (produção).
@@ -264,6 +274,12 @@ def run_light_migrations():
                 index_migrations.append("ALTER TABLE expiry_lines ADD COLUMN lot_name VARCHAR(60)")
             if not col_exists("expiry_allocations", "lot_copiado"):
                 index_migrations.append("ALTER TABLE expiry_allocations ADD COLUMN lot_copiado VARCHAR(60)")
+            # "Seus produtos têm validade?" no agendamento (25/11/2026).
+            if not col_exists("inbound_appointments", "has_expiry"):
+                index_migrations.append(
+                    "ALTER TABLE inbound_appointments ADD COLUMN has_expiry "
+                    "BOOLEAN DEFAULT FALSE NOT NULL")
+                index_migrations.append(INBOUND_HAS_EXPIRY_BACKFILL)
             if not col_exists("billing_seller_params", "inicio_contrato"):
                 index_migrations.append(
                     "ALTER TABLE billing_seller_params ADD COLUMN inicio_contrato "
@@ -444,6 +460,13 @@ def run_light_migrations():
             _ea_cols = {r[1] for r in db.execute(text("PRAGMA table_info(expiry_allocations)")).fetchall()}
             if _ea_cols and "lot_copiado" not in _ea_cols:
                 index_migrations.append("ALTER TABLE expiry_allocations ADD COLUMN lot_copiado VARCHAR(60)")
+            # "Seus produtos têm validade?" no agendamento (25/11/2026).
+            _ia_cols = {r[1] for r in db.execute(text("PRAGMA table_info(inbound_appointments)")).fetchall()}
+            if _ia_cols and "has_expiry" not in _ia_cols:
+                index_migrations.append(
+                    "ALTER TABLE inbound_appointments ADD COLUMN has_expiry "
+                    "BOOLEAN DEFAULT 0 NOT NULL")
+                index_migrations.append(INBOUND_HAS_EXPIRY_BACKFILL)
             if "inbound_appointment_id" not in existing_ord:
                 index_migrations.append(
                     "ALTER TABLE orders ADD COLUMN inbound_appointment_id INTEGER "

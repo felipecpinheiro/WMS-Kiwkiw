@@ -1831,6 +1831,8 @@ export interface InboundAppointment {
   status: InboundStatus;
   overdue: boolean;
   nf_count: number;
+  /** "Seus produtos têm validade?" — só com isto ligado há vencimentos/lotes. */
+  has_expiry: boolean;
   unit_id?: number | null;
   warnings?: InboundWarning[];
   volumes?: number | null;
@@ -1857,6 +1859,15 @@ export interface InboundAnalyzeNf {
   issuer: string | null; error: string | null; items: InboundAnalyzeItem[];
 }
 
+/** Vencimentos de um agendamento já criado (GET /inbound/{id}/expiry, só o seller). */
+export interface InboundSavedExpiry {
+  id: number; sku: string; expiry_date: string; quantity: number; lot_name: string | null;
+}
+export interface InboundExpiryNf {
+  id: number; nf_number: string; items: InboundAnalyzeItem[]; lines: InboundSavedExpiry[];
+}
+export interface InboundExpiryDetail { has_expiry: boolean; editable: boolean; nfs: InboundExpiryNf[] }
+
 /** Arquivos de uma NF no envio: nf{i}_pdf / nf{i}_xml / nf{i}_xlsx. */
 export interface InboundNfFiles { pdf: File | null; xml: File | null; xlsx: File | null }
 
@@ -1882,9 +1893,11 @@ export const inboundApi = {
     volumes: number | null; volumes_unknown: boolean;
     pallets: number | null; pallets_unknown: boolean;
     notes: string; nfs: InboundNfFiles[];
+    has_expiry: boolean;
     expiry?: Record<number, InboundExpiryRow[]>;
   }) => {
     const form = new FormData();
+    form.append('has_expiry', String(data.has_expiry));
     if (data.expiry && Object.keys(data.expiry).length > 0) {
       form.append('expiry_json', JSON.stringify(data.expiry));
     }
@@ -1907,7 +1920,12 @@ export const inboundApi = {
     scheduled_date?: string; period?: InboundPeriod;
     volumes?: number | null; volumes_unknown?: boolean;
     pallets?: number | null; pallets_unknown?: boolean; notes?: string;
+    has_expiry?: boolean;
   }) => api.put<InboundAppointment>(`/inbound/${id}`, data),
+  getExpiry: (id: number) => api.get<InboundExpiryDetail>(`/inbound/${id}/expiry`),
+  /** Substitui os vencimentos "a chegar" de uma NF (só em Agendado). */
+  saveExpiry: (id: number, nfId: number, items: InboundExpiryRow[]) =>
+    api.put(`/inbound/${id}/nfs/${nfId}/expiry-items`, { items }),
   cancel: (id: number, reason?: string) =>
     api.post<InboundAppointment>(`/inbound/${id}/cancel`, { reason: reason || null }),
   addNf: (id: number, files: InboundNfFiles) => {

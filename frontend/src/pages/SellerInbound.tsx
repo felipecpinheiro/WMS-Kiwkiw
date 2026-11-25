@@ -13,6 +13,8 @@
  *
  * Novo agendamento em 2 passos (04/11/2026): 1) dados e arquivos; 2) revisão dos SKUs e
  * quantidades de cada NF, com vencimentos opcionais (N linhas por SKU: data + quantidade).
+ * Os vencimentos só aparecem com "Seus produtos têm validade?" ligado (25/11/2026; padrão
+ * desligado). No detalhe o seller edita enquanto AGENDADO e depois só lê.
  * A revisão vem de POST /inbound/analyze (não grava); tudo é gravado junto no "Confirmar".
  */
 
@@ -25,7 +27,7 @@ import {
 import toast from 'react-hot-toast';
 import {
   inboundApi, InboundAppointment, InboundNf, InboundNfFiles, InboundPeriod, InboundStatus,
-  InboundAnalyzeNf, InboundExpiryRow,
+  InboundAnalyzeNf, InboundAnalyzeItem, InboundExpiryRow, InboundExpiryNf, InboundExpiryDetail,
 } from '../api';
 import { todayBrasiliaStr } from '../timezone';
 
@@ -229,17 +231,103 @@ const ITEM_STATUS_LABEL: Record<string, string> = {
   descontinuado: 'SKU descontinuado',
 };
 
+/** O interruptor "Seus produtos têm validade?" — libera os vencimentos e lotes. */
+function ExpiryToggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="text-xs font-bold text-t1">Seus produtos têm validade?</p>
+        <p className="text-[11px] text-t4">{on ? 'Sim' : 'Não'}</p>
+      </div>
+      <button type="button" role="switch" aria-checked={on} aria-label="Seus produtos têm validade?"
+        disabled={disabled} onClick={() => onChange(!on)}
+        className={`w-10 h-5 rounded-full relative transition shrink-0 disabled:opacity-40 ${on ? 'bg-violet-600' : 'bg-line-strong'}`}>
+        <span className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-5' : 'left-0.5'}`} />
+      </button>
+    </div>
+  );
+}
+
+/** Linhas de vencimento (data, lote, quantidade) de um SKU. */
+function SkuExpiryRows({
+  rows, nfQty, onRows,
+}: { rows: ExpLine[]; nfQty: number; onRows: (fn: (rows: ExpLine[]) => ExpLine[]) => void }) {
+  const chk = checkLines(rows, nfQty);
+  const edit = (k: number, p: Partial<ExpLine>) => onRows(rs => rs.map((x, i) => (i === k ? { ...x, ...p } : x)));
+  return (
+    <div className="space-y-2.5 sm:space-y-1.5">
+      {rows.map((r, k) => (
+        <div key={k}>
+          {/* Celular: a data ocupa a 1ª linha; lote, quantidade e lixeira vão para a 2ª. */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+            <input className={`${inputCls} basis-full sm:basis-0 sm:flex-1 sm:min-w-0 ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
+              placeholder="dd/mm/aaaa ou mm/aaaa" inputMode="numeric" maxLength={10}
+              value={r.date} aria-label="Vencimento"
+              onChange={e => edit(k, { date: e.target.value })} />
+            <input className={`${inputCls} flex-1 min-w-0 sm:flex-none sm:!w-32 sm:shrink-0 ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
+              placeholder="Lote (opcional)" maxLength={60}
+              value={r.lot} aria-label="Lote"
+              onChange={e => edit(k, { lot: e.target.value })} />
+            <input type="number" min={1} inputMode="numeric" placeholder="Qtd"
+              className={`${inputCls} !w-20 shrink-0 ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
+              value={r.qty} aria-label="Quantidade do vencimento"
+              onChange={e => edit(k, { qty: e.target.value })} />
+            <button type="button" className="text-t4 hover:text-bad shrink-0" aria-label="Remover linha"
+              onClick={() => onRows(rs => rs.filter((_, i) => i !== k))}><Trash2 size={13} /></button>
+          </div>
+          {chk.rowErr[k] && <p className="text-[11px] text-bad mt-0.5">{chk.rowErr[k]}</p>}
+        </div>
+      ))}
+      <div className="flex items-center justify-between gap-2">
+        <button type="button" className={`${btnGhost} flex items-center gap-1`}
+          onClick={() => onRows(rs => [...rs, { date: '', qty: '', lot: '' }])}>
+          <Plus size={12} /> Vencimento
+        </button>
+        {chk.sum > 0 && (
+          <span className={`text-[11px] font-bold ${chk.sum > nfQty ? 'text-bad' : 'text-t3'}`}>
+            {chk.sum} de {nfQty} un com vencimento
+            {chk.sum > nfQty ? ' — passa da quantidade da NF' : ''}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Cabeçalho de um SKU: código, nome, situação e quantidade na NF. */
+function SkuHeader({ item }: { item: InboundAnalyzeItem }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+      <div className="min-w-0">
+        <div className="text-xs font-bold text-t1 break-all">{item.sku}</div>
+        <div className="text-[11px] text-t4">{item.name}</div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {item.status !== 'ok' && (
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-bad-soft text-bad">
+            {ITEM_STATUS_LABEL[item.status]}
+          </span>
+        )}
+        <span className="text-xs font-bold text-t2">{item.quantity} un</span>
+      </div>
+    </div>
+  );
+}
+
 function ReviewStep({
-  analysis, lines, setLines,
-}: { analysis: InboundAnalyzeNf[]; lines: ExpLines; setLines: (fn: (l: ExpLines) => ExpLines) => void }) {
+  analysis, lines, setLines, showExpiry,
+}: {
+  analysis: InboundAnalyzeNf[]; lines: ExpLines;
+  setLines: (fn: (l: ExpLines) => ExpLines) => void; showExpiry: boolean;
+}) {
   const patch = (key: string, fn: (rows: ExpLine[]) => ExpLine[]) =>
     setLines(l => ({ ...l, [key]: fn(l[key] ?? []) }));
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-t3">
-        Confira os produtos e as quantidades de cada NF. Se quiser, informe os vencimentos
-        (opcional): pode adicionar quantas linhas precisar por SKU, cada uma com data e quantidade.
+        Confira os produtos e as quantidades de cada NF.
+        {showExpiry && ' Se quiser, informe os vencimentos (opcional): pode adicionar quantas linhas precisar por SKU, cada uma com data e quantidade.'}
       </p>
       {analysis.map(nf => (
         <div key={nf.index} className="border border-line rounded-lg overflow-hidden">
@@ -258,64 +346,14 @@ function ReviewStep({
             <div className="divide-y divide-line">
               {nf.items.map(it => {
                 const key = lineKey(nf.index, it.sku);
-                const rows = lines[key] ?? [];
-                const chk = checkLines(rows, it.quantity);
-                const blocked = it.status !== 'ok';
                 return (
                   <div key={key} className="p-3 space-y-2">
-                    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-t1 break-all">{it.sku}</div>
-                        <div className="text-[11px] text-t4">{it.name}</div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {blocked && (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-bad-soft text-bad">
-                            {ITEM_STATUS_LABEL[it.status]}
-                          </span>
-                        )}
-                        <span className="text-xs font-bold text-t2">{it.quantity} un</span>
-                      </div>
-                    </div>
-
-                    {blocked ? (
+                    <SkuHeader item={it} />
+                    {!showExpiry ? null : it.status !== 'ok' ? (
                       <p className="text-[11px] text-t4">Vencimento indisponível para este SKU.</p>
                     ) : (
-                      <div className="space-y-1.5">
-                        {rows.map((r, k) => (
-                          <div key={k}>
-                            <div className="flex items-center gap-2">
-                              <input className={`${inputCls} ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
-                                placeholder="dd/mm/aaaa ou mm/aaaa" inputMode="numeric" maxLength={10}
-                                value={r.date} aria-label="Vencimento"
-                                onChange={e => patch(key, rs => rs.map((x, i) => (i === k ? { ...x, date: e.target.value } : x)))} />
-                              <input className={`${inputCls} !w-32 shrink-0 ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
-                                placeholder="Lote (opcional)" maxLength={60}
-                                value={r.lot} aria-label="Lote"
-                                onChange={e => patch(key, rs => rs.map((x, i) => (i === k ? { ...x, lot: e.target.value } : x)))} />
-                              <input type="number" min={1} inputMode="numeric" placeholder="Qtd"
-                                className={`${inputCls} !w-20 shrink-0 ${chk.rowErr[k] ? 'border-bad' : ''}`} style={inputStyle}
-                                value={r.qty} aria-label="Quantidade do vencimento"
-                                onChange={e => patch(key, rs => rs.map((x, i) => (i === k ? { ...x, qty: e.target.value } : x)))} />
-                              <button type="button" className="text-t4 hover:text-bad shrink-0" aria-label="Remover linha"
-                                onClick={() => patch(key, rs => rs.filter((_, i) => i !== k))}><Trash2 size={13} /></button>
-                            </div>
-                            {chk.rowErr[k] && <p className="text-[11px] text-bad mt-0.5">{chk.rowErr[k]}</p>}
-                          </div>
-                        ))}
-                        <div className="flex items-center justify-between gap-2">
-                          <button type="button" className={`${btnGhost} flex items-center gap-1`}
-                            onClick={() => patch(key, rs => [...rs, { date: '', qty: '', lot: '' }])}>
-                            <Plus size={12} /> Vencimento
-                          </button>
-                          {chk.sum > 0 && (
-                            <span className={`text-[11px] font-bold ${chk.sum > it.quantity ? 'text-bad' : 'text-t3'}`}>
-                              {chk.sum} de {it.quantity} un com vencimento
-                              {chk.sum > it.quantity ? ' — passa da quantidade da NF' : ''}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <SkuExpiryRows rows={lines[key] ?? []} nfQty={it.quantity}
+                        onRows={fn => patch(key, fn)} />
                     )}
                   </div>
                 );
@@ -341,6 +379,16 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
   const [pallets, setPallets] = useState('');
   const [palUnk, setPalUnk] = useState(false);
   const [notes, setNotes] = useState('');
+  const [hasExpiry, setHasExpiry] = useState(false);
+
+  const toggleExpiry = (v: boolean) => {
+    if (!v) {
+      const typed = Object.values(lines).some(rs => rs.some(r => r.date.trim() || r.qty.trim() || r.lot.trim()));
+      if (typed && !window.confirm('Os vencimentos que você preencheu serão apagados. Desligar mesmo assim?')) return;
+      setLines({});
+    }
+    setHasExpiry(v);
+  };
 
   const total = nfs.reduce((s, n) => s + (n.pdf?.size ?? 0) + (n.xml?.size ?? 0) + (n.xlsx?.size ?? 0), 0);
   const parse = (v: string) => (v.trim() === '' ? null : Number(v));
@@ -360,7 +408,8 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
     () => inboundApi.create({
       scheduled_date: date, period, volumes: volUnk ? null : volN, volumes_unknown: volUnk,
       pallets: palUnk ? null : palN, pallets_unknown: palUnk, notes, nfs,
-      expiry: buildExpiry(analysis, lines),
+      has_expiry: hasExpiry,
+      expiry: hasExpiry ? buildExpiry(analysis, lines) : undefined,
     }),
     {
       onSuccess: () => { toast.success('Agendamento criado!'); onDone(); },
@@ -373,6 +422,7 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
       const list = res.data.nfs;
       setLines(prev => {
         const next: ExpLines = {};
+        if (!hasExpiry) return next;   // desligado: as datas do XML são ignoradas
         for (const nf of list) {
           for (const it of nf.items) {
             const key = lineKey(nf.index, it.sku);
@@ -394,7 +444,7 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
   const reviewProblem: string | null =
     analysis.some(nf => nf.error)
       ? 'Há NF com erro. Volte e corrija o arquivo.'
-      : analysis.some(nf => nf.items.some(it => it.status === 'ok'
+      : hasExpiry && analysis.some(nf => nf.items.some(it => it.status === 'ok'
           && checkLines(lines[lineKey(nf.index, it.sku)] ?? [], it.quantity).bad))
         ? 'Corrija os vencimentos destacados.'
         : null;
@@ -403,11 +453,11 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
     setNfs(list => list.map((n, k) => (k === i ? { ...n, ...patch } : n)));
 
   return (
-    <Modal title={step === 1 ? 'Novo agendamento de inbound' : 'Revisar produtos e vencimentos'}
+    <Modal title={step === 1 ? 'Novo agendamento de inbound' : hasExpiry ? 'Revisar produtos e vencimentos' : 'Revisar produtos'}
       onClose={() => !busy && onClose()}>
       {step === 2 ? (
         <div className="space-y-4">
-          <ReviewStep analysis={analysis} lines={lines} setLines={setLines} />
+          <ReviewStep analysis={analysis} lines={lines} setLines={setLines} showExpiry={hasExpiry} />
           {reviewProblem && <p className="text-xs text-warn flex items-center gap-1"><AlertTriangle size={12} /> {reviewProblem}</p>}
           <div className="flex justify-between gap-2 pt-1">
             <button className={btnGhost} onClick={() => setStep(1)} disabled={busy}>Voltar</button>
@@ -437,6 +487,8 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
             </div>
           </div>
         </div>
+
+        <ExpiryToggle on={hasExpiry} onChange={toggleExpiry} disabled={busy} />
 
         <div>
           <div className="flex items-center justify-between mb-1.5">
@@ -488,6 +540,180 @@ function NewAppointmentModal({ onClose, onDone }: { onClose: () => void; onDone:
       </div>
       )}
     </Modal>
+  );
+}
+
+// ─── Vencimentos no detalhe ──────────────────────────────────────────────────
+
+/** Linhas gravadas de uma NF -> formato dos campos, por SKU. */
+function savedLines(nf: InboundExpiryNf): ExpLines {
+  const out: ExpLines = {};
+  for (const l of nf.lines) {
+    (out[l.sku] ??= []).push({ date: brDate(l.expiry_date), qty: String(l.quantity), lot: l.lot_name ?? '' });
+  }
+  return out;
+}
+
+/** Sugestão vinda do XML (só SKUs que aceitam vencimento). */
+function xmlLines(nf: InboundExpiryNf): ExpLines {
+  const out: ExpLines = {};
+  for (const it of nf.items) {
+    if (it.status !== 'ok' || !it.prefill.length) continue;
+    out[it.sku] = it.prefill.map(p => ({
+      date: p.expiry_date_text, qty: p.quantity == null ? '' : String(p.quantity), lot: p.lot_name ?? '',
+    }));
+  }
+  return out;
+}
+
+/** Assinatura para comparar o que está na tela com o que está gravado. */
+function linesSignature(l: ExpLines): string {
+  return JSON.stringify(Object.keys(l).sort().map(sku => [
+    sku, l[sku].map(r => [r.date.trim(), r.qty.trim(), r.lot.trim()]).filter(r => r.some(Boolean)),
+  ]).filter(([, rows]) => rows.length));
+}
+
+/**
+ * Toggle + vencimentos de um agendamento já criado. Editável só em AGENDADO
+ * (o servidor recusa depois); fora disso é somente leitura.
+ */
+function ExpirySection({ a, busy }: { a: InboundAppointment; busy: boolean }) {
+  const qc = useQueryClient();
+  const editable = a.status === 'AGENDADO';
+  const key = ['inbound-expiry', a.id];
+  const { data, isError } = useQuery(key, () => inboundApi.getExpiry(a.id).then(r => r.data), {
+    enabled: a.has_expiry && a.status !== 'CANCELADO',
+  });
+  // Rascunho por NF; vale enquanto os dados do servidor (base) não mudarem.
+  const [drafts, setDrafts] = useState<Record<number, { base: string; lines: ExpLines }>>({});
+  // NFs já salvas nesta janela: não voltar a sugerir as datas do XML.
+  const [savedOnce, setSavedOnce] = useState<string[]>([]);
+
+  const itemsKey = (nf: InboundExpiryNf) => `${nf.id}:${JSON.stringify(nf.items.map(i => [i.sku, i.quantity, i.status, i.prefill]))}`;
+  const baseKey = (nf: InboundExpiryNf) => `${itemsKey(nf)}:${JSON.stringify(nf.lines)}`;
+  const initial = (nf: InboundExpiryNf): ExpLines =>
+    nf.lines.length ? savedLines(nf) : savedOnce.includes(itemsKey(nf)) ? {} : xmlLines(nf);
+  const current = (nf: InboundExpiryNf): ExpLines =>
+    drafts[nf.id]?.base === baseKey(nf) ? drafts[nf.id].lines : initial(nf);
+  const patch = (nf: InboundExpiryNf, sku: string, fn: (rows: ExpLine[]) => ExpLine[]) =>
+    setDrafts(d => {
+      const lines = d[nf.id]?.base === baseKey(nf) ? d[nf.id].lines : initial(nf);
+      return { ...d, [nf.id]: { base: baseKey(nf), lines: { ...lines, [sku]: fn(lines[sku] ?? []) } } };
+    });
+
+  const mToggle = useMutation((v: boolean) => inboundApi.update(a.id, { has_expiry: v }), {
+    onSuccess: (res) => {
+      setDrafts({});
+      setSavedOnce([]);
+      qc.removeQueries(key);
+      qc.invalidateQueries('inbound');
+      qc.invalidateQueries(['inbound-detail', a.id]);
+      toast.success(res.data.has_expiry ? 'Vencimentos liberados.' : 'Vencimentos desligados.');
+    },
+    onError: (e) => { toast.error(errMsg(e, 'Não foi possível salvar.')); },
+  });
+  const mSave = useMutation(
+    ({ nf, items }: { nf: InboundExpiryNf; items: InboundExpiryRow[] }) => inboundApi.saveExpiry(a.id, nf.id, items),
+    {
+      onSuccess: (_res, { nf }) => {
+        setSavedOnce(s => [...s, itemsKey(nf)]);
+        qc.invalidateQueries(key);
+        toast.success(`Vencimentos da NF ${nf.nf_number} salvos.`);
+      },
+      onError: (e) => { toast.error(errMsg(e, 'Não foi possível salvar os vencimentos.')); },
+    },
+  );
+  const working = busy || mToggle.isLoading || mSave.isLoading;
+
+  const onToggle = (v: boolean) => {
+    if (!v) {
+      const hasContent = !data || data.nfs.some(nf => nf.lines.length > 0
+        || (drafts[nf.id] && linesSignature(current(nf)) !== linesSignature(savedLines(nf))));
+      if (hasContent && !window.confirm('Os vencimentos informados neste agendamento serão apagados. Desligar mesmo assim?')) return;
+    }
+    mToggle.mutate(v);
+  };
+
+  if (a.status === 'CANCELADO' || (!editable && !a.has_expiry)) return null;
+
+  return (
+    <div className="space-y-2">
+      {editable
+        ? <ExpiryToggle on={a.has_expiry} onChange={onToggle} disabled={working} />
+        : <h4 className="text-xs font-bold text-t3">Vencimentos informados</h4>}
+
+      {a.has_expiry && isError && <p className="text-xs text-bad">Não foi possível carregar os vencimentos.</p>}
+      {a.has_expiry && !data && !isError && <p className="text-xs text-t4">Carregando vencimentos…</p>}
+
+      {a.has_expiry && data && data.nfs.map(nf => {
+        if (!editable) {
+          return (
+            <div key={nf.id} className="border border-line rounded-lg overflow-hidden">
+              <p className="px-3 py-1.5 text-xs font-bold text-t1 border-b border-line" style={inputStyle}>NF {nf.nf_number}</p>
+              {nf.lines.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-t4">Nenhum vencimento informado.</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="text-t4">
+                    <tr>
+                      <th className="text-left px-3 py-1.5">SKU</th><th className="text-left px-2 py-1.5">Vencimento</th>
+                      <th className="text-left px-2 py-1.5">Lote</th><th className="text-right px-3 py-1.5">Qtd</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nf.lines.map(l => (
+                      <tr key={l.id} className="border-t border-line-soft">
+                        <td className="px-3 py-1.5 text-t2 break-all">{l.sku}</td>
+                        <td className="px-2 py-1.5 text-t2">{brDate(l.expiry_date)}</td>
+                        <td className="px-2 py-1.5 text-t3 break-all">{l.lot_name ?? '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-bold text-t1">{l.quantity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        }
+        const lines = current(nf);
+        const dirty = linesSignature(lines) !== linesSignature(savedLines(nf));
+        const bad = nf.items.some(it => it.status === 'ok' && checkLines(lines[it.sku] ?? [], it.quantity).bad);
+        const items: InboundExpiryRow[] = nf.items
+          .filter(it => it.status === 'ok')
+          .flatMap(it => (lines[it.sku] ?? [])
+            .filter(r => r.date.trim() && r.qty.trim())
+            .map(r => ({ sku: it.sku, expiry_date_text: r.date.trim(), quantity: Number(r.qty), lot_name: r.lot.trim() || null })));
+        return (
+          <div key={nf.id} className="border border-line rounded-lg overflow-hidden">
+            <p className="px-3 py-1.5 text-xs font-bold text-t1 border-b border-line" style={inputStyle}>NF {nf.nf_number}</p>
+            <div className="divide-y divide-line">
+              {nf.items.map(it => (
+                <div key={it.sku} className="p-3 space-y-2">
+                  <SkuHeader item={it} />
+                  {it.status === 'ok' ? (
+                    <SkuExpiryRows rows={lines[it.sku] ?? []} nfQty={it.quantity} onRows={fn => patch(nf, it.sku, fn)} />
+                  ) : (
+                    <p className="text-[11px] text-t4">
+                      Vencimento indisponível para este SKU.
+                      {nf.lines.some(l => l.sku === it.sku) && ' Ao salvar esta NF, o que já estava informado para ele é removido.'}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-line">
+              <span className="text-[11px] text-warn">
+                {dirty ? (nf.lines.length === 0 ? 'Ainda não salvo.' : 'Alterações não salvas.') : ''}
+              </span>
+              <button type="button" className={btnPrimary} disabled={working || bad || !dirty}
+                onClick={() => mSave.mutate({ nf, items })}>
+                Salvar vencimentos
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -555,7 +781,20 @@ function DetailBody({ a, id, onClose }: { a: InboundAppointment; id: number; onC
   const [reason, setReason] = useState('');
 
   const editable = a.status === 'AGENDADO';
-  const refresh = () => { qc.invalidateQueries('inbound'); qc.invalidateQueries(['inbound-detail', id]); };
+  const refresh = () => {
+    qc.invalidateQueries('inbound');
+    qc.invalidateQueries(['inbound-detail', id]);
+    qc.invalidateQueries(['inbound-expiry', id]);
+  };
+  const replaceFiles = (nfId: number, files: Partial<InboundNfFiles>) => {
+    if (files.xml && a.has_expiry) {
+      const cached = qc.getQueryData<InboundExpiryDetail>(['inbound-expiry', id]);
+      const lines = cached?.nfs.find(n => n.id === nfId)?.lines;
+      if ((!lines || lines.length > 0)
+        && !window.confirm('Trocar o XML apaga os vencimentos desta NF. Continuar?')) return;
+    }
+    mReplace.mutate({ nfId, files });
+  };
   const ok = (msg: string) => () => { toast.success(msg); refresh(); };
   const bad = (fb: string) => (e: unknown) => { toast.error(errMsg(e, fb)); };
 
@@ -660,7 +899,7 @@ function DetailBody({ a, id, onClose }: { a: InboundAppointment; id: number; onC
           <h4 className="text-xs font-bold text-t3">Notas fiscais ({nfs.length})</h4>
           {nfs.map(nf => (
             <NfBlock key={nf.id} a={a} nf={nf} editable={editable} canRemove={nfs.length > 1} busy={busy}
-              onReplace={(nfId, files) => mReplace.mutate({ nfId, files })} onRemove={nfId => mRemove.mutate(nfId)} />
+              onReplace={replaceFiles} onRemove={nfId => mRemove.mutate(nfId)} />
           ))}
           {editable && nfs.length < MAX_NFS && (
             newNf ? (
@@ -680,6 +919,8 @@ function DetailBody({ a, id, onClose }: { a: InboundAppointment; id: number; onC
             )
           )}
         </div>
+
+        <ExpirySection a={a} busy={busy} />
 
         {a.status === 'CONFERIDO' && a.stock_summary && (
           <div>

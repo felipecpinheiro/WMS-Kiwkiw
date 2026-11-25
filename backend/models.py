@@ -1009,6 +1009,9 @@ class InboundAppointment(Base):
     pallets = Column(Integer, nullable=True)
     pallets_unknown = Column(Boolean, nullable=False, default=False)
     notes = Column(Text, nullable=True)
+    # "Seus produtos têm validade?" (25/11/2026): só com isto ligado o seller
+    # informa vencimentos/lotes no agendamento. Padrão desligado.
+    has_expiry = Column(Boolean, nullable=False, default=False)
     cancel_reason = Column(String(200), nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=now_brasilia)

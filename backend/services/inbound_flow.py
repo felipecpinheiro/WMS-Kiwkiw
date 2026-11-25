@@ -266,6 +266,9 @@ def replace_files(db: Session, appt: models.InboundAppointment, seller: models.S
         _fill_items(db, order, parsed)
         nf.nf_number = parsed["nf_number"]
         nf.danfe_key = parsed["danfe_key"]
+        # XML novo = produtos possivelmente outros: os vencimentos "a chegar"
+        # desta NF caem junto e o seller preenche de novo (25/11/2026).
+        discard_expiry(db, nf.id, user_id)
     for kind, (name, content) in files.items():
         db.query(models.InboundFile).filter(
             models.InboundFile.nf_id == nf.id, models.InboundFile.kind == kind
@@ -283,6 +286,26 @@ def replace_files(db: Session, appt: models.InboundAppointment, seller: models.S
         raise InboundError("Os arquivos do agendamento passam de 30 MB no total.")
     audit(db, user_id, appt.id, "NF_FILES_REPLACED",
           f"NF {nf.nf_number}: arquivos trocados ({', '.join(sorted(files))}).")
+
+
+def discard_expiry(db: Session, nf_id: int, user_id: Optional[int]) -> int:
+    """
+    Descarta os vencimentos "a chegar" de uma NF quando o PRÓPRIO seller pede
+    (desligar o toggle ou trocar o XML). O hook nunca lança erro, então aqui se
+    confere o resultado: se sobrar linha, a operação inteira é desfeita.
+    """
+    # Import local pra evitar ciclo (expiry_hooks importa models/calc, não flow).
+    from . import expiry_hooks
+    removed = expiry_hooks.discard_a_chegar_from_nf(db, nf_id=nf_id, user_id=user_id)
+    db.flush()
+    left = db.query(func.count(models.ExpiryLine.id)).filter(
+        models.ExpiryLine.origin_inbound_nf_id == nf_id,
+        models.ExpiryLine.state == "a_chegar",
+        models.ExpiryLine.active == True,  # noqa: E712
+    ).scalar() or 0
+    if left:
+        raise InboundError("Não foi possível apagar os vencimentos desta NF. Tente de novo.", 409)
+    return removed
 
 
 def remove_nf(db: Session, appt: models.InboundAppointment, nf: models.InboundNf,

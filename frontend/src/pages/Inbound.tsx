@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import {
   Truck, AlertTriangle, ChevronDown, ChevronUp, FileText, FileCode,
-  FileSpreadsheet, Download, X, RefreshCw, Package,
+  FileSpreadsheet, Download, X, RefreshCw, Package, CalendarClock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -191,7 +191,14 @@ function InboundCard({
           </p>
           <p className="text-[11px] text-t4">#{a.id} · {a.nf_count} NF(s)</p>
         </div>
-        <StatusBadge a={a} />
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <StatusBadge a={a} />
+          {a.has_expiry && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-violet-600/15 text-violet-500">
+              <CalendarClock size={11} /> Com validade
+            </span>
+          )}
+        </div>
       </div>
 
       {allItems.length > 0 && (

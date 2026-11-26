@@ -4,13 +4,16 @@ Gera os relatórios de Separação e Expedição em PDF.
 Reproduz as macros 'imprimir_sep()' e 'imprimir_plan()'.
 """
 
+import io
 import os
 from datetime import date, datetime
 from typing import List, Dict, Optional
 from collections import defaultdict
+from xml.sax.saxutils import escape as _escape
 
 from ..timezone_utils import now_brasilia
 
+from reportlab.graphics.barcode import code128
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm, mm
@@ -610,6 +613,155 @@ def generate_separation_bytes(
             data = f.read()
 
     return data, filename
+
+
+def generate_inbound_conference_bytes(
+    appt: models.InboundAppointment,
+    nfs: list,
+    db: Session,
+) -> tuple[bytes, str]:
+    """
+    FOLHA DE CONFERÊNCIA de entrada (26/11/2026) — Agendamento de Inbound.
+
+    Uma NF por página: dados do agendamento, código de barras da chave de acesso
+    (é o que se bipa no Scanner para abrir a NF), produtos com a quantidade da NF
+    e um espaço em branco para anotar o contado. Lote/validade informados pelo
+    seller saem abaixo do SKU. Gerada em memória, sem disco e sem gravar nada.
+
+    ⚠️ Todo texto vindo do seller (nome de produto, observação, lote...) passa por
+    `escape`: o Paragraph interpreta marcação e um "<" ou "&" derrubaria o PDF.
+    ⚠️ Cada lote é uma LINHA própria da tabela, nunca tudo numa célula só — o
+    ReportLab não pagina no meio de uma célula.
+    """
+    ACCENT   = colors.HexColor("#5B45C2")
+    HDR_FG   = colors.white
+    TOTAL_BG = colors.HexColor("#F0F0F0")
+    BORDER   = colors.HexColor("#D0CCEE")
+    TEXT     = colors.HexColor("#111111")
+    MUTED    = colors.HexColor("#555555")
+
+    s_title = ParagraphStyle("ct",  fontSize=15,  fontName="Helvetica-Bold", textColor=ACCENT, leading=18)
+    s_info  = ParagraphStyle("ci",  fontSize=9,   fontName="Helvetica",      textColor=TEXT,   leading=13)
+    s_key   = ParagraphStyle("ck",  fontSize=9,   fontName="Helvetica",      textColor=MUTED,  leading=12, alignment=TA_CENTER)
+    s_nfbar = ParagraphStyle("cnf", fontSize=8,   fontName="Helvetica-Bold", textColor=ACCENT, leading=10)
+    s_hdr   = ParagraphStyle("ch",  fontSize=8,   fontName="Helvetica-Bold", textColor=HDR_FG, leading=10, alignment=TA_CENTER)
+    s_cell  = ParagraphStyle("cc",  fontSize=8.5, fontName="Helvetica",      textColor=TEXT,   leading=11)
+    s_bold  = ParagraphStyle("cb",  fontSize=8.5, fontName="Helvetica-Bold", textColor=TEXT,   leading=11)
+    s_qty   = ParagraphStyle("cq",  fontSize=10,  fontName="Helvetica-Bold", textColor=TEXT,   leading=12, alignment=TA_CENTER)
+    s_lot   = ParagraphStyle("cl",  fontSize=7.5, fontName="Helvetica",      textColor=MUTED,  leading=9.5)
+
+    def _p(text, style):
+        return Paragraph(_escape(str(text)), style)
+
+    order_ids = [n.order_id for n in nfs if n.order_id]
+    orders = {
+        o.id: o for o in db.query(models.Order).options(joinedload(models.Order.items))
+        .filter(models.Order.id.in_(order_ids or [-1])).all()
+    }
+
+    # Lote/validade por (NF, SKU) — uma consulta só para o agendamento inteiro.
+    lots: dict = defaultdict(list)
+    if appt.has_expiry:
+        for line in db.query(models.ExpiryLine).filter(
+            models.ExpiryLine.origin_inbound_nf_id.in_([n.id for n in nfs] or [-1]),
+            models.ExpiryLine.active == True,  # noqa: E712
+        ).order_by(models.ExpiryLine.expiry_date, models.ExpiryLine.id).all():
+            # Já conferida: o que o seller INFORMOU (as saídas consomem qty_atual).
+            qty = int(line.qty_inicial if line.state == "ativo" else line.qty_atual)
+            lots[(line.origin_inbound_nf_id, line.sku.lower())].append(
+                (line.lot_name, line.expiry_date, qty))
+
+    seller = appt.seller
+    seller_name = (seller.trade_name or seller.name) if seller else "—"
+    period = {"MANHA": "Manhã", "TARDE": "Tarde"}.get(appt.period, appt.period)
+    volumes = "Não sei" if appt.volumes_unknown else ("—" if appt.volumes is None else appt.volumes)
+    pallets = "Não sei" if appt.pallets_unknown else ("—" if appt.pallets is None else appt.pallets)
+    generated = now_brasilia().strftime('%d/%m/%Y %H:%M')
+
+    story = []
+    for index, nf in enumerate(nfs):
+        order = orders.get(nf.order_id)
+        if index:
+            story.append(PageBreak())
+
+        story.append(Paragraph("Conferência de Entrada", s_title))
+        story.append(HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=6))
+        info = [
+            f"Seller: <b>{_escape(seller_name)}</b>  ·  NF: <b>{_escape(nf.nf_number)}</b>",
+            f"Emitente: {_escape((order.customer_name if order else None) or '—')}",
+            f"Agendado: <b>{appt.scheduled_date.strftime('%d/%m/%Y')}</b>  ·  {period}  ·  "
+            f"Agendamento #{appt.id}",
+            f"Volumes: <b>{volumes}</b>  ·  Paletes: <b>{pallets}</b>",
+        ]
+        if appt.notes:
+            info.append("Observação: " + _escape(appt.notes).replace("\n", "<br/>"))
+        for text in info:
+            story.append(Paragraph(text, s_info))
+
+        story.append(Spacer(1, 10))
+        barcode = code128.Code128(nf.danfe_key, barHeight=16*mm, barWidth=0.43*mm, humanReadable=False)
+        barcode.hAlign = "CENTER"
+        story.append(barcode)
+        story.append(Spacer(1, 4))
+        story.append(_p(" ".join(nf.danfe_key[i:i+4] for i in range(0, len(nf.danfe_key), 4)), s_key))
+        story.append(Spacer(1, 10))
+
+        # Linha 0 repete em cada página: uma folha solta continua identificada.
+        rows = [
+            [_p(f"NF {nf.nf_number}  ·  {seller_name}", s_nfbar), "", "", ""],
+            [Paragraph(h, s_hdr) for h in ("Cód SKU", "Nome Produto", "Qtd NF", "Contado")],
+        ]
+        consolidated: dict = {}
+        for item in sorted(order.items if order else [], key=lambda i: (i.sku, i.id)):
+            entry = consolidated.setdefault(item.sku, {"name": item.product_name or "—", "qty": 0})
+            entry["qty"] += item.quantity or 0
+
+        lot_rows = []
+        total = 0
+        for sku, entry in consolidated.items():
+            total += entry["qty"]
+            rows.append([_p(sku, s_bold), _p(entry["name"], s_cell), _p(entry["qty"], s_qty), ""])
+            for lot_name, expiry, qty in lots.get((nf.id, sku.lower()), []):
+                lot_rows.append(len(rows))
+                label = f"Lote {lot_name}  ·  " if lot_name else ""
+                rows.append([
+                    "", _p(f"{label}Validade {expiry.strftime('%d/%m/%Y')}  ·  {qty} un", s_lot), "", "",
+                ])
+        total_row = len(rows)
+        rows.append(["", _p("TOTAL", s_bold), _p(total, s_qty), ""])
+
+        style = [
+            ("SPAN",          (0, 0), (-1, 0)),
+            ("BACKGROUND",    (0, 1), (-1, 1),                 ACCENT),
+            ("BACKGROUND",    (0, total_row), (-1, total_row), TOTAL_BG),
+            ("LINEABOVE",     (0, total_row), (-1, total_row), 0.8, ACCENT),
+            ("VALIGN",        (0, 0), (-1, -1),                "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1),                5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1),                5),
+            ("LEFTPADDING",   (0, 0), (-1, -1),                4),
+            ("RIGHTPADDING",  (0, 0), (-1, -1),                4),
+            ("GRID",          (0, 1), (-1, -1),                0.4, BORDER),
+            ("BOX",           (0, 1), (-1, -1),                1.0, ACCENT),
+        ]
+        for r in lot_rows:
+            style += [("TOPPADDING", (0, r), (-1, r), 2), ("BOTTOMPADDING", (0, r), (-1, r), 2)]
+        table = Table(rows, colWidths=[3.8*cm, 9.0*cm, 2.0*cm, 3.2*cm], repeatRows=2)
+        table.setStyle(TableStyle(style))
+        story.append(table)
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Gerado: {generated}", s_lot))
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        topMargin=1.2*cm, bottomMargin=1.2*cm, leftMargin=1.2*cm, rightMargin=1.2*cm,
+        title="Conferência de Entrada")
+    doc.build(story)
+
+    safe_seller = _re.sub(r'[^A-Za-z0-9]', '', seller_name.upper())[:12] or "SELLER"
+    which = f"NF{_re.sub(r'[^A-Za-z0-9]', '', nfs[0].nf_number)}" if len(nfs) == 1 else f"{len(nfs)}NFS"
+    filename = (f"CONFERENCIA_{appt.scheduled_date.strftime('%Y%m%d')}_{safe_seller}_"
+                f"{which}_{appt.id}.pdf")
+    return buf.getvalue(), filename
 
 
 def generate_expedition_bytes(

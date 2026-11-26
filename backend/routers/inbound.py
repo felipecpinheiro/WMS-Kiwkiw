@@ -5,8 +5,12 @@ Agendamento de Inbound (23/10/2026) — endpoints.
              AGENDADO) — o seller_id vem sempre do token, nunca de parâmetro.
              Vencimentos só com "Seus produtos têm validade?" ligado
              (`has_expiry`, 25/11/2026), que só o seller altera.
-  manager+ : lista (no escopo de sellers), marca RECEBIDO, cancela, baixa anexos.
-  operator : só leitura simplificada (status + resumo ao conferir).
+  manager+ : lista (no escopo de sellers), marca RECEBIDO, cancela, baixa anexos
+             e a folha de conferência.
+  operator : (26/11/2026) vê produtos, volumes, paletes e observação, marca
+             RECEBIDO, baixa SÓ a DANFE (PDF) e a folha de conferência — preso à
+             própria unidade e aos seus sellers. Sem XML, Excel, chave em texto
+             nem avisos; não edita nem cancela.
   admin    : tudo.
 
 As regras estão em services/inbound_flow.py. O estoque NÃO é tocado aqui: entra
@@ -35,6 +39,7 @@ from ..database import get_db
 from ..services import inbound_flow as flow
 from ..services.inbound_flow import InboundError
 from ..services.inbound_xml import InboundXmlError, parse_nfe_xml
+from ..services.pdf_generator import generate_inbound_conference_bytes
 from ..services.stock_manager import orders_missing_product_skus, orders_with_discontinued_skus
 from ..timezone_utils import today_brasilia
 
@@ -113,6 +118,12 @@ def _load(db: Session, appt_id: int, user: models.User, seller_ids) -> models.In
     scope = _scope(user, seller_ids)
     if appt is None or (scope is not None and appt.seller_id not in scope):
         raise HTTPException(404, "Agendamento não encontrado.")
+    # Operador: o MESMO recorte da lista (própria unidade, seller ativo) vale
+    # para abrir, baixar e receber por id (26/11/2026).
+    if _role(user) == "operator":
+        seller = appt.seller
+        if seller is None or not seller.active or (user.unit_id and seller.unit_id != user.unit_id):
+            raise HTTPException(404, "Agendamento não encontrado.")
     return appt
 
 
@@ -223,6 +234,10 @@ def _nf_items(items_map, order_id) -> Dict:
             "items_units": sum(i["quantity"] for i in items)}
 
 
+def _file_dict(f: models.InboundFile) -> Dict:
+    return {"id": f.id, "kind": f.kind, "filename": f.filename, "size": f.size}
+
+
 def _to_dict(db: Session, a: models.InboundAppointment, role: str, warnings=None, detail=False,
              items_map=None) -> Dict:
     active_nfs = [n for n in a.nfs if n.active]
@@ -241,19 +256,25 @@ def _to_dict(db: Session, a: models.InboundAppointment, role: str, warnings=None
     if detail and a.status == flow.CONFERIDO:
         base["stock_summary"] = flow.stock_summary(db, a)
         base["has_divergence"] = any(r["divergent"] for r in base["stock_summary"])
-    if role == "operator":
-        # Tela simples, mas com os produtos de cada NF para se organizar antes da
-        # carga chegar (sem anexos, chave nem observação).
-        if items_map is not None:
-            base["nfs"] = [{"id": n.id, "nf_number": n.nf_number, **_nf_items(items_map, n.order_id)}
-                           for n in active_nfs]
-        return base
-    base.update({
+    cargo = {
         "volumes": a.volumes,
         "volumes_unknown": bool(a.volumes_unknown),
         "pallets": a.pallets,
         "pallets_unknown": bool(a.pallets_unknown),
         "notes": a.notes,
+    }
+    if role == "operator":
+        # Para conferir a carga na chegada (26/11/2026): produtos, volumes,
+        # paletes, observação e SÓ a DANFE. Sem XML/Excel, chave nem avisos.
+        base.update(cargo)
+        if items_map is not None:
+            base["nfs"] = [{"id": n.id, "nf_number": n.nf_number,
+                            "files": [_file_dict(f) for f in n.files if f.kind == "PDF"],
+                            **_nf_items(items_map, n.order_id)}
+                           for n in active_nfs]
+        return base
+    base.update({
+        **cargo,
         "cancel_reason": a.cancel_reason,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "received_at": a.received_at.isoformat() if a.received_at else None,
@@ -264,8 +285,7 @@ def _to_dict(db: Session, a: models.InboundAppointment, role: str, warnings=None
                 "id": n.id,
                 "nf_number": n.nf_number,
                 "danfe_key": n.danfe_key,
-                "files": [{"id": f.id, "kind": f.kind, "filename": f.filename, "size": f.size}
-                          for f in n.files],
+                "files": [_file_dict(f) for f in n.files],
                 **(_nf_items(items_map, n.order_id) if items_map is not None else {}),
             }
             for n in active_nfs
@@ -365,13 +385,14 @@ def download_file(
     seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
-    if _role(current_user) == "operator":
-        raise HTTPException(403, "Acesso negado.")
     f = db.query(models.InboundFile).filter(models.InboundFile.id == file_id).first()
     if not f:
         raise HTTPException(404, "Arquivo não encontrado.")
     nf = db.query(models.InboundNf).filter(models.InboundNf.id == f.nf_id).first()
     appt = _load(db, nf.appointment_id, current_user, seller_ids)  # 404 fora do escopo
+    # Operador baixa só a DANFE (26/11/2026); XML e Excel seguem fechados.
+    if _role(current_user) == "operator" and f.kind != "PDF":
+        raise HTTPException(403, "Acesso negado.")
     if not nf.active:
         raise HTTPException(404, "Arquivo não encontrado.")
     safe = re.sub(r'[^\w.\- ]', "_", f.filename)
@@ -379,6 +400,35 @@ def download_file(
         content=bytes(f.content),
         media_type=f.content_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{safe}"'},
+    )
+
+
+@router.get("/{appt_id}/conference-pdf")
+def download_conference_pdf(
+    appt_id: int,
+    nf_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+    seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
+    db: Session = Depends(get_db),
+):
+    """
+    Folha de conferência da equipe (26/11/2026): uma NF (`nf_id`) ou todas as NFs
+    ativas do agendamento, uma por página. Só leitura. O seller não tem acesso.
+    """
+    if _role(current_user) not in ("operator", "manager", "admin"):
+        raise HTTPException(403, "Acesso negado.")
+    appt = _load(db, appt_id, current_user, seller_ids)
+    if appt.status == flow.CANCELADO:
+        raise HTTPException(409, "Agendamento cancelado não tem folha de conferência.")
+    nfs = sorted((n for n in appt.nfs if n.active and (nf_id is None or n.id == nf_id)),
+                 key=lambda n: n.id)
+    if not nfs:
+        raise HTTPException(404, "NF não encontrada neste agendamento.")
+    data, filename = generate_inbound_conference_bytes(appt, nfs, db)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -781,8 +831,10 @@ def receive_appointment(
     seller_ids: Optional[List[int]] = Depends(get_user_seller_ids),
     db: Session = Depends(get_db),
 ):
-    if _role(current_user) not in ("manager", "admin"):
-        raise HTTPException(403, "Acesso negado. Nível mínimo necessário: manager")
+    # Operador também avisa que a carga chegou (26/11/2026) — só no escopo dele
+    # (ver _load). Sem desfazer e conta para a cobrança; quem marcou fica gravado.
+    if _role(current_user) not in ("operator", "manager", "admin"):
+        raise HTTPException(403, "Acesso negado. Nível mínimo necessário: operator")
     appt = _load(db, appt_id, current_user, seller_ids)
     _guard(db, lambda: flow.receive(db, appt, current_user.id))
     appt = _load(db, appt_id, current_user, seller_ids)

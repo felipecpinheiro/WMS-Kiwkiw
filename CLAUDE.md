@@ -39,6 +39,37 @@ O sistema digitaliza e controla todo o fluxo de:
 
 ---
 
+## Mudanças Recentes — 26/11/2026 — Operador recebe a carga e baixa DANFE / folha de conferência
+
+**Commit e push na `main` em 26/11/2026.** Em Recebimentos (tela interna). **Sem tabela, coluna, migração ou
+biblioteca nova.**
+
+| Ponto | Regra |
+|---|---|
+| "Marcar como Recebido" | **Operador também pode**, em qualquer data, com a mesma confirmação. Sem desfazer e conta para a cobrança; `received_by_id` e `AuditLog` guardam quem marcou |
+| Alcance do operador | O mesmo da lista: própria unidade, seller ativo e sellers dele. Agora vale também por id (`_load`) — fora disso **404** |
+| O que o operador passou a ver | Volumes, paletes, observação, **só a DANFE (PDF)** e a folha. Continua sem XML, Excel, chave em texto, avisos, editar e cancelar |
+| Folha de conferência | `GET /inbound/{id}/conference-pdf[?nf_id=]` (operator, manager, admin; seller 403; cancelado 409). Gerada em memória, não grava nada. Existe **mesmo quando há DANFE** |
+| Conteúdo | Uma NF por página: seller, emitente, NF, agendamento, volumes, paletes, observação, **Code128 da chave** (é o que se bipa no Scanner), SKU, produto, Qtd NF, coluna **Contado** em branco, lote/validade abaixo do SKU, total |
+| Todas as NFs | Botão no card quando há mais de uma. Junta **só as folhas** (as DANFEs se baixam uma a uma, para não precisar de biblioteca de juntar PDF) |
+| Onde | **Só em Recebimentos** (nem Manuseios, nem Scanner) |
+
+Código: `generate_inbound_conference_bytes` em `pdf_generator.py`, `routers/inbound.py`,
+`Inbound.tsx` (o botão "PDF" passou a se chamar **"DANFE"**), `inboundApi.downloadConferenceSheet`.
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Texto do seller dentro do PDF | `Paragraph` interpreta marcação: um `<` ou `&` derruba a geração | Todo texto passa por `escape` |
+| Vários lotes do mesmo SKU | Célula alta demais não pagina no ReportLab | Cada lote é uma linha da tabela |
+| Operador sem nenhum seller vinculado | Vê (e agora recebe) **todos** os sellers da unidade — regra antiga de `get_user_seller_ids` | Manter operadores com sellers ou "por unidade" no cadastro |
+
+**Testes:** `.claude/tmp_test_inbound.py` atualizado, **147 verificações** em SQLite e PostgreSQL
+(bancos descartáveis); `tsc --noEmit` e `vite build` ok; conferência visual no app local com o
+login de operador (computador e celular) e do PDF. **Não testado:** leitura do código de barras
+impresso com o leitor físico (só a codificação foi conferida por programa).
+
+---
+
 ## Mudanças Recentes — 25/11/2026 — Toggle "Seus produtos têm controle de lote e validade?" no Agendamento de Inbound
 
 **Commit `15362650`, push na `main` em 25/11/2026.** O deploy em produção não foi conferido na
@@ -100,7 +131,7 @@ conferência usa a **bipagem de entrada que já existe**.
 | Status (texto em `inbound_flow.py`, sem enum) | Quem dispara | Efeito |
 |---|---|---|
 | `AGENDADO` | Seller cria | Cada XML vira um `Order` de entrada **sem `session_id`** e **sem estoque** |
-| `RECEBIDO` | Manager/admin (`POST /inbound/{id}/receive`) | Cria **uma** `PickingSession` de entrada por agendamento; só então vira card no Manuseios. **Sem desfazer** |
+| `RECEBIDO` | Equipe interna, **operador incluído** desde 26/11/2026 (`POST /inbound/{id}/receive`) | Cria **uma** `PickingSession` de entrada por agendamento; só então vira card no Manuseios. **Sem desfazer** |
 | `EM_CONFERENCIA` | Automático ao abrir/bipar a 1ª NF (`on_scan_started`) | — |
 | `CONFERIDO` | Automático no `finalize-entry`, quando todas as NFs não canceladas estão concluídas (`on_order_finalized`) | — |
 | `CANCELADO` | Seller, manager ou admin, **só em AGENDADO** | Cancela os pedidos e descarta vencimentos `a_chegar` |
@@ -123,8 +154,9 @@ conferência usa a **bipagem de entrada que já existe**.
   (`inbound_not_received`) — motivo próprio, **fora** de `held_orders`.
 
 **Acesso:** `client` só o próprio seller (id do token); manager e admin veem **todos** os sellers;
-operador só leitura (status, produtos, quantidades, selo), preso à unidade e aos seus sellers, sem
-anexos, chave nem observação.
+operador preso à unidade e aos seus sellers: vê produtos, volumes, paletes, observação e a DANFE,
+gera a folha de conferência e marca Recebido (26/11/2026); sem XML, Excel, chave nem avisos, e não
+edita nem cancela.
 
 **Telas:** aba "Agendamento de Inbound" no Portal (`SellerInbound.tsx`, criação em 2 passos:
 dados+arquivos → revisão via `POST /inbound/analyze`, que não grava) e `/recebimentos`
@@ -2511,7 +2543,7 @@ esses números** (decisão do dono do sistema).
 | `/inventory/planilha` | `routers/stock_excel.py` | **Lançar por Excel (23/09/2026), manager+ (gerente só nos sellers que atende).** `modelo`, `{seller_id}/analyze` (**não grava**), `{seller_id}/lancar` (revalida, **tudo-ou-nada**). Um seller por arquivo; movimento com `nature="Lançamento de planilha"` e **sem `order_id`**. Sem tabela nova |
 | `/inventory/valores` | `routers/stock_values.py` | **Valor Un por SKU no Meu Estoque (07/10/2026), só `client`** grava (próprio seller); `admin` só lê via `?seller_id=`; manager/operator 403. `modelo`, `analyze` (**não grava**), `lancar` (revalida, **tudo-ou-nada**), `PUT sku` (edição individual, `null` apaga). Coluna `products.seller_unit_value` (NÃO a `unit_value` legada). Nunca mexe em estoque nem faturamento |
 | `/client-supplies` | `routers/client_supplies.py` | **Insumos do Cliente (14/09/2026), só `client`** (o próprio seller_id) cria/edita/apaga; `admin` só lê via `?seller_id=`. CRUD de insumo/entrada/regra + `GET /client-supplies` (lista com saldo) e `GET /client-supplies/movements` (extrato combinado). **Nunca mexe em estoque nem faturamento** — saldo é estimativa calculada em `services/supply_calc.py` |
-| `/inbound` | `routers/inbound.py` | **Agendamento de Inbound.** `client` cria/edita/cancela os próprios (só AGENDADO) + `analyze` (não grava), anexos, vencimentos (`/{id}/expiry` e `expiry-items`, exigem `has_expiry`); manager+ lista, `receive` e cancela; operador só leitura. **Nunca lança estoque.** Ver a seção própria no topo |
+| `/inbound` | `routers/inbound.py` | **Agendamento de Inbound.** `client` cria/edita/cancela os próprios (só AGENDADO) + `analyze` (não grava), anexos, vencimentos (`/{id}/expiry` e `expiry-items`, exigem `has_expiry`); manager+ lista, `receive` e cancela; operador lista, `receive`, baixa a DANFE e `/{id}/conference-pdf` (26/11/2026). **Nunca lança estoque.** Ver a seção própria no topo |
 | `/dashboard` | `routers/dashboard.py` | Cockpit master, portal seller, available-dates, debug |
 | `/settings` | `routers/settings.py` | Configurações key/value, watcher start/stop/status |
 | `/media` | StaticFiles | Fotos de produtos e arquivos de experiência (servidos diretamente) |
@@ -2543,7 +2575,7 @@ esses números** (decisão do dono do sistema).
 | `/audit` | Audit.tsx | admin, manager, operator |
 | `/settings` | Settings.tsx | admin, manager, operator |
 | `/manuseios` | Handling.tsx | admin, manager, operator |
-| `/recebimentos` | Inbound.tsx | admin, manager, operator (operator só lê) |
+| `/recebimentos` | Inbound.tsx | admin, manager, operator (operador também marca Recebido e baixa DANFE/folha) |
 
 **Nota:** A página `Handling.tsx` (kanban de manuseios) é a **interface principal dos operadores** no dia a dia.
 

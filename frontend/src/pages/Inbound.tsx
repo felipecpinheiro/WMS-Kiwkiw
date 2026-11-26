@@ -6,8 +6,9 @@
  * da conferência, vê o que entrou no estoque.
  *
  *   admin/manager : card completo (anexos, avisos internos, botão Recebido)
- *   operator      : somente leitura SIMPLES — status e, depois de Conferido, o
- *                   resumo de quantidades. Sem anexos, avisos nem observação.
+ *   operator      : (26/11/2026) produtos, volumes, paletes, observação, DANFE,
+ *                   folha de conferência e botão Recebido. Sem XML, Excel nem
+ *                   avisos internos. O servidor é quem filtra o que ele recebe.
  *
  * Marcar como Recebido NÃO tem desfazer: libera as NFs para o Manuseios.
  */
@@ -17,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import {
   Truck, AlertTriangle, ChevronDown, ChevronUp, FileText, FileCode,
-  FileSpreadsheet, Download, X, RefreshCw, Package, CalendarClock,
+  FileSpreadsheet, Download, X, RefreshCw, Package, CalendarClock, ClipboardList,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -51,6 +52,13 @@ const selectStyle = { background: 'rgb(var(--surface-2))' };
 const btnPrimary =
   'px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 disabled:cursor-not-allowed';
 const btnGhost = 'px-3 py-1.5 text-xs font-bold rounded-lg border border-line text-t3 hover:text-t1 disabled:opacity-40';
+
+const fileBtn =
+  'flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded-md border border-line text-t3 hover:text-t1';
+
+const downloadSheet = (id: number, nfId?: number) =>
+  inboundApi.downloadConferenceSheet(id, nfId)
+    .catch(() => toast.error('Não foi possível gerar a folha de conferência.'));
 
 const brDate = (iso: string) => iso.split('-').reverse().join('/');
 const countText = (n: number | null | undefined, unknown: boolean | undefined) =>
@@ -165,8 +173,8 @@ function NfProducts({ nf, files }: { nf: InboundNf; files?: React.ReactNode }) {
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 function InboundCard({
-  a, canAct, onReceive,
-}: { a: InboundAppointment; canAct: boolean; onReceive: (a: InboundAppointment) => void }) {
+  a, onReceive,
+}: { a: InboundAppointment; onReceive: (a: InboundAppointment) => void }) {
   const [open, setOpen] = useState(false);
   const canOpenSummary = a.status === 'CONFERIDO';
   const { data: detail } = useQuery(
@@ -174,7 +182,8 @@ function InboundCard({
     () => inboundApi.get(a.id).then(r => r.data),
     { enabled: open && canOpenSummary },
   );
-  const noUnit = !!a.warnings?.some(w => w.type === 'seller_without_unit');
+  const noUnit = a.unit_id == null;
+  const hasSheet = a.status !== 'CANCELADO';
   // Resumo dos produtos do agendamento inteiro (SKUs distintos e unidades)
   const allItems = (a.nfs ?? []).flatMap(nf => nf.items ?? []);
   const totalSkus = new Set(allItems.map(i => i.sku)).size;
@@ -208,48 +217,49 @@ function InboundCard({
         </p>
       )}
 
-      {/* Operador: só os produtos de cada NF (sem anexos, volumes nem avisos) */}
-      {!canAct && (a.nfs ?? []).length > 0 && (
+      <p className="text-xs text-t3">
+        Volumes: <span className="text-t2">{countText(a.volumes, a.volumes_unknown)}</span> · Paletes:{' '}
+        <span className="text-t2">{countText(a.pallets, a.pallets_unknown)}</span>
+      </p>
+      {a.notes && <p className="text-xs text-t3 italic break-words">“{a.notes}”</p>}
+      {a.status === 'CANCELADO' && a.cancel_reason && <p className="text-xs text-t4">Cancelado: {a.cancel_reason}</p>}
+      {(a.nfs ?? []).length > 0 && (
         <div className="space-y-1.5">
-          {(a.nfs ?? []).map(nf => <NfProducts key={nf.id} nf={nf} />)}
+          {(a.nfs ?? []).map(nf => (
+            <NfProducts key={nf.id} nf={nf} files={<>
+              {(nf.files ?? []).map(f => (
+                <button key={f.id} title={f.filename} className={fileBtn}
+                  onClick={() => inboundApi.downloadFile(f.id, f.filename).catch(() => toast.error('Não foi possível baixar.'))}>
+                  {icon(f.kind)} {f.kind === 'PDF' ? 'DANFE' : f.kind} <Download size={10} />
+                </button>
+              ))}
+              {hasSheet && (
+                <button className={fileBtn} title="Folha de conferência desta NF"
+                  onClick={() => downloadSheet(a.id, nf.id)}>
+                  <ClipboardList size={12} /> Conferência <Download size={10} />
+                </button>
+              )}
+            </>} />
+          ))}
+        </div>
+      )}
+      {hasSheet && (a.nfs ?? []).length > 1 && (
+        <button className={`${btnGhost} flex items-center gap-1.5`} onClick={() => downloadSheet(a.id)}>
+          <ClipboardList size={12} /> Folhas de todas as NFs <Download size={12} />
+        </button>
+      )}
+      {(a.warnings ?? []).length > 0 && (
+        <div className="space-y-1">
+          {(a.warnings ?? []).map(w => (
+            <div key={w.type} className="flex items-start gap-1.5 text-[11px] text-warn">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>{w.message} <Link to={w.link} className="font-bold underline">resolver</Link></span>
+            </div>
+          ))}
         </div>
       )}
 
-      {canAct && (
-        <>
-          <p className="text-xs text-t3">
-            Volumes: <span className="text-t2">{countText(a.volumes, a.volumes_unknown)}</span> · Paletes:{' '}
-            <span className="text-t2">{countText(a.pallets, a.pallets_unknown)}</span>
-          </p>
-          {a.notes && <p className="text-xs text-t3 italic">“{a.notes}”</p>}
-          {a.status === 'CANCELADO' && a.cancel_reason && <p className="text-xs text-t4">Cancelado: {a.cancel_reason}</p>}
-          {(a.nfs ?? []).length > 0 && (
-            <div className="space-y-1.5">
-              {(a.nfs ?? []).map(nf => (
-                <NfProducts key={nf.id} nf={nf} files={(nf.files ?? []).map(f => (
-                  <button key={f.id} title={f.filename}
-                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded-md border border-line text-t3 hover:text-t1"
-                    onClick={() => inboundApi.downloadFile(f.id, f.filename).catch(() => toast.error('Não foi possível baixar.'))}>
-                    {icon(f.kind)} {f.kind} <Download size={10} />
-                  </button>
-                ))} />
-              ))}
-            </div>
-          )}
-          {(a.warnings ?? []).length > 0 && (
-            <div className="space-y-1">
-              {(a.warnings ?? []).map(w => (
-                <div key={w.type} className="flex items-start gap-1.5 text-[11px] text-warn">
-                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                  <span>{w.message} <Link to={w.link} className="font-bold underline">resolver</Link></span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {canAct && a.status === 'AGENDADO' && (
+      {a.status === 'AGENDADO' && (
         <div className="flex items-center gap-2 pt-0.5">
           <button className={btnPrimary} disabled={noUnit} onClick={() => onReceive(a)}
             title={noUnit ? 'Associe uma unidade ao seller antes de receber' : undefined}>
@@ -300,7 +310,6 @@ export default function InboundPage() {
   const userStr = localStorage.getItem('wms_user');
   const user = userStr ? JSON.parse(userStr) : null;
   const role: string = user?.role ?? 'operator';
-  const canAct = role === 'admin' || role === 'manager';
 
   // Unidade ativa — mesma preferência do Dashboard/Manuseios. Operador não escolhe.
   const unitPrefKey = `wms_active_unit_${user?.id ?? 'anon'}`;
@@ -464,7 +473,7 @@ export default function InboundPage() {
                   <div key={p} className="mb-3">
                     <p className="text-[11px] font-bold uppercase tracking-wide text-t4 mb-1.5">{PERIOD_LABEL[p]}</p>
                     <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
-                      {items.map(a => <InboundCard key={a.id} a={a} canAct={canAct} onReceive={setToReceive} />)}
+                      {items.map(a => <InboundCard key={a.id} a={a} onReceive={setToReceive} />)}
                     </div>
                   </div>
                 );

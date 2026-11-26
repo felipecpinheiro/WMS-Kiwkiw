@@ -1811,7 +1811,7 @@ export interface InboundNfItem {
 }
 export interface InboundNf {
   id: number; nf_number: string; danfe_key: string; files: InboundFileInfo[];
-  // só na visão interna (manager/admin/operator); o operador não recebe files nem danfe_key
+  // `items` só na visão interna. O operador recebe `files` só com a DANFE (PDF) e não recebe danfe_key
   items?: InboundNfItem[]; items_skus?: number; items_units?: number;
 }
 export interface InboundStockRow { sku: string; name: string; expected: number; entered: number; divergent: boolean }
@@ -1884,7 +1884,7 @@ export const inboundApi = {
     status?: InboundStatus; seller_id?: number; unit_id?: number; no_unit?: boolean;
     date_from?: string; date_to?: string; limit?: number;
   }) => api.get<InboundAppointment[]>('/inbound', { params }),
-  /** AGENDADO -> RECEBIDO (manager+). Sem desfazer. */
+  /** AGENDADO -> RECEBIDO (equipe interna, inclusive operador). Sem desfazer. */
   receive: (id: number) => api.post<InboundAppointment>(`/inbound/${id}/receive`),
   get: (id: number) => api.get<InboundAppointment>(`/inbound/${id}`),
   summary: () => api.get<{ week_scheduled: number; overdue: number; badge: number }>('/inbound/summary'),
@@ -1941,4 +1941,8 @@ export const inboundApi = {
   removeNf: (id: number, nfId: number) => api.delete<InboundAppointment>(`/inbound/${id}/nfs/${nfId}`),
   downloadFile: (fileId: number, filename: string) =>
     downloadAuthenticatedFile(`/inbound/files/${fileId}`, filename),
+  /** Folha de conferência da equipe: uma NF (`nfId`) ou todas as do agendamento. */
+  downloadConferenceSheet: (id: number, nfId?: number) =>
+    downloadAuthenticatedFile(
+      `/inbound/${id}/conference-pdf${nfId ? `?nf_id=${nfId}` : ''}`, `CONFERENCIA_${id}.pdf`),
 };

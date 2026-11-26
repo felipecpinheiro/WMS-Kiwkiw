@@ -132,7 +132,7 @@ with TestClient(app) as c:
     check("operador só vê sellers vinculados", {x["seller_id"] for x in c.get("/inbound", headers=ho).json()} == {ids["s1"]})
     check("operador 404 fora do vínculo", c.get(f"/inbound/{A2['id']}", headers=ho).status_code == 404)
     lo = c.get("/inbound", headers=ho).json()
-    check("operador: lista simples sem anexos/avisos/obs", all("warnings" not in x and "notes" not in x and all("files" not in nf and "danfe_key" not in nf for nf in x.get("nfs", [])) for x in lo))
+    check("operador: lista com obs/volumes, só DANFE, sem avisos/chave", all("warnings" not in x and "notes" in x and "volumes" in x and "pallets" in x and "cancel_reason" not in x and all("danfe_key" not in nf and all(f["kind"] == "PDF" for f in nf["files"]) for nf in x.get("nfs", [])) for x in lo))
     check("filtro sem unidade", [x["seller_id"] for x in c.get("/inbound?no_unit=true", headers=ha).json()] == [A3["seller_id"]])
     check("filtro por unidade exclui sem unidade", ids["s3"] not in {x["seller_id"] for x in c.get("/inbound?unit_id=1", headers=ha).json()})
     check("filtro por período", all(x["scheduled_date"] >= D for x in c.get(f"/inbound?date_from={D}", headers=ha).json()))
@@ -142,11 +142,13 @@ with TestClient(app) as c:
     check("seller tem summary só do próprio seller", c.get("/inbound/summary", headers=h2).json()["badge"] <= 1)
     check("admin vê tudo", len(c.get("/inbound", headers=ha).json()) == 5)
     ol = c.get(f"/inbound/{A['id']}", headers=ho).json()
-    check("operador: tela simples", "notes" not in ol and ol["status"] == "AGENDADO" and all("files" not in nf for nf in ol.get("nfs", [])))
+    check("operador: detalhe com volumes e DANFE", ol["volumes"] == 10 and ol["pallets"] == 2 and ol["status"] == "AGENDADO" and [f["kind"] for f in ol["nfs"][0]["files"]] == ["PDF"], ol)
     fid = c.get(f"/inbound/{A['id']}", headers=h1).json()["nfs"][0]["files"][0]["id"]
     check("seller baixa anexo", c.get(f"/inbound/files/{fid}", headers=h1).status_code == 200)
     check("outro seller não baixa", c.get(f"/inbound/files/{fid}", headers=h2).status_code == 404)
-    check("operador não baixa", c.get(f"/inbound/files/{fid}", headers=ho).status_code == 403)
+    kinds = {f["kind"]: f["id"] for f in c.get(f"/inbound/{A['id']}", headers=h1).json()["nfs"][0]["files"]}
+    r = c.get(f"/inbound/files/{kinds['PDF']}", headers=ho); check("operador baixa a DANFE", r.status_code == 200 and r.content == PDF, r.status_code)
+    check("operador não baixa XML", c.get(f"/inbound/files/{kinds['XML']}", headers=ho).status_code == 403)
     sm = c.get("/inbound/summary", headers=h1).json(); check("summary", "week_scheduled" in sm and "overdue" in sm)
     w = c.get(f"/inbound/{A3['id']}", headers=ha).json()["warnings"]
     check("aviso sem unidade + sem produto", {x["type"] for x in w} >= {"seller_without_unit", "missing_product"}, w)
@@ -162,7 +164,7 @@ with TestClient(app) as c:
     check("SKU cadastrado = ok", all(i["status"] == "ok" for i in first["items"]) and first["items"][0]["quantity"] > 0, first["items"])
     op_d = c.get(f"/inbound/{A['id']}", headers=ho).json()
     check("operador vê produtos e quantidades", op_d["nfs"][0]["items"] and op_d["nfs"][0]["items"][0]["quantity"] > 0)
-    check("operador continua sem anexos/chave/obs", all("files" not in nf and "danfe_key" not in nf for nf in op_d["nfs"]) and "notes" not in op_d)
+    check("operador continua sem chave e sem XML", all("danfe_key" not in nf and all(f["kind"] == "PDF" for f in nf["files"]) for nf in op_d["nfs"]))
     check("seller não recebe o campo items (inalterado)", all("items" not in nf for nf in c.get(f"/inbound/{A['id']}", headers=h1).json()["nfs"]))
 
     # ── edição / reagendamento ──
@@ -204,7 +206,6 @@ with TestClient(app) as c:
 
     # ── receber ──
     check("seller não recebe", c.post(f"/inbound/{A['id']}/receive", headers=h1).status_code == 403)
-    check("operador não recebe", c.post(f"/inbound/{A['id']}/receive", headers=ho).status_code == 403)
     r = c.post(f"/inbound/{A3['id']}/receive", headers=ha); check("seller sem unidade não recebe", r.status_code == 409, r.text)
     d = SessionLocal(); o = d.query(models.Order).filter(models.Order.inbound_appointment_id == A["id"], models.Order.status != models.OrderStatus.CANCELLED).first(); oid = o.id
     d.close()
@@ -261,6 +262,80 @@ with TestClient(app) as c:
     c.post("/scanning/scan", json={"session_id": msid, "order_id": o2, "barcode": "BCAAA1", "operator_id": 1, "quantity": 5}, headers=ho)
     c.post(f"/scanning/orders/{o2}/finalize-entry", json={"confirm": True}, headers=ho)
     check("2 de 2 = CONFERIDO", c.get(f"/inbound/{mA['id']}", headers=h1).json()["status"] == "CONFERIDO")
+
+    # ── operador: Recebido + folha de conferência (26/11/2026) ──
+    from reportlab import rl_config
+    rl_config.pageCompression = 0
+    d = SessionLocal()
+    u2 = models.Unit(name="U2"); d.add(u2); d.flush()
+    def mk2(email, **kw):
+        u = models.User(name=email, email=email, password_hash=hash_password("x"), role=models.UserRole.OPERATOR, active=True, **kw)
+        d.add(u); d.flush(); return u
+    far = mk2("op2@t", unit_id=u2.id); far.sellers = [d.get(models.Seller, ids["s1"])]
+    free = mk2("op3@t", unit_id=d.get(models.Seller, ids["s1"]).unit_id)
+    d.commit(); hfar, hfree = H(far), H(free); d.close()
+
+    exp = '{"0":[{"sku":"AAA","expiry_date_text":"31/12/2027","quantity":3,"lot_name":"L<7>&X"},{"sku":"AAA","expiry_date_text":"30/06/2028","quantity":2}]}'
+    r = post(h1, fields={"has_expiry": "true", "expiry_json": exp, "notes": "Caixa <frágil> & lacrada\nsegunda linha", "pallets": "", "pallets_unknown": "true"},
+             files={"nf0_xml": nfe(key(800), 800, [("AAA", 5), ("BBB", 3)]), "nf1_pdf": PDF, "nf1_xml": nfe(key(801), 801, [("AAA", 4)])})
+    check("agendamento p/ folha criado", r.status_code == 201, r.text)
+    S = r.json(); su = f"/inbound/{S['id']}/conference-pdf"; n1, n2 = [n["id"] for n in S["nfs"]]
+    def snap():
+        d = SessionLocal()
+        x = (d.query(models.AuditLog).count(), d.query(models.StockMovement).count(), d.query(models.PickingSession).count(), d.get(models.InboundAppointment, S["id"]).status)
+        d.close(); return x
+    s0 = snap()
+    r = c.get(su, headers=ho)
+    check("folha de todas: PDF", r.status_code == 200 and r.content[:5] == b"%PDF-" and r.headers["content-type"] == "application/pdf", r.text[:200])
+    check("folha de todas: 2 páginas", r.content.count(b"/Type /Page\n") == 2, r.content.count(b"/Type /Page"))
+    check("nome do arquivo (todas)", "2NFS" in r.headers["content-disposition"], r.headers["content-disposition"])
+    body = r.content
+    check("folha traz lote, validade e sem-lote", b"(Lote L)" in body and b"Validade 31/12/2027" in body and b"3 un)" in body and b"(Validade 30/06/2028" in body)
+    check("folha traz obs, paletes e chave", b"lacrada" in body and b"segunda linha" in body and b"0000 0800" in body)
+    r = c.get(su + f"?nf_id={n2}", headers=ho)
+    check("folha de 1 NF: 1 página, sem lote da outra", r.status_code == 200 and r.content.count(b"/Type /Page\n") == 1 and b"31/12/2027" not in r.content and "NF801" in r.headers["content-disposition"])
+    check("manager e admin geram", c.get(su, headers=hm).status_code == 200 and c.get(su, headers=ha).status_code == 200)
+    # regra que já existia: sem NENHUM vínculo, o token vem sem filtro de seller e vale a unidade
+    check("operador sem vínculo segue a lista (vê a unidade)", c.get(su, headers=hfree).status_code == 200 and S["id"] in {x["id"] for x in c.get("/inbound", headers=hfree).json()} and ids["s3"] not in {x["seller_id"] for x in c.get("/inbound", headers=hfree).json()})
+    d = SessionLocal(); d.query(models.User).filter_by(email="op3@t").first().seller_scope = "unit"; d.commit()
+    hfree = H(d.query(models.User).filter_by(email="op3@t").first()); d.close()
+    check("operador 'por unidade' gera", c.get(su, headers=hfree).status_code == 200)
+    check("seller não gera folha", c.get(su, headers=h1).status_code == 403)
+    check("sem token não gera", c.get(su).status_code in (401, 403))
+    check("operador de outra unidade: folha 404", c.get(su, headers=hfar).status_code == 404)
+    check("operador de outra unidade: detalhe 404", c.get(f"/inbound/{S['id']}", headers=hfar).status_code == 404)
+    check("operador de outra unidade: lista vazia", c.get("/inbound", headers=hfar).json() == [])
+    pdf_id = S["nfs"][1]["files"]; pdf_id = next(f["id"] for f in pdf_id if f["kind"] == "PDF")
+    check("operador de outra unidade: DANFE 404", c.get(f"/inbound/files/{pdf_id}", headers=hfar).status_code == 404)
+    check("operador de outra unidade: não recebe", c.post(f"/inbound/{S['id']}/receive", headers=hfar).status_code == 404)
+    check("operador fora do vínculo: folha/receber 404", c.get(f"/inbound/{A2['id']}/conference-pdf", headers=ho).status_code == 404 and c.post(f"/inbound/{A2['id']}/receive", headers=ho).status_code == 404)
+    check("NF de outro agendamento = 404", c.get(f"/inbound/{A2['id']}/conference-pdf?nf_id={n1}", headers=ha).status_code == 404)
+    check("agendamento inexistente = 404", c.get("/inbound/999999/conference-pdf", headers=ha).status_code == 404)
+    check("folha não grava nada", snap() == s0, f"{s0} -> {snap()}")
+    d = SessionLocal(); d.get(models.Seller, ids["s1"]).active = False; d.commit(); d.close()
+    check("seller inativo: operador não baixa nem recebe", c.get(su, headers=ho).status_code == 404 and c.post(f"/inbound/{S['id']}/receive", headers=ho).status_code == 404)
+    d = SessionLocal(); d.get(models.Seller, ids["s1"]).active = True; d.commit(); d.close()
+    check("operador não cancela", c.post(f"/inbound/{S['id']}/cancel", json={}, headers=ho).status_code == 403)
+    check("operador não remove NF", c.delete(f"/inbound/{S['id']}/nfs/{n1}", headers=ho).status_code == 403)
+    r = c.post(f"/inbound/{S['id']}/receive", headers=ho)
+    check("operador marca Recebido", r.status_code == 200 and r.json()["status"] == "RECEBIDO", r.text)
+    check("resposta do operador sem avisos/chave/XML", "warnings" not in r.json() and all("danfe_key" not in nf and all(f["kind"] == "PDF" for f in nf["files"]) for nf in r.json()["nfs"]))
+    check("operador receber de novo = 409", c.post(f"/inbound/{S['id']}/receive", headers=ho).status_code == 409)
+    d = SessionLocal(); ap = d.get(models.InboundAppointment, S["id"])
+    opid = d.query(models.User).filter_by(email="op@t").first().id
+    check("grava quem recebeu + sessão de entrada", ap.received_by_id == opid and ap.session_id and ap.received_at is not None)
+    check("auditoria com o operador", d.query(models.AuditLog).filter_by(entity_type="InboundAppointment", entity_id=S["id"], action="STATUS", user_id=opid).count() == 1)
+    S_sid = ap.session_id; d.close()
+    r = c.post(f"/scanning/sessions/{S_sid}/open-by-nfe", json={"nfe_key": key(800)}, headers=ho)
+    check("chave da folha abre a NF no Scanner", r.json().get("success") is True, r.text)
+    check("folha continua depois de recebido", c.get(su, headers=ho).status_code == 200)
+    cx = post(h1, files={"nf0_xml": nfe(key(810), 810, [("AAA", 1)])}).json()
+    c.post(f"/inbound/{cx['id']}/cancel", json={}, headers=h1)
+    check("cancelado não gera folha", c.get(f"/inbound/{cx['id']}/conference-pdf", headers=ha).status_code == 409)
+    check("seller sem unidade: admin gera folha", c.get(f"/inbound/{A3['id']}/conference-pdf", headers=ha).status_code == 200)
+    big = post(h1, files={"nf0_xml": nfe(key(820), 820, [(f"SKU-{i:04d}-" + "X" * 60, i + 1) for i in range(200)])}).json()
+    r = c.get(f"/inbound/{big['id']}/conference-pdf", headers=ho)
+    check("NF com 200 SKUs longos pagina", r.status_code == 200 and r.content.count(b"/Type /Page\n") > 3, r.status_code)
 
     # ── regressão: NF de entrada comum (fora de agendamento) intacta ──
     d = SessionLocal()

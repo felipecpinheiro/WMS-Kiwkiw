@@ -119,7 +119,7 @@ function ItemCard({
 
   return (
     <div
-      className={`relative rounded-xl border ${padding} transition-all cursor-context-menu select-none ${cardClass}`}
+      className={`relative rounded-xl border ${padding} transition-all ${onRightClick ? 'cursor-context-menu' : ''} select-none ${cardClass}`}
       onContextMenu={onRightClick}
     >
       {/* Foto */}
@@ -496,9 +496,10 @@ export default function ScannerPage() {
   const scanPhase: 'nfe' | 'product' =
     (activeOrderId === null || !activeOrder || activeOrder.status === 'completed') ? 'nfe' : 'product';
 
-  // Consulta somente leitura (admin) de NF interrompida/concluída — reaproveita
-  // a mesma tela central de bipagem, só sem os controles editáveis. Independente
-  // do fluxo real de bipagem (activeOrderId/scanPhase).
+  // Consulta somente leitura (todos os cargos internos) de NF interrompida ou
+  // concluída — reaproveita a mesma tela central de bipagem, sem os controles
+  // que alteram algo. O campo de leitura continua na tela: ler uma etiqueta
+  // fecha a consulta. Independente do fluxo real (activeOrderId/scanPhase).
   const isBipandoView = !!activeOrder && scanPhase === 'product';
   const isAuditView = !isBipandoView && !!auditOrder;
   const displayOrder: SessionOrder | null = isBipandoView ? activeOrder : (isAuditView ? auditOrder : null);
@@ -734,28 +735,51 @@ export default function ScannerPage() {
     }
   }, [scanning, sessionId, localOrders, hiddenOrderIds]);
 
-  // ── Clique na NF da lista: abre sem ler a etiqueta ──────
-  // Todos os cargos. Com outra NF aberta não troca, para não deixar a anterior
-  // pela metade.
+  // ── Clique na NF da lista ───────────────────────────────
+  // Todos os cargos. NF em aberto abre a bipagem sem ler a etiqueta; concluída
+  // ou interrompida abre a consulta. Com outra NF aberta não faz nenhum dos
+  // dois: a anterior ficaria pela metade, e a consulta guardada apareceria
+  // sozinha quando ela fosse concluída.
+  const warnNfStillOpen = (action: 'abrir' | 'consultar') => {
+    if (!activeOrder) return;
+    const nf = activeOrder.nf_number;
+    const started = activeOrder.items.some(it => it.scanned > 0);
+    toast.error(
+      isEntradaOrder
+        ? `Finalize ou pause a NF ${nf} antes de ${action} outra.`
+        : started
+          ? `Conclua ou interrompa a NF ${nf} antes de ${action} outra.`
+          : `A NF ${nf} está aberta. Para ${action} outra, clique em "Sair da Bipagem" — nada foi bipado, ela não é interrompida.`,
+      { duration: 7000 },
+    );
+  };
+
   const handleListOpen = (order: SessionOrder) => {
     if (isBipandoView && activeOrder) {
-      if (order.id !== activeOrder.id) {
-        const nf = activeOrder.nf_number;
-        const started = activeOrder.items.some(it => it.scanned > 0);
-        toast.error(
-          isEntradaOrder
-            ? `Finalize ou pause a NF ${nf} antes de abrir outra.`
-            : started
-              ? `Conclua ou interrompa a NF ${nf} antes de abrir outra.`
-              : `A NF ${nf} está aberta. Para trocar, clique em "Sair da Bipagem" — nada foi bipado, ela não é interrompida.`,
-          { duration: 7000 },
-        );
-      }
+      if (order.id !== activeOrder.id) warnNfStillOpen('abrir');
       inputRef.current?.focus();
       return;
     }
     setAuditOrder(null);
     handleNfeScan(order.nf_number, false, order.id);
+  };
+
+  const handleListConsult = (order: SessionOrder) => {
+    // Leitura em andamento: a NF que ela abrir ficaria escondida atrás da consulta.
+    if (scanning) return;
+    if (isBipandoView && activeOrder) {
+      if (order.id !== activeOrder.id) warnNfStillOpen('consultar');
+    } else {
+      setFeedback({ state: 'idle', title: '', message: '' });
+      setAuditOrder(order);
+    }
+    inputRef.current?.focus();
+  };
+
+  // O botão de fechar some junto com a consulta: devolve o foco ao leitor.
+  const closeAudit = () => {
+    setAuditOrder(null);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   // ── Product scan ────────────────────────────────────────
@@ -932,6 +956,8 @@ export default function ScannerPage() {
     if (!barcode.trim()) return;
 
     if (scanPhase === 'nfe') {
+      // Ler uma etiqueta durante a consulta fecha a consulta.
+      setAuditOrder(null);
       handleNfeScan(barcode);
     } else {
       // 3E: If active order not completed, block NFe-length scans that don't match products
@@ -1411,7 +1437,7 @@ export default function ScannerPage() {
           </div>
         </div>
 
-        {/* Order list — clicar numa NF em aberto abre a bipagem dela */}
+        {/* Order list — clicar abre a bipagem (NF em aberto) ou a consulta */}
         <div className="flex-1 overflow-y-auto p-2">
           <div className="flex items-center justify-between px-2 mb-2">
             <p className="text-[9px] text-t5 uppercase tracking-widest">Pedidos da sessão</p>
@@ -1473,17 +1499,13 @@ export default function ScannerPage() {
             }
 
             const isAuditable = order.status === 'completed' || order.status === 'interrupted';
-            // NF concluída/interrompida não reabre: para o admin o clique é a
-            // consulta somente leitura.
-            const listClick = !isAuditable
-              ? () => handleListOpen(order)
-              : isAdmin ? () => setAuditOrder(order) : undefined;
 
             return (
               <div key={order.id}
-                onClick={listClick}
-                title={isAuditable ? undefined : 'Clique para abrir esta NF'}
-                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'} ${listClick ? 'cursor-pointer hover:border-violet-500/30' : ''}`}>
+                // NF concluída/interrompida não reabre: o clique é a consulta.
+                onClick={() => (isAuditable ? handleListConsult(order) : handleListOpen(order))}
+                title={isAuditable ? 'Clique para consultar' : 'Clique para abrir esta NF'}
+                className={`group p-2.5 rounded-lg mb-1 border transition cursor-pointer hover:border-violet-500/30 ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'}`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
                   <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>
@@ -1543,7 +1565,7 @@ export default function ScannerPage() {
                   setShowExitDialog(true);
                 }
               } else if (isAuditView) {
-                setAuditOrder(null);
+                closeAudit();
               } else {
                 if (sessionId) sessionStorage.removeItem(hiddenSkusKey);
                 setHiddenSkus([]);
@@ -1650,7 +1672,7 @@ export default function ScannerPage() {
                     </button>
                   )}
                   {isAuditView ? (
-                    <button onClick={() => setAuditOrder(null)}
+                    <button onClick={closeAudit}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-t3 border border-line hover:border-line-soft rounded-lg transition">
                       <X size={12} /> Fechar consulta
                     </button>
@@ -1716,93 +1738,90 @@ export default function ScannerPage() {
             </div>
           )}
 
-          {/* Feedback panel + input de bipagem — não fazem sentido em modo consulta */}
-          {!isAuditView && (
-            <>
-              <div className={`flex items-center gap-3 p-3 rounded-xl border mt-3 transition-all min-h-[56px] ${feedbackBg[feedback.state]}`}>
-                {feedbackIcon[feedback.state]}
-                <div className="flex-1 min-w-0">
-                  {feedback.state !== 'idle' ? (
-                    <>
-                      <p className={`font-bold text-sm ${feedbackTextColor[feedback.state]}`}>{feedback.title}</p>
-                      <p className="text-xs text-t3 mt-0.5">{feedback.message}</p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-t5">
-                      {scanPhase === 'nfe' ? 'Aguardando scan da NFe...' : 'Aguardando scan do produto...'}
-                    </p>
-                  )}
-                </div>
-                {feedback.photoUrl && (
-                  <img src={photoSrc(feedback.photoUrl)!} alt="Produto"
-                    className="w-14 h-14 object-cover rounded-lg border border-line flex-shrink-0" />
-                )}
-              </div>
+          {/* Feedback panel + input de bipagem — ficam também na consulta, para o
+              leitor não ler no vazio. */}
+          <div className={`flex items-center gap-3 p-3 rounded-xl border mt-3 transition-all min-h-[56px] ${feedbackBg[feedback.state]}`}>
+            {feedbackIcon[feedback.state]}
+            <div className="flex-1 min-w-0">
+              {feedback.state !== 'idle' ? (
+                <>
+                  <p className={`font-bold text-sm ${feedbackTextColor[feedback.state]}`}>{feedback.title}</p>
+                  <p className="text-xs text-t3 mt-0.5">{feedback.message}</p>
+                </>
+              ) : (
+                <p className="text-sm text-t5">
+                  {scanPhase === 'nfe' ? 'Aguardando scan da NFe...' : 'Aguardando scan do produto...'}
+                </p>
+              )}
+            </div>
+            {feedback.photoUrl && (
+              <img src={photoSrc(feedback.photoUrl)!} alt="Produto"
+                className="w-14 h-14 object-cover rounded-lg border border-line flex-shrink-0" />
+            )}
+          </div>
 
-              {/* Barcode input */}
-              <div className="flex gap-2 mt-3">
-                {/* Quantidade — só na ENTRADA. Digita a quantidade da caixa e bipa
-                    uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
-                {showQtyField && (
-                  <div className="relative w-32 flex-shrink-0">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ok/70 pointer-events-none">
-                      QTD
-                    </span>
-                    <input
-                      ref={qtyRef}
-                      type="number"
-                      min={1}
-                      max={MAX_SCAN_QTY}
-                      step={1}
-                      value={qtyInput}
-                      onChange={e => setQtyInput(e.target.value)}
-                      onKeyDown={handleQtyKeyDown}
-                      onFocus={e => e.target.select()}
-                      disabled={scanning}
-                      title="Quantidade deste bipe. Enter volta para o código de barras."
-                      className="w-full bg-emerald-500/10 border border-ok/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-t1 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-ok transition disabled:opacity-40"
-                      autoComplete="off"
-                    />
-                  </div>
-                )}
-                <div className="flex-1 relative">
-                  {scanPhase === 'nfe'
-                    ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-warn/60" />
-                    : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-ok animate-pulse' : 'text-t4'}`} />
-                  }
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={barcodeInput}
-                    onChange={e => setBarcodeInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    onBlur={handleScanInputBlur}
-                    disabled={scanning}
-                    placeholder={
-                      scanPhase === 'nfe'
-                        ? 'Escaneie a chave da NFe (etiqueta física)...'
-                        : activeOrder?.status === 'completed'
-                        ? 'Pedido concluído — escaneie a próxima NFe'
-                        : 'Escaneie o código de barras do produto...'
-                    }
-                    className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-3 text-base text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
-                    autoComplete="off"
-                    autoFocus
-                  />
-                </div>
-                <button
-                  onClick={() => handleScan(barcodeInput)}
-                  disabled={scanning || !barcodeInput.trim()}
-                  className="px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold rounded-xl transition flex items-center gap-2"
-                >
-                  {scanning
-                    ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    : <ScanLine size={16} />}
-                  {scanPhase === 'nfe' ? 'Abrir' : 'Bipar'}
-                </button>
+          {/* Barcode input */}
+          <div className="flex gap-2 mt-3">
+            {/* Quantidade — só na ENTRADA. Digita a quantidade da caixa e bipa
+                uma vez, em vez de bipar 1.000 peças iguais uma a uma. */}
+            {showQtyField && (
+              <div className="relative w-32 flex-shrink-0">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-ok/70 pointer-events-none">
+                  QTD
+                </span>
+                <input
+                  ref={qtyRef}
+                  type="number"
+                  min={1}
+                  max={MAX_SCAN_QTY}
+                  step={1}
+                  value={qtyInput}
+                  onChange={e => setQtyInput(e.target.value)}
+                  onKeyDown={handleQtyKeyDown}
+                  onFocus={e => e.target.select()}
+                  disabled={scanning}
+                  title="Quantidade deste bipe. Enter volta para o código de barras."
+                  className="w-full bg-emerald-500/10 border border-ok/30 rounded-xl pl-11 pr-3 py-3 text-base font-bold text-right text-t1 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-ok transition disabled:opacity-40"
+                  autoComplete="off"
+                />
               </div>
-            </>
-          )}
+            )}
+            <div className="flex-1 relative">
+              {scanPhase === 'nfe'
+                ? <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-warn/60" />
+                : <ScanLine size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${scanning ? 'text-ok animate-pulse' : 'text-t4'}`} />
+              }
+              <input
+                ref={inputRef}
+                type="text"
+                value={barcodeInput}
+                onChange={e => setBarcodeInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={handleScanInputBlur}
+                disabled={scanning}
+                placeholder={
+                  scanPhase === 'nfe'
+                    ? 'Escaneie a chave da NFe (etiqueta física)...'
+                    : activeOrder?.status === 'completed'
+                    ? 'Pedido concluído — escaneie a próxima NFe'
+                    : 'Escaneie o código de barras do produto...'
+                }
+                className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-3 text-base text-t1 placeholder-t5 outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition disabled:opacity-40"
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+            <button
+              onClick={() => handleScan(barcodeInput)}
+              disabled={scanning || !barcodeInput.trim()}
+              className="px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold rounded-xl transition flex items-center gap-2"
+            >
+              {scanning
+                ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <ScanLine size={16} />}
+              {scanPhase === 'nfe' ? 'Abrir' : 'Bipar'}
+            </button>
+          </div>
         </div>
 
         {/* Scrollable items area */}
@@ -1849,7 +1868,8 @@ export default function ScannerPage() {
                               isFirst={isFirst}
                               isSmall={isDone}
                               expiry={expiryAllocs?.[item.sku]}
-                              onRightClick={(e) => handleItemRightClick(e, item)}
+                              // Consulta é só visualização: sem o menu que cadastra/edita produto.
+                              onRightClick={isAuditView ? undefined : (e) => handleItemRightClick(e, item)}
                               onImageClick={(url) => setLightboxUrl(url)}
                             />
                           </div>

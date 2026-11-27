@@ -24,6 +24,61 @@ Este projeto está em fase de testes ativos com pessoas reais. Qualquer mudança
 
 ---
 
+## Mudanças Recentes — 27/11/2026 — Filtros nos Manuseios e abertura da NF com um clique
+
+**Commit `d019dd55`, push na `main` em 27/11/2026.** O deploy em produção não foi conferido na hora.
+**Sem tabela, coluna, migração ou biblioteca nova.** Vale para **todos os cargos internos**.
+
+### Filtros (`Handling.tsx`)
+
+| Ponto | Regra |
+|---|---|
+| Busca de seller | Campo de texto, um por vez, sem diferenciar acento nem maiúscula. **Substitui a lista de seleção**, que ficava com o filtro preso ao trocar de data ou Saída/Entrada |
+| Período | Atalhos **Hoje** (padrão), **Ontem**, **7 dias** e **Outro período** (mostra De/Até) |
+| Pendências em "Hoje" | Cards dos **últimos 7 dias** (hoje incluído) com NF em aberto aparecem **no topo**. Só em "Hoje". Mais antigos que isso não aparecem |
+| Ordenação | **Mais antigo primeiro** (padrão), Mais pendentes, Seller (A–Z). Pendência de dia anterior fica no topo em qualquer ordem |
+| Memória | `sessionStorage` por usuário (`wms_manuseios_filtros_<id>`): período, datas, busca, Saída/Entrada e ordem. Some ao fechar o navegador. A unidade continua no `localStorage` de sempre |
+| Limpar filtros | Volta período, busca e ordem. **Mantém** unidade e Saída/Entrada |
+| Resumo do topo | Soma o que está na tela — em "Hoje" inclui os cards pendentes de dias anteriores |
+| Fora do escopo (decisão do dono) | Filtros por situação, contador "X de Y" e busca por NF/chave nos Manuseios |
+
+**Servidor:** `GET /scanning/session-cards` ganhou **`pending_from`**. Só vale junto de `date_from` e
+anterior a ele: traz também os cards de `pending_from` até a véspera de `date_from` que ainda têm NF
+**em aberto** (nem concluída, nem interrompida, nem cancelada/inativa; NF **retida conta**), marcados
+com `carried_over`. Dos dias anteriores só carrega sessões com NF em aberto, porque a tela recarrega
+a cada 30s. Sem o parâmetro, a resposta é a de sempre.
+
+### Abrir a NF clicando na lista (`Scanner.tsx`)
+
+Para etiqueta que não lê por erro de impressão (antes o operador digitava o número). Até aqui **só o
+admin** conseguia clicar.
+
+| Ponto | Regra |
+|---|---|
+| Quem | Admin, gerente e operador. NF concluída/interrompida **não reabre**: para o admin o clique continua sendo a consulta somente leitura |
+| Com outra NF aberta | **Não troca** (vale para o admin também). Com algo bipado: concluir ou interromper; entrada: finalizar ou pausar; saída **sem nada bipado**: "Sair da Bipagem", que não interrompe |
+| Travas | As mesmas da leitura (transportadora, sem produto, descontinuado, inativa, inbound não recebido) e ainda recusa NF **cancelada** com a tela desatualizada |
+| Auditoria | Cada abertura grava `AuditLog` `Order` / **`OPEN_NF_CLICK`**. Sem confirmação na tela |
+
+**Servidor:** `POST /scanning/sessions/{id}/open-by-nfe` aceita **`order_id`** (`OpenByNfeRequest`).
+Com ele abre exatamente aquele pedido da sessão. Leitura pela chave/número sem `order_id` não mudou.
+
+### Armadilhas
+
+| Situação | Armadilha | Como evitar |
+|---|---|---|
+| Abrir NF por clique procurando pelo número | O mesmo número pode existir em dois sellers do mesmo upload, e a busca pega o primeiro | Mandar `order_id`. A tela manda também o `nfe_key`, para funcionar durante o deploy separado de tela e servidor |
+| Novo caminho que abre NF na tela | Marcar o pedido ativo direto na tela pula as travas e a auditoria | Tudo passa por `open-by-nfe`; o clique **não** tem o atalho local usado quando a requisição falha |
+| Guardar a data do filtro "Hoje" | No dia seguinte a tela abriria na data velha | Guardar o **nome** do período e calcular a data a cada render |
+| Somar dias a uma data na tela | Misturar fuso local com `toISOString` erra o dia | `shiftDays()` em `Handling.tsx` (UTC de ponta a ponta); "hoje" vem de `todayBrasiliaStr()` |
+
+**Testes:** 51 verificações novas e as 147 de `.claude/tmp_test_inbound.py`, verdes em **SQLite e
+PostgreSQL** (bancos descartáveis); o script das 51 **não está versionado**. `tsc --noEmit` e
+`vite build` ok; conferência na tela como operador, com dados fictícios. **Não conferido na tela:**
+admin e gerente, clique em NF de entrada, as outras duas ordenações e o leitor físico.
+
+---
+
 ## Visão Geral do Sistema
 
 **WMS Kiwkiw** é um sistema de gerenciamento de armazém (Warehouse Management System) para a empresa Kiwkiw, que atua como **fulfillment** — ou seja, recebe, armazena e despacha produtos de seus clientes (chamados "sellers").

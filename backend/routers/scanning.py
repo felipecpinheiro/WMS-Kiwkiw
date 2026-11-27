@@ -501,22 +501,40 @@ def open_order_by_nfe(
     current_user: models.User = Depends(require_internal),
     db: Session = Depends(get_db),
 ):
-    """Abre um pedido pelo scan da chave de acesso da NFe (código extenso da etiqueta)."""
-    nfe_key = request.nfe_key.strip()
-    if not nfe_key:
+    """
+    Abre um pedido pelo scan da chave de acesso da NFe (código extenso da etiqueta)
+    ou pelo clique na NF da lista (`order_id`), para etiqueta que não lê.
+
+    O clique passa pelas mesmas travas da leitura e fica registrado no AuditLog,
+    já que ninguém conferiu a etiqueta física.
+    """
+    nfe_key = (request.nfe_key or "").strip()
+    opened_by_click = request.order_id is not None
+    if not opened_by_click and not nfe_key:
         raise HTTPException(status_code=400, detail="Chave NFe é obrigatória")
 
-    # Match by danfe_key or nf_number
-    order = db.query(models.Order).filter(
-        models.Order.session_id == session_id,
-        (models.Order.danfe_key == nfe_key) | (models.Order.nf_number == nfe_key),
-    ).first()
-
-    if not order:
-        preview = nfe_key[:20] + "..." if len(nfe_key) > 20 else nfe_key
-        return {"success": False, "message": f"Nenhum pedido encontrado para a chave '{preview}' nesta sessão"}
+    if opened_by_click:
+        # Por id: o mesmo número de NF pode existir em dois sellers do mesmo upload.
+        order = db.query(models.Order).filter(
+            models.Order.session_id == session_id,
+            models.Order.id == request.order_id,
+        ).first()
+        if not order:
+            return {"success": False, "message": "Esta NF não pertence a esta sessão. Atualize a tela (F5)."}
+    else:
+        # Match by danfe_key or nf_number
+        order = db.query(models.Order).filter(
+            models.Order.session_id == session_id,
+            (models.Order.danfe_key == nfe_key) | (models.Order.nf_number == nfe_key),
+        ).first()
+        if not order:
+            preview = nfe_key[:20] + "..." if len(nfe_key) > 20 else nfe_key
+            return {"success": False, "message": f"Nenhum pedido encontrado para a chave '{preview}' nesta sessão"}
 
     order_status = order.status.value if hasattr(order.status, 'value') else order.status
+    # A lista pode estar desatualizada: NF cancelada depois de a tela carregar.
+    if opened_by_click and order_status == "cancelled":
+        return {"success": False, "message": f"Pedido NF {order.nf_number} foi cancelado"}
     if order_status == "completed":
         return {"success": False, "message": f"Pedido NF {order.nf_number} já está concluído"}
     # B: pedido interrompido é uma finalização manual — não pode ser reaberto via bipagem
@@ -620,6 +638,19 @@ def open_order_by_nfe(
 
     # Agendamento de Inbound: abrir a NF para conferir = início da bipagem.
     if is_entrada and inbound_flow.on_scan_started(db, order, current_user.id):
+        db.commit()
+
+    if opened_by_click:
+        db.add(models.AuditLog(
+            entity_type="Order",
+            entity_id=order.id,
+            action="OPEN_NF_CLICK",
+            detail=(
+                f"NF {order.nf_number} aberta pela lista, sem leitura da etiqueta, "
+                f"por {current_user.name}. Sessão: {session_id}."
+            ),
+            user_id=current_user.id,
+        ))
         db.commit()
 
     return {
@@ -3350,6 +3381,7 @@ def session_cards(
     unit_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    pending_from: Optional[date] = None,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -3357,6 +3389,10 @@ def session_cards(
     Retorna uma lista de cards, um por (session, seller).
     Se um upload contém 3 sellers, retorna 3 cards separados.
     Cada card tem contagens de pedidos e status derivado dessa combinação.
+
+    pending_from: além do período, traz os cards de pending_from até a véspera de
+    date_from que AINDA têm NF em aberto (marcados com `carried_over`). É o que
+    faz o atalho "Hoje" mostrar o que ficou pendente dos dias anteriores.
     """
     from sqlalchemy.orm import joinedload as _jl
 
@@ -3429,7 +3465,24 @@ def session_cards(
             )
         )
 
-    if date_from:
+    carry_over = bool(pending_from and date_from and pending_from < date_from)
+    if carry_over:
+        # Dos dias anteriores só carrega a sessão que ainda tem NF em aberto —
+        # a tela atualiza sozinha a cada 30s, não pode trazer a semana inteira.
+        q = q.filter(or_(
+            models.PickingSession.session_date >= date_from,
+            (models.PickingSession.session_date >= pending_from)
+            & _exists().where(
+                (models.Order.session_id == models.PickingSession.id) &
+                (models.Order.status.notin_([
+                    models.OrderStatus.COMPLETED,
+                    models.OrderStatus.INTERRUPTED,
+                    models.OrderStatus.CANCELLED,
+                    models.OrderStatus.INACTIVE,
+                ]))
+            ),
+        ))
+    elif date_from:
         q = q.filter(models.PickingSession.session_date >= date_from)
     if date_to:
         q = q.filter(models.PickingSession.session_date <= date_to)
@@ -3535,6 +3588,15 @@ def session_cards(
             ]
             if not active_orders:
                 continue  # seller totalmente cancelado/inativo — remove o card
+
+            # Card de dia anterior (pending_from) só entra se ainda tem NF em
+            # aberto DESTE seller — retida conta, concluída/interrompida não.
+            carried = carry_over and session.session_date < date_from
+            if carried and all(
+                (o.status.value if hasattr(o.status, "value") else o.status) in _done_status
+                for o in active_orders
+            ):
+                continue
 
             # NF com SKU sem produto cadastrado sai do manuseio e dos totais —
             # é impossível de bipar. Fica contabilizada em `held_orders` para o
@@ -3642,6 +3704,8 @@ def session_cards(
                 "seller_name": info["seller_name"],
                 "session_date": str(session.session_date),
                 "created_at": session.created_at.isoformat() if session.created_at else None,
+                # Pendência de dia anterior, trazida por pending_from.
+                "carried_over": carried,
                 "unit_id": unit_id_val,
                 "unit_name": unit_name_val,
                 "status": status,

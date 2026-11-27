@@ -249,6 +249,8 @@ export interface SessionCard {
   seller_name: string;
   session_date: string;
   created_at: string | null;
+  /** Pendência de dia anterior, mostrada no topo quando o filtro é "Hoje". */
+  carried_over?: boolean;
   unit_id: number;
   source_file: string | null;
   total_orders: number;
@@ -764,8 +766,9 @@ export const scanningApi = {
     sessionId: number,
     data: { file_type?: 'Entrada' | 'Saída'; for_billing?: boolean },
   ) => api.patch(`/scanning/sessions/${sessionId}/config`, data),
-  openByNfe: (sessionId: number, nfeKey: string, forceSellerLock?: boolean) =>
-    api.post(`/scanning/sessions/${sessionId}/open-by-nfe`, { nfe_key: nfeKey, force_seller_lock: !!forceSellerLock }),
+  /** `orderId` = NF clicada na lista (etiqueta que não lê): abre exatamente ela. */
+  openByNfe: (sessionId: number, nfeKey: string, forceSellerLock?: boolean, orderId?: number) =>
+    api.post(`/scanning/sessions/${sessionId}/open-by-nfe`, { nfe_key: nfeKey, force_seller_lock: !!forceSellerLock, order_id: orderId }),
   scanLogs: (sessionId: number) =>
     api.get(`/scanning/sessions/${sessionId}/scan-logs`),
   sessionCards: (params?: Record<string, any>) =>

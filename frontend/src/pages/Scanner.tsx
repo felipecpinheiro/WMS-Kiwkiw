@@ -598,11 +598,12 @@ export default function ScannerPage() {
 
   // ── NFe scan: open order ───────────────────────────────
 
-  const handleNfeScan = useCallback(async (nfeKey: string, force: boolean = false) => {
+  // `orderId` só vem do clique na lista (etiqueta que não lê).
+  const handleNfeScan = useCallback(async (nfeKey: string, force: boolean = false, orderId?: number) => {
     if (!nfeKey.trim() || scanning) return;
     setScanning(true);
     try {
-      const res = await (scanningApi as any).openByNfe(Number(sessionId), nfeKey.trim(), force);
+      const res = await (scanningApi as any).openByNfe(Number(sessionId), nfeKey.trim(), force, orderId);
       const data = res.data;
       if (data.success) {
         // A: se filtro de seller ativo, rejeita NFs de outros sellers
@@ -680,9 +681,23 @@ export default function ScannerPage() {
         setFeedback({ state: 'error', title: '✗ SKU descontinuado', message: data.message });
         toast.error(data.message, { duration: 8000 });
       } else {
-        setFeedback({ state: 'error', title: '✗ NFe não encontrada', message: data.message || 'Verifique a etiqueta' });
+        setFeedback({
+          state: 'error',
+          title: orderId ? '✗ Não foi possível abrir' : '✗ NFe não encontrada',
+          message: data.message || 'Verifique a etiqueta',
+        });
       }
     } catch (err: any) {
+      // Clique na lista não tem atalho local: sem resposta do servidor não há
+      // como conferir as travas nem registrar a abertura.
+      if (orderId) {
+        setFeedback({
+          state: 'error',
+          title: '✗ Não foi possível abrir',
+          message: err?.response?.data?.detail || 'Tente novamente',
+        });
+        return;
+      }
       // Fallback: try to match nf_number directly from local orders
       const matched = localOrders.find(o =>
         o.nf_number === nfeKey.trim() ||
@@ -718,6 +733,30 @@ export default function ScannerPage() {
       inputRef.current?.focus();
     }
   }, [scanning, sessionId, localOrders, hiddenOrderIds]);
+
+  // ── Clique na NF da lista: abre sem ler a etiqueta ──────
+  // Todos os cargos. Com outra NF aberta não troca, para não deixar a anterior
+  // pela metade.
+  const handleListOpen = (order: SessionOrder) => {
+    if (isBipandoView && activeOrder) {
+      if (order.id !== activeOrder.id) {
+        const nf = activeOrder.nf_number;
+        const started = activeOrder.items.some(it => it.scanned > 0);
+        toast.error(
+          isEntradaOrder
+            ? `Finalize ou pause a NF ${nf} antes de abrir outra.`
+            : started
+              ? `Conclua ou interrompa a NF ${nf} antes de abrir outra.`
+              : `A NF ${nf} está aberta. Para trocar, clique em "Sair da Bipagem" — nada foi bipado, ela não é interrompida.`,
+          { duration: 7000 },
+        );
+      }
+      inputRef.current?.focus();
+      return;
+    }
+    setAuditOrder(null);
+    handleNfeScan(order.nf_number, false, order.id);
+  };
 
   // ── Product scan ────────────────────────────────────────
 
@@ -1372,7 +1411,7 @@ export default function ScannerPage() {
           </div>
         </div>
 
-        {/* Order list — informativo apenas (não clicável para abrir) */}
+        {/* Order list — clicar numa NF em aberto abre a bipagem dela */}
         <div className="flex-1 overflow-y-auto p-2">
           <div className="flex items-center justify-between px-2 mb-2">
             <p className="text-[9px] text-t5 uppercase tracking-widest">Pedidos da sessão</p>
@@ -1434,14 +1473,17 @@ export default function ScannerPage() {
             }
 
             const isAuditable = order.status === 'completed' || order.status === 'interrupted';
-            const adminClick = !isAdmin ? undefined : isAuditable
-              ? () => setAuditOrder(order)
-              : () => handleNfeScan(order.nf_number);
+            // NF concluída/interrompida não reabre: para o admin o clique é a
+            // consulta somente leitura.
+            const listClick = !isAuditable
+              ? () => handleListOpen(order)
+              : isAdmin ? () => setAuditOrder(order) : undefined;
 
             return (
               <div key={order.id}
-                onClick={adminClick}
-                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'} ${isAdmin ? 'cursor-pointer hover:border-violet-500/30' : ''}`}>
+                onClick={listClick}
+                title={isAuditable ? undefined : 'Clique para abrir esta NF'}
+                className={`group p-2.5 rounded-lg mb-1 border transition ${isActive ? 'bg-violet-600/15 border-ok/30' : 'border-transparent hover:bg-surface-2'} ${listClick ? 'cursor-pointer hover:border-violet-500/30' : ''}`}>
                 <div className="flex items-center gap-2 mb-0.5">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
                   <p className="text-[10px] font-mono text-t3 truncate flex-1">NF {order.nf_number}</p>

@@ -8,7 +8,7 @@ import type { SessionCard } from '../api';
 import {
   Package, Clock, CheckCircle2, PlayCircle, Circle,
   ChevronRight, RefreshCw, CalendarDays, Layers,
-  CheckCheck, Ban, AlertTriangle,
+  CheckCheck, Ban, AlertTriangle, Search, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import FulfillmentLoader from '../components/FulfillmentLoader';
@@ -606,6 +606,71 @@ function HeldProductModal({
   );
 }
 
+// ── Filtros ──────────────────────────────────────────────────────────────────
+
+type Period = 'hoje' | 'ontem' | '7dias' | 'outro';
+type SortKey = 'antigo' | 'pendentes' | 'seller';
+
+interface Filters {
+  period: Period;
+  from: string;   // só usado em 'outro'
+  to: string;     // só usado em 'outro'
+  search: string;
+  fileType: 'saida' | 'entrada';
+  sort: SortKey;
+}
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 'hoje',  label: 'Hoje' },
+  { value: 'ontem', label: 'Ontem' },
+  { value: '7dias', label: '7 dias' },
+  { value: 'outro', label: 'Outro período' },
+];
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'antigo',    label: 'Mais antigo primeiro' },
+  { value: 'pendentes', label: 'Mais pendentes' },
+  { value: 'seller',    label: 'Seller (A–Z)' },
+];
+
+/** Soma dias a uma data 'yyyy-MM-dd'. Conta só no calendário (UTC de ponta a ponta). */
+function shiftDays(iso: string, days: number) {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Minúsculas e sem acento, para a busca de seller. */
+function normalize(text: string) {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+function defaultFilters(): Filters {
+  const today = todayBrasiliaStr();
+  return { period: 'hoje', from: today, to: today, search: '', fileType: 'saida', sort: 'antigo' };
+}
+
+// Os filtros ficam no sessionStorage: sobrevivem à ida e volta da bipagem e
+// somem ao fechar o navegador. O período é guardado pelo NOME ("hoje"), não
+// pela data, para continuar sendo hoje no dia seguinte.
+function loadFilters(key: string): Filters {
+  const base = defaultFilters();
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+    if (!saved) return base;
+    return {
+      period: PERIOD_OPTIONS.some(o => o.value === saved.period) ? saved.period : base.period,
+      from: typeof saved.from === 'string' ? saved.from : base.from,
+      to: typeof saved.to === 'string' ? saved.to : base.to,
+      search: typeof saved.search === 'string' ? saved.search : base.search,
+      fileType: saved.fileType === 'entrada' ? 'entrada' : 'saida',
+      sort: SORT_OPTIONS.some(o => o.value === saved.sort) ? saved.sort : base.sort,
+    };
+  } catch {
+    return base;
+  }
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function HandlingPage() {
@@ -616,10 +681,35 @@ export default function HandlingPage() {
   const isAdmin = user?.role === 'admin';
   const isManager = user?.role === 'manager';
 
-  const [dateFrom, setDateFrom] = useState(todayBrasiliaStr);
-  const [dateTo, setDateTo]     = useState(todayBrasiliaStr);
-  const [sellerFilter, setSellerFilter] = useState('');
-  const [fileTypeView, setFileTypeView] = useState<'saida' | 'entrada'>('saida');
+  const filtersKey = `wms_manuseios_filtros_${user?.id ?? 'anon'}`;
+  const [filters, setFilters] = useState<Filters>(() => loadFilters(filtersKey));
+  const setFilter = (patch: Partial<Filters>) => setFilters(prev => ({ ...prev, ...patch }));
+  useEffect(() => {
+    try { sessionStorage.setItem(filtersKey, JSON.stringify(filters)); } catch { /* ignore */ }
+  }, [filters, filtersKey]);
+
+  const { period, search, sort, fileType: fileTypeView } = filters;
+  // Recalculado a cada render: tela deixada aberta vira o dia sozinha.
+  const today = todayBrasiliaStr();
+  const dateFrom =
+    period === 'hoje'  ? today :
+    period === 'ontem' ? shiftDays(today, -1) :
+    period === '7dias' ? shiftDays(today, -6) : filters.from;
+  const dateTo =
+    period === 'ontem' ? shiftDays(today, -1) :
+    period === 'outro' ? filters.to : today;
+  // Em "Hoje" o que ficou em aberto nos últimos 7 dias também aparece (no topo).
+  const pendingFrom = period === 'hoje' ? shiftDays(today, -6) : undefined;
+
+  // "Outro período" começa nas datas que estavam na tela.
+  const changePeriod = (next: Period) =>
+    setFilter(next === 'outro' && period !== 'outro'
+      ? { period: next, from: dateFrom, to: dateTo }
+      : { period: next });
+
+  // Volta período, busca e ordenação. Saída/Entrada e unidade ficam como estão.
+  const clearFilters = () =>
+    setFilters(prev => ({ ...defaultFilters(), fileType: prev.fileType }));
 
   // Preferência de unidade ativa — compartilhada com o Dashboard via localStorage
   const unitPrefKey = `wms_active_unit_${user?.id ?? 'anon'}`;
@@ -647,10 +737,11 @@ export default function HandlingPage() {
   // O backend já filtra os cards pelos sellers vinculados ao usuário (operador/gerente).
   // Aqui só precisamos buscar e aplicar o filtro visual de seller.
   const { data: serverCards, isLoading, refetch } = useQuery<SessionCard[]>(
-    ['session-cards', dateFrom, dateTo, activeUnitId],
+    ['session-cards', dateFrom, dateTo, pendingFrom, activeUnitId],
     () => scanningApi.sessionCards({
-      date_from: dateFrom,
-      date_to: dateTo,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      pending_from: pendingFrom,
       unit_id: activeUnitId,
     }).then(r => r.data),
     { refetchInterval: 30000 }
@@ -674,18 +765,25 @@ export default function HandlingPage() {
     [cards, fileTypeView]
   );
 
-  // Seller list for filter dropdown (todos os níveis; o backend já limita os cards)
-  const allSellers = useMemo(() => {
-    const s = new Set<string>();
-    byFileType.forEach(c => { if (c.seller_name) s.add(c.seller_name); });
-    return Array.from(s).sort();
-  }, [byFileType]);
-
-  // Filtro visual por seller (todos os níveis). Operador/gerente já chegam pré-filtrados do backend.
-  const filtered = useMemo(() =>
-    sellerFilter ? byFileType.filter(c => c.seller_name === sellerFilter) : byFileType,
-    [byFileType, sellerFilter]
-  );
+  // Busca por seller (todos os níveis; o backend já limita os cards) + ordenação.
+  // Pendência de dia anterior fica sempre no topo, em qualquer ordem.
+  const filtered = useMemo(() => {
+    const term = normalize(search);
+    const pend = (c: SessionCard) => c.total_orders - c.completed_orders;
+    const when = (c: SessionCard) => c.created_at || c.session_date;
+    return byFileType
+      .filter(c => !term || normalize(c.seller_name || '').includes(term))
+      .sort((a, b) => {
+        if (!!a.carried_over !== !!b.carried_over) return a.carried_over ? -1 : 1;
+        if (sort === 'pendentes' && pend(a) !== pend(b)) return pend(b) - pend(a);
+        if (sort === 'seller') {
+          const bySeller = a.seller_name.localeCompare(b.seller_name, 'pt-BR');
+          if (bySeller !== 0) return bySeller;
+        }
+        return when(a).localeCompare(when(b))
+          || a.seller_name.localeCompare(b.seller_name, 'pt-BR');
+      });
+  }, [byFileType, search, sort]);
 
   // Group by status
   const groups = useMemo(() => ({
@@ -792,76 +890,130 @@ export default function HandlingPage() {
       </div>
 
       {/* Filters + summary */}
-      <div className="flex flex-wrap items-center gap-3 bg-surface rounded-xl border border-line-soft px-4 py-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays size={14} className="text-t4" />
-          <span className="text-xs text-t4">De</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className={inputCls} style={inputStyle} />
-          <span className="text-xs text-t4">ate</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className={inputCls} style={inputStyle} />
+      <div className="space-y-3 bg-surface rounded-xl border border-line-soft px-4 py-3">
+        {/* Busca de seller + unidade */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-t4 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setFilter({ search: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Escape') setFilter({ search: '' }); }}
+              placeholder="Buscar seller..."
+              aria-label="Buscar seller"
+              autoComplete="off"
+              className={`${inputCls} w-full pl-9 pr-9 py-2`}
+              style={inputStyle}
+            />
+            {search && (
+              <button
+                onClick={() => setFilter({ search: '' })}
+                title="Limpar busca"
+                aria-label="Limpar busca"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-t4 hover:text-bad"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* Seletor de unidade — admin e manager */}
+          {(isAdmin || isManager) && (units as any[]).length > 1 && (
+            <select
+              value={activeUnitId ?? ''}
+              onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
+              className={inputCls} style={inputStyle}
+            >
+              {(isAdmin || isManager) && <option value="">Todas as unidades</option>}
+              {(units as any[]).map((u: any) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+          )}
         </div>
 
-        {/* Interruptor Saída / Entrada */}
-        <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs font-medium">
-          <button
-            onClick={() => setFileTypeView('saida')}
-            className={`px-3 py-1.5 transition ${fileTypeView === 'saida'
-              ? 'bg-violet-600 text-t1'
-              : 'text-t4 hover:bg-surface-2'}`}
-          >
-            Saída
-          </button>
-          <button
-            onClick={() => setFileTypeView('entrada')}
-            className={`px-3 py-1.5 transition ${fileTypeView === 'entrada'
-              ? 'bg-sky-600 text-t1'
-              : 'text-t4 hover:bg-surface-2'}`}
-          >
-            Entrada
-          </button>
-        </div>
-
-        {/* Seletor de unidade — admin e manager */}
-        {(isAdmin || isManager) && (units as any[]).length > 1 && (
-          <select
-            value={activeUnitId ?? ''}
-            onChange={e => handleUnitChange(e.target.value ? Number(e.target.value) : undefined)}
-            className={inputCls} style={inputStyle}
-          >
-            {(isAdmin || isManager) && <option value="">Todas as unidades</option>}
-            {(units as any[]).map((u: any) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
+        {/* Período + Saída/Entrada */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <CalendarDays size={14} className="text-t4" />
+            {PERIOD_OPTIONS.map(o => (
+              <button
+                key={o.value}
+                onClick={() => changePeriod(o.value)}
+                aria-pressed={period === o.value}
+                className={`px-3 py-1.5 rounded-full border text-xs font-medium transition ${period === o.value
+                  ? 'bg-violet-600 border-violet-600 text-white'
+                  : 'border-line text-t3 hover:bg-surface-2'}`}
+              >
+                {o.label}
+              </button>
             ))}
-          </select>
-        )}
-
-        {allSellers.length > 1 && (
-          <select value={sellerFilter} onChange={e => setSellerFilter(e.target.value)}
-            className={inputCls} style={inputStyle}>
-            <option value="">Todos os sellers</option>
-            {allSellers.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        )}
-
-        {/* Global pill */}
-        <div className="ml-auto flex items-center gap-3 bg-black/20 rounded-xl px-4 py-2">
-          <div className="text-center">
-            <p className="text-base font-bold text-t1">{filtered.length}</p>
-            <p className="text-[9px] text-t4">cards</p>
           </div>
-          <div className="w-px h-7 bg-surface-2" />
-          <div className="text-center">
-            <p className="text-base font-bold text-t1">{totalOrders}</p>
-            <p className="text-[9px] text-t4">pedidos</p>
+
+          {period === 'outro' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-t4">De</span>
+              <input type="date" value={filters.from} onChange={e => setFilter({ from: e.target.value })}
+                className={inputCls} style={inputStyle} />
+              <span className="text-xs text-t4">até</span>
+              <input type="date" value={filters.to} onChange={e => setFilter({ to: e.target.value })}
+                className={inputCls} style={inputStyle} />
+            </div>
+          )}
+
+          {/* Interruptor Saída / Entrada */}
+          <div className="flex items-center rounded-lg border border-line overflow-hidden text-xs font-medium">
+            <button
+              onClick={() => setFilter({ fileType: 'saida' })}
+              className={`px-3 py-1.5 transition ${fileTypeView === 'saida'
+                ? 'bg-violet-600 text-white'
+                : 'text-t4 hover:bg-surface-2'}`}
+            >
+              Saída
+            </button>
+            <button
+              onClick={() => setFilter({ fileType: 'entrada' })}
+              className={`px-3 py-1.5 transition ${fileTypeView === 'entrada'
+                ? 'bg-sky-600 text-white'
+                : 'text-t4 hover:bg-surface-2'}`}
+            >
+              Entrada
+            </button>
           </div>
-          <div className="w-px h-7 bg-surface-2" />
-          <div className="text-center">
-            <p className={`text-base font-bold ${globalPct === 100 ? 'text-ok' : globalPct > 0 ? 'text-violet-300' : 'text-t4'}`}>
-              {globalPct}%
-            </p>
-            <p className="text-[9px] text-t4">concluido</p>
+        </div>
+
+        {/* Ordenação + limpar + resumo */}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-t4">
+            Ordenar
+            <select value={sort} onChange={e => setFilter({ sort: e.target.value as SortKey })}
+              className={inputCls} style={inputStyle}>
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+          <button onClick={clearFilters} className="text-xs font-medium text-violet-400 hover:underline">
+            Limpar filtros
+          </button>
+
+          {/* Global pill */}
+          <div className="ml-auto flex items-center gap-3 bg-black/20 rounded-xl px-4 py-2">
+            <div className="text-center">
+              <p className="text-base font-bold text-t1">{filtered.length}</p>
+              <p className="text-[9px] text-t4">cards</p>
+            </div>
+            <div className="w-px h-7 bg-surface-2" />
+            <div className="text-center">
+              <p className="text-base font-bold text-t1">{totalOrders}</p>
+              <p className="text-[9px] text-t4">pedidos</p>
+            </div>
+            <div className="w-px h-7 bg-surface-2" />
+            <div className="text-center">
+              <p className={`text-base font-bold ${globalPct === 100 ? 'text-ok' : globalPct > 0 ? 'text-violet-300' : 'text-t4'}`}>
+                {globalPct}%
+              </p>
+              <p className="text-[9px] text-t4">concluido</p>
+            </div>
           </div>
         </div>
       </div>

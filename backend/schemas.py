@@ -725,9 +725,12 @@ class KitBulkImport(BaseModel):
     items: List[KitBulkItem]
 
 class OpenByNfeRequest(BaseModel):
-    nfe_key: str
+    nfe_key: str = ""
     operator_id: Optional[int] = None
     force_seller_lock: bool = False
+    # NF clicada na lista da bipagem (etiqueta que não lê). Quando vem, abre
+    # exatamente este pedido, sem procurar pela chave/número.
+    order_id: Optional[int] = None
 
 
 # ============================================================
